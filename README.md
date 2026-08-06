@@ -33,23 +33,19 @@ in the page until reload/navigation, then must be re-injected.
 
 ## Injection
 
-Via OpenCLI (needs daemon + Chrome extension connected, `opencli doctor`):
+Open the annotation page, then paste the full `console_loader.js` into the browser console:
 
+1. Navigate to the Constructions Tagger annotation page (`constructions-tagger-web.onrender.com`)
+2. Press **F12** to open DevTools, then click the **Console** tab
+3. Copy the entire contents of `console_loader.js` and paste into the console, then press **Enter**
+4. The workbench installs automatically once the page canvas is ready (up to 30 sec)
+
+Paste again after each page navigation. Nothing persists server-side until you manually click **Save** in the app.
+
+**To rebuild `console_loader.js`** after editing source modules:
 ```bash
-# bind to the active Chrome tab showing the annotation page
-opencli browser work bind
-
-# inject a file (example pattern — wrap as indirect eval)
-python3 - <<'EOF'
-import json, subprocess
-code = open('/home/siboi/Projects/boon-tagger-tools/rw_install.js').read()
-runner = '(function(){ var __src = ' + json.dumps(code) + '; return (0,eval)(__src); })()'
-print(subprocess.run(['opencli','browser','work','eval', runner],
-      capture_output=True, text=True).stdout)
-EOF
+bash build_loader.sh
 ```
-
-Repeat for rw_masktools.js, then rw_stable.js, then wf_helpers.js.
 
 ## Keymap (workbench)
 

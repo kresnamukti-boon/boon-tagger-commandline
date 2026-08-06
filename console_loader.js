@@ -463,21 +463,25 @@
   };
 
   RW._renderCommitPreview = function(){
-    const old = document.getElementById('rw-commitpreview'); if(old) old.remove();
-    if (!RW.selected.size) return;
-    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-    svg.id = 'rw-commitpreview';
-    svg.setAttribute('viewBox','0 0 '+RW.W+' '+RW.H);
-    svg.setAttribute('preserveAspectRatio','none');
-    svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:75;';
-    let inner = '';
-    for (const gid of RW.selected){
-      const path = RW._rawContour(gid);
-      if (!path || path.length<3) continue;
-      const pts = path.map(p=>(p.x*RW.W)+','+(p.y*RW.H)).join(' ');
-      const col = RW.regions.filter(r=>r.group===gid)[0]?.color || '#ccc';
-      inner += '<polyline points="'+pts+'" fill="none" stroke="'+col+'" stroke-width="2.5" stroke-dasharray="6,3"/>';
-    }
+      const old = document.getElementById('rw-commitpreview'); if(old) old.remove();
+      if (!RW.selected.size) return;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+      svg.id = 'rw-commitpreview';
+      svg.setAttribute('viewBox','0 0 '+RW.W+' '+RW.H);
+      svg.setAttribute('preserveAspectRatio','none');
+      svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:75;';
+      // zoom-invariant stroke: 2.5 screen px → SVG units at current zoom
+      const container = document.getElementById('pdf-container');
+      const sw = container ? 2.5 * RW.W / container.clientWidth : 2.5;
+      const dash = sw * 2.4;
+      let inner = '';
+      for (const gid of RW.selected){
+        const path = RW._rawContour(gid);
+        if (!path || path.length<3) continue;
+        const pts = path.map(p=>(p.x*RW.W)+','+(p.y*RW.H)).join(' ');
+        const col = RW.regions.filter(r=>r.group===gid)[0]?.color || '#ccc';
+        inner += '<polyline points="'+pts+'" fill="none" stroke="'+col+'" stroke-width="'+sw.toFixed(2)+'" stroke-dasharray="'+dash.toFixed(1)+','+(dash*0.5).toFixed(1)+'"/>';
+      }
     svg.innerHTML = inner;
     document.getElementById('pdf-container').appendChild(svg);
   };
@@ -540,11 +544,22 @@
         svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
         svg.id='rw-cutline';
         svg.style.cssText='position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:70;';
+        const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+        ln.setAttribute('stroke','red');
+        ln.setAttribute('stroke-width','2');
+        svg.appendChild(ln);
+        svg.__rwCutLine = ln;
         container.appendChild(svg);
       }
       const cr=container.getBoundingClientRect();
       const pc=(v,off,len)=>((v-off)/len*100)+'%';
-      svg.innerHTML='<line x1="'+pc(RW.cutStart.x,cr.x,cr.width)+'" y1="'+pc(RW.cutStart.y,cr.y,cr.height)+'" x2="'+pc(e.clientX,cr.x,cr.width)+'" y2="'+pc(e.clientY,cr.y,cr.height)+'" stroke="red" stroke-width="2"/>';
+      const ln=svg.__rwCutLine;
+      if (ln){
+        ln.setAttribute('x1',pc(RW.cutStart.x,cr.x,cr.width));
+        ln.setAttribute('y1',pc(RW.cutStart.y,cr.y,cr.height));
+        ln.setAttribute('x2',pc(e.clientX,cr.x,cr.width));
+        ln.setAttribute('y2',pc(e.clientY,cr.y,cr.height));
+      }
     }
   }, true);
 
@@ -670,15 +685,22 @@
   };
 
   // Bresenham polyline — paints wall=1 only where pixels are currently wall=0
-  // (seals gaps in existing linework without cutting through mask regions)
+  // AND are NOT part of an existing included mask region.
+  // (seals gaps in linework without cutting through mask regions)
   RW._paintPolylineGap = function(pts){
-    const {W,H,wall} = RW;
+    const {W,H,wall,labels,regions} = RW;
     function line(x0,y0,x1,y1){
       const dx=Math.abs(x1-x0), sx=x0<x1?1:-1;
       const dy=-Math.abs(y1-y0), sy=y0<y1?1:-1;
       let err=dx+dy;
       while(true){
-        if (x0>=0&&x0<W&&y0>=0&&y0<H && wall[y0*W+x0]===0) wall[y0*W+x0]=1;
+        if (x0>=0&&x0<W&&y0>=0&&y0<H && wall[y0*W+x0]===0){
+          // skip if this pixel belongs to an included mask region
+          const l = labels ? labels[y0*W+x0] : -1;
+          if (!(l>=0 && regions && regions[l] && regions[l].included)){
+            wall[y0*W+x0]=1;
+          }
+        }
         if (x0===x1&&y0===y1) break;
         const e2=2*err;
         if (e2>=dy){ err+=dy; x0+=sx; }
@@ -774,20 +796,29 @@
     const s=RW.__rectStartN; RW.__rectStartN=null; RW.__rectCurN=null;
     const rl=document.getElementById('rw-rectline'); if(rl) rl.remove();
     const en=RW._toNorm(e.clientX,e.clientY);
-    const val = RW.maskAction==='block' ? 1 : 0;
-    if (RW.maskAction==='open'){
-      // open mode: only convert wall pixels to non-wall inside the rect.
-      // never create new wall barriers (no perimeter seal — that cuts through mask)
+    if (RW.maskAction==='add'){
+      // Add mode: clear interior first, then trace perimeter wall → new enclosed region
       const rx0=s[0]*RW.W, ry0=s[1]*RW.H, rx1=en[0]*RW.W, ry1=en[1]*RW.H;
+      const ix0=Math.max(0,Math.min(rx0,rx1)|0), ix1=Math.min(RW.W-1,Math.max(rx0,rx1)|0);
+      const iy0=Math.max(0,Math.min(ry0,ry1)|0), iy1=Math.min(RW.H-1,Math.max(ry0,ry1)|0);
+      for (let y=iy0;y<=iy1;y++) for (let x=ix0;x<=ix1;x++) RW.wall[y*RW.W+x]=0;
+      RW._paintPolylineGap([[rx0,ry0],[rx1,ry0],[rx1,ry1],[rx0,ry1]]);
+    } else if (RW.maskAction==='open'){
+      // open mode: seal perimeter gaps, then convert interior walls to non-wall
+      const rx0=s[0]*RW.W, ry0=s[1]*RW.H, rx1=en[0]*RW.W, ry1=en[1]*RW.H;
+      RW._paintPolylineGap([[rx0,ry0],[rx1,ry0],[rx1,ry1],[rx0,ry1]]);
       const xa=Math.max(0,Math.min(rx0,rx1)|0), xb=Math.min(RW.W-1,Math.max(rx0,rx1)|0);
       const ya=Math.max(0,Math.min(ry0,ry1)|0), yb=Math.min(RW.H-1,Math.max(ry0,ry1)|0);
       for (let y=ya;y<=yb;y++) for (let x=xa;x<=xb;x++) {
         if (RW.wall[y*RW.W+x]===1) RW.wall[y*RW.W+x]=0;
       }
     } else {
+      const val = RW.maskAction==='block' ? 1 : 0;
       RW._paintRect(s[0]*RW.W, s[1]*RW.H, en[0]*RW.W, en[1]*RW.H, val);
     }
+    const saveFloor = RW._areaFloor; if (RW.maskAction==='add') RW._areaFloor = 100;
     RW._relabel(); RW.renderList(); RW.renderOverlay();
+    RW._areaFloor = saveFloor;
     RW._renderCommitPreview();
   }, true);
 
@@ -809,7 +840,7 @@
     let x1=RW.__rectCurN ? RW.__rectCurN[0] : x0, y1=RW.__rectCurN ? RW.__rectCurN[1] : y0;
     const [ax,ay]=RW._toPx(Math.min(x0,x1),Math.min(y0,y1));
     const [bx,by]=RW._toPx(Math.max(x0,x1),Math.max(y0,y1));
-    const col = RW.maskAction==='block' ? 'orange' : 'deepskyblue';
+    const col = RW._actionColor ? RW._actionColor() : (RW.maskAction==='block' ? 'orange' : 'deepskyblue');
     svg.innerHTML='<rect x="'+ax+'" y="'+ay+'" width="'+(bx-ax)+'" height="'+(by-ay)+'" fill="rgba(255,160,60,0.10)" stroke="'+col+'" stroke-width="'+sw+'"/>';
   };
 
@@ -823,7 +854,7 @@
     if (e.key==='b'||e.key==='B'){
       if (RW.maskMode2){ RW.setMaskMode2(null); }
       e.preventDefault(); e.stopImmediatePropagation();
-      if (e.shiftKey){ RW.maskAction = RW.maskAction==='block' ? 'open' : 'block'; RW._syncRectBtn(); return; }
+      if (e.shiftKey){ const next=RW.maskAction==='block'?'open':RW.maskAction==='open'?'add':'block'; RW.maskAction=next; RW._syncRectBtn(); return; }
       RW.maskMode = RW.maskMode==='rect' ? null : 'rect';
       RW._syncRectBtn();
       const ac=document.getElementById('annotation-canvas');
@@ -843,14 +874,15 @@
   RW._syncRectBtn = function(){
     const b = document.getElementById('rw-rect');
     if (!b) return;
-    const sym = RW.maskAction==='block' ? '-' : '+';
+    const sym = RW.maskAction==='block' ? '-' : (RW.maskAction==='open' ? '+' : '⊕');
     b.innerText = 'Rect '+sym+' (B)';
-    b.style.background = RW.maskMode==='rect' ? 'rgba(255,160,60,0.4)' : '';
+    const bg = RW.maskAction==='add' ? 'rgba(50,205,50,0.4)' : 'rgba(255,160,60,0.4)';
+    b.style.background = RW.maskMode==='rect' ? bg : '';
   };
   const bar = (document.getElementById('rw-pick') || {}).parentNode;
   if (bar && !document.getElementById('rw-rect')){
     const b=document.createElement('button');
-    b.id='rw-rect'; b.title='Unified rect mask. Shift+B toggles block/open.';
+    b.id='rw-rect'; b.title='Unified rect mask. Shift+B cycles block→open→add.';
     b.style.cssText='font-size:11px;padding:2px 6px;';
     b.onclick=()=>{
       // cross-disarm: if any v2.6 tool is armed, kill it first
@@ -979,7 +1011,7 @@
     const W=RW.W, H=RW.H;
     const val = RW.maskMode==='block' ? 1 : 0;
     if (RW.maskMode==='open'){
-      // open mode: only convert wall pixels to non-wall. no perimeter seal.
+      RW._paintPolylineGap([[s[0]*W, s[1]*H], [e_n[0]*W, s[1]*H], [e_n[0]*W, e_n[1]*H], [s[0]*W, e_n[1]*H]]);
       const xa=Math.max(0,Math.min(s[0]*W, e_n[0]*W)|0), xb=Math.min(W-1,Math.max(s[0]*W, e_n[0]*W)|0);
       const ya=Math.max(0,Math.min(s[1]*H, e_n[1]*H)|0), yb=Math.min(H-1,Math.max(s[1]*H, e_n[1]*H)|0);
       for (let y=ya;y<=yb;y++) for (let x=xa;x<=xb;x++) {
@@ -1007,11 +1039,18 @@
 
   // keep preview glued during pan/zoom: re-render on scroll + wheel
   const sc = document.getElementById('canvas-scroll-container');
+  RW.__scrollRaf = false;
   sc.addEventListener('scroll', function(){
     if (RW._previewV!==4) return;
     if (!RW.maskMode && !RW.maskMode2) return;
-    RW._renderPreview(null);
-    if (RW._renderPreview2) RW._renderPreview2(null);
+    if (RW.__scrollRaf) return;              // debounce: one rAF at a time
+    RW.__scrollRaf = true;
+    requestAnimationFrame(() => {
+      RW.__scrollRaf = false;
+      RW._renderPreview(null);
+      if (RW._renderPreview2) RW._renderPreview2(null);
+      if (RW._renderCommitPreview) RW._renderCommitPreview();
+    });
   }, {passive:true});
   // wheel = zoom (Ctrl+scroll) — re-render so stroke stays zoom-invariant
   ac.addEventListener('wheel', function(e){
@@ -1021,6 +1060,7 @@
     requestAnimationFrame(() => {
       RW._renderPreview(null);
       if (RW._renderPreview2) RW._renderPreview2(null);
+      if (RW._renderCommitPreview) RW._renderCommitPreview();
     });
   }, {passive:true});
   document.addEventListener('mouseup', function(){
@@ -1374,6 +1414,7 @@
 // Load AFTER rw_undo.js (needs v2.3). Adds:
 //   N  — Poly2 tool: freeform vertices, dbl-click closes. Shift+N toggles block/open.
 //   J  — Brush tool: freehand stroke, Tab+scroll sizes radius. Shift+J toggles block/open.
+//   A  — Cycle maskAction: block → open → add (creates new regions from drawn shapes).
 (function(){
   const RW = window.__RW;
   if (!RW || !RW.v23) return 'need v2.3 first';
@@ -1402,15 +1443,24 @@
     RW._syncToolButtons();
   };
 
-  RW.setMaskAction = function(a){ RW.maskAction = a; RW._syncToolButtons(); };
+  RW._actionLabel = function(){ return RW.maskAction==='block'?'−':RW.maskAction==='open'?'+':'⊕'; };
+  RW._actionColor = function(){ return RW.maskAction==='block'?'orange':RW.maskAction==='open'?'deepskyblue':'limegreen'; };
+  RW._actionBg = function(){ return RW.maskAction==='block'?'rgba(255,160,60,0.18)':RW.maskAction==='open'?'rgba(60,180,255,0.18)':'rgba(50,205,50,0.18)'; };
+  RW.setMaskAction = function(a){ RW.maskAction = a; RW._syncToolButtons(); RW._syncRectBtn && RW._syncRectBtn(); };
 
   RW._syncToolButtons = function(){
+    const label = RW._actionLabel();
     const pb = document.getElementById('rw-poly2');
-    if (pb) pb.innerText = 'Poly2 ' + (RW.maskAction==='block'?'−':'+') + ' (N)';
+    if (pb) pb.innerText = 'Poly2 ' + label + ' (N)';
     if (pb) pb.style.background = RW.maskMode2==='poly2' ? 'rgba(255,160,60,0.4)' : '';
     const bb = document.getElementById('rw-brush');
-    if (bb) bb.innerText = 'Brush ' + (RW.maskAction==='block'?'−':'+') + ' (J)';
+    if (bb) bb.innerText = 'Brush ' + label + ' (J)';
     if (bb) bb.style.background = RW.maskMode2==='brush' ? 'rgba(255,160,60,0.4)' : '';
+    const ab = document.getElementById('rw-addmode');
+    if (ab){
+      ab.innerText = 'Add ' + label + ' (A)';
+      ab.style.background = RW.maskAction==='add' ? 'rgba(50,205,50,0.45)' : '';
+    }
   };
 
   RW._paintDisk = function(mx, my, r, val){
@@ -1437,7 +1487,7 @@
       RW._brushDown = true;
       RW._brushStroke = [[nx,ny]];
       RW._snapshot('brush');
-      const val = RW.maskAction==='block' ? 1 : 0;
+      const val = RW.maskAction==='add' ? 0 : (RW.maskAction==='block' ? 1 : 0);
       RW._paintDisk(nx*RW.W, ny*RW.H, RW.brushR, val);
     }
   }, true);
@@ -1453,7 +1503,7 @@
     if (RW.maskMode2==='brush'){
       if (RW._brushDown){
         RW._brushStroke.push([nx,ny]);
-        const val = RW.maskAction==='block' ? 1 : 0;
+        const val = RW.maskAction==='add' ? 0 : (RW.maskAction==='block' ? 1 : 0);
         RW._paintDisk(nx*RW.W, ny*RW.H, RW.brushR, val);
       }
       RW._renderBrushCursor(e.clientX, e.clientY);
@@ -1466,7 +1516,19 @@
     if (RW.maskMode2==='poly2') return;
     if (RW.maskMode2==='brush' && RW._brushDown){
       RW._brushDown = false;
+      if (RW.maskAction==='add'){
+        // Create perimeter ring around the cleared stroke
+        const r = RW.brushR;
+        for (const [snx,sny] of RW._brushStroke){
+          RW._paintDisk(snx*RW.W, sny*RW.H, r+2, 1);   // outer wall ring
+        }
+        for (const [snx,sny] of RW._brushStroke){
+          RW._paintDisk(snx*RW.W, sny*RW.H, r-1, 0);    // reinforce interior clear
+        }
+      }
+      const saveFloor = RW._areaFloor; if (RW.maskAction==='add') RW._areaFloor = 100;
       RW._relabel(); RW.renderList(); RW.renderOverlay();
+      RW._areaFloor = saveFloor;
       RW._renderCommitPreview();
     }
   }, true);
@@ -1474,10 +1536,15 @@
   ac.addEventListener('dblclick', function(e){
     if (RW.maskMode2!=='poly2') return;
     e.stopPropagation(); e.preventDefault();
-    if (RW._polyPtsN && RW._polyPtsN.length>=3){
+      if (RW._polyPtsN && RW._polyPtsN.length>=3){
       const mpts = RW._polyPtsN.map(([nx,ny])=>[nx*RW.W, ny*RW.H]);
-      if (RW.maskAction==='open'){
-        // open mode: only convert wall pixels to non-wall. no perimeter seal.
+      if (RW.maskAction==='add'){
+        // Clear interior first, then trace perimeter wall → creates new enclosed region
+        RW._paintPoly(mpts, 0);
+        RW._paintPolylineGap(mpts);
+      } else if (RW.maskAction==='open'){
+        // open mode: seal perimeter gaps, then convert interior walls to non-wall
+        RW._paintPolylineGap(mpts);
         const W=RW.W, H=RW.H, wall=RW.wall;
         let minY=H,maxY=0;
         for (const [x,y] of mpts){ if(y<minY)minY=y; if(y>maxY)maxY=y; }
@@ -1497,7 +1564,9 @@
       } else {
         RW._paintPoly(mpts, RW.maskAction==='block' ? 1 : 0);
       }
+      const saveFloor = RW._areaFloor; if (RW.maskAction==='add') RW._areaFloor = 100;
       RW._relabel(); RW.renderList(); RW.renderOverlay();
+      RW._areaFloor = saveFloor;
       RW._renderCommitPreview();
     }
     RW._polyPtsN=[];
@@ -1537,15 +1606,18 @@
     const [nx,ny]=RW._toNorm(cx,cy);
     const [px,py]=RW._toPx(nx,ny);
     const pr = RW._toPx(RW.brushR/RW.W, 0)[0];
-    const col = RW.maskAction==='block' ? 'orange' : 'deepskyblue';
+    const col = RW._actionColor();
     const sw = 1.2;
     let inner = '<circle cx="'+px+'" cy="'+py+'" r="'+pr+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dasharray="8"/>';
     if (RW._brushDown && RW._brushStroke && RW._brushStroke.length){
-      const fill = RW.maskAction==='block' ? 'rgba(255,120,0,0.30)' : 'rgba(60,180,255,0.30)';
-      for (const [snx,sny] of RW._brushStroke){
+      const fill = RW.maskAction==='add' ? 'rgba(50,205,50,0.35)' : (RW.maskAction==='block' ? 'rgba(255,120,0,0.30)' : 'rgba(60,180,255,0.30)');
+      // Render as a single thick polyline instead of N individual circles
+      // (1 DOM node instead of potentially hundreds — huge perf win for long strokes)
+      const ptsStr = RW._brushStroke.map(([snx,sny])=>{
         const [spx,spy]=RW._toPx(snx,sny);
-        inner += '<circle cx="'+spx+'" cy="'+spy+'" r="'+pr+'" fill="'+fill+'" stroke="none"/>';
-      }
+        return spx+','+spy;
+      }).join(' ');
+      inner += '<polyline points="'+ptsStr+'" fill="none" stroke="'+fill+'" stroke-width="'+(pr*2)+'" stroke-linecap="round" stroke-linejoin="round"/>';
     }
     svg.innerHTML = inner;
   };
@@ -1563,7 +1635,7 @@
       if (RW.maskMode2==='poly2'){
         const svg = document.getElementById('rw-polyline');
         if (svg){
-          const col = RW.maskAction==='block' ? 'orange' : 'deepskyblue';
+          const col = RW._actionColor();
           svg.querySelectorAll('polyline,circle').forEach(el=>{
             el.setAttribute('stroke', col);
           });
@@ -1578,9 +1650,16 @@
     if (t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
     if (e.ctrlKey||e.metaKey||e.altKey) return;
     const k = e.key.toLowerCase();
+    if (k==='a'){
+      e.preventDefault(); e.stopImmediatePropagation();
+      const cycle = {block:'open',open:'add',add:'block'};
+      const next = e.shiftKey ? {add:'open',open:'block',block:'add'}[RW.maskAction] : cycle[RW.maskAction];
+      RW.setMaskAction(next);
+      return;
+    }
     if (k==='n'){
       e.preventDefault(); e.stopImmediatePropagation();
-      if (e.shiftKey){ RW.setMaskAction(RW.maskAction==='block'?'open':'block'); return; }
+      if (e.shiftKey){ const next=RW.maskAction==='block'?'open':RW.maskAction==='open'?'add':'block'; RW.setMaskAction(next); return; }
       if (RW.maskMode==='rect'){ RW.maskMode=null; RW.__rectStartN=null; RW.__rectCurN=null;
         document.getElementById('annotation-canvas').style.cursor='';
         const rl=document.getElementById('rw-rectline'); if(rl) rl.remove();
@@ -1589,7 +1668,7 @@
     }
     if (k==='j'){
       e.preventDefault(); e.stopImmediatePropagation();
-      if (e.shiftKey){ RW.setMaskAction(RW.maskAction==='block'?'open':'block'); return; }
+      if (e.shiftKey){ const next=RW.maskAction==='block'?'open':RW.maskAction==='open'?'add':'block'; RW.setMaskAction(next); return; }
       if (RW.maskMode==='rect'){ RW.maskMode=null; RW.__rectStartN=null; RW.__rectCurN=null;
         document.getElementById('annotation-canvas').style.cursor='';
         const rl=document.getElementById('rw-rectline'); if(rl) rl.remove();
@@ -1625,13 +1704,21 @@
     bar.appendChild(b);
     return b;
   }
-  const pb = addBtn('rw-poly2','Freeform mask: click vertices, double-click closes. Shift+N toggles block/open.');
+  const pb = addBtn('rw-poly2','Freeform mask: click vertices, double-click closes. Shift+N toggles mode.');
   if (pb) pb.onclick=()=>RW.setMaskMode2(RW.maskMode2==='poly2'?null:'poly2');
-  const bb = addBtn('rw-brush','Freehand mask stroke. Tab+scroll resizes. Shift+J toggles block/open.');
+  const bb = addBtn('rw-brush','Freehand mask stroke. Tab+scroll resizes. Shift+J toggles mode.');
   if (bb) bb.onclick=()=>RW.setMaskMode2(RW.maskMode2==='brush'?null:'brush');
+  const ab = document.createElement('button');
+  ab.id='rw-addmode'; ab.title='Cycle mask action: block → open → add. A key toggles, Shift+A reverse.';
+  ab.style.cssText='font-size:11px;padding:2px 6px;';
+  ab.onclick=()=>{
+    const cycle = {block:'open',open:'add',add:'block'};
+    RW.setMaskAction(cycle[RW.maskAction]);
+  };
+  bar.appendChild(ab);
   RW._syncToolButtons();
 
-  return 'v2.6 up: Poly2 (N) + Brush (J)';
+  return 'v2.6 up: Poly2 (N) + Brush (J) + Add (A)';
 })()
 
 ;
