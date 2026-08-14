@@ -26,7 +26,11 @@ in the page until reload/navigation, then must be re-injected.
    - Poly: Backspace removes last vertex; first Escape clears vertices, second closes tool
    - Block/Open/Poly-commit/Cut/Merge: snapshot undo stack, backtick (`) or panel button
 
-5. **wf_helpers.js** — Independent utilities (any order)
+5. **rw_snap.js** — Poly2 vertex snapping (v2.7, needs rw_brushpoly)
+   - Poly2 vertices snap to nearby line endpoints/intersections detected on the wall bitmap
+   - Hold Shift while placing a vertex to bypass snapping; panel "Snap On/Off" toggles it globally
+
+6. **wf_helpers.js** — Independent utilities (any order)
    - `[` / `]` — prev/next page in job
    - `/` — focus tag search box
    - `H` — coverage heatmap (red = no annotation there yet)
@@ -56,6 +60,7 @@ bash build_loader.sh
 | B | Block mode (drag rect to paint wall / remove artifacts) |
 | O | Open mode (drag rect to erase walls / heal splits) |
 | N | Poly mask mode (click vertices, double-click to close) |
+| Shift (hold, while placing a poly vertex) | bypass vertex snap for that click |
 | Backspace (in poly) | remove last poly vertex |
 | Escape (in poly) | clear vertices first, then close tool |
 | ` (backtick) | undo last mask edit (block/open/poly/cut/merge) |

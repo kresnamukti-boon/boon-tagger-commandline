@@ -208,7 +208,7 @@
       // clamp region size threshold proportionally
       RW._areaFloor = Math.round(2500 * (W*H) / (2592*1728));
     }
-    const areaFloor = RW._areaFloor || 2500;
+    const areaFloor = RW._areaFloor != null ? RW._areaFloor : 2500;
     // ... rest of extraction
     const cv = document.createElement('canvas'); cv.width=W; cv.height=H;
     const ctx = cv.getContext('2d');
@@ -763,7 +763,7 @@
       newGroupFor[id]=best;
     }
     RW.labels=labels; RW.nComp=nComp;
-    const areaFloor = RW._areaFloor || 2500;
+    const areaFloor = RW._areaFloor != null ? RW._areaFloor : 2500;
     RW.regions = sizes.map((s,id)=>{ const g=newGroupFor[id]>=0?newGroupFor[id]:id; return {id,size:s.size,included:s.size>=areaFloor,group:g,color:'hsl('+((g*67)%360)+',70%,55%)'}; });
   };
 
@@ -786,6 +786,9 @@
     if (RW.maskMode!=='rect' || !RW.__rectStartN) return;
     e.stopPropagation();
     RW.__rectCurN = RW._toNorm(e.clientX, e.clientY);
+    const en=RW.__rectCurN, st=RW.__rectStartN;
+    const px = Math.round(Math.abs(en[0]-st[0])*RW.W * Math.abs(en[1]-st[1])*RW.H);
+    RW._showAreaHint(px);
     // render via the shared preview path from v2.2
     RW._renderPreview2({x:e.clientX,y:e.clientY});
   }, true);
@@ -797,12 +800,23 @@
     const rl=document.getElementById('rw-rectline'); if(rl) rl.remove();
     const en=RW._toNorm(e.clientX,e.clientY);
     if (RW.maskAction==='add'){
-      // Add mode: clear interior first, then trace perimeter wall → new enclosed region
-      const rx0=s[0]*RW.W, ry0=s[1]*RW.H, rx1=en[0]*RW.W, ry1=en[1]*RW.H;
-      const ix0=Math.max(0,Math.min(rx0,rx1)|0), ix1=Math.min(RW.W-1,Math.max(rx0,rx1)|0);
-      const iy0=Math.max(0,Math.min(ry0,ry1)|0), iy1=Math.min(RW.H-1,Math.max(ry0,ry1)|0);
-      for (let y=iy0;y<=iy1;y++) for (let x=ix0;x<=ix1;x++) RW.wall[y*RW.W+x]=0;
-      RW._paintPolylineGap([[rx0,ry0],[rx1,ry0],[rx1,ry1],[rx0,ry1]]);
+      // Fill-then-hollow: paint full rect as wall, then shrink 2px and clear interior.
+      // Build skip mask for existing included-region pixels (bbox only, cheap).
+      const {W,H,labels,regions,wall} = RW;
+      const rx0=s[0]*W, ry0=s[1]*H, rx1=en[0]*W, ry1=en[1]*H;
+      const xa=Math.max(0,Math.min(rx0,rx1)|0), xb=Math.min(W-1,Math.max(rx0,rx1)|0);
+      const ya=Math.max(0,Math.min(ry0,ry1)|0), yb=Math.min(H-1,Math.max(ry0,ry1)|0);
+      const skip = new Uint8Array(W*H);
+      for (let y=ya;y<=yb;y++) for (let x=xa;x<=xb;x++){
+        const l=labels[y*W+x];
+        if (l>=0 && regions[l] && regions[l].included) skip[y*W+x]=1;
+      }
+      for (let y=ya;y<=yb;y++) for (let x=xa;x<=xb;x++)
+        if (!skip[y*W+x]) wall[y*W+x]=1;
+      const ixa=Math.min(xb, xa+2), ixb=Math.max(xa, xb-2);
+      const iya=Math.min(yb, ya+2), iyb=Math.max(ya, yb-2);
+      for (let y=iya;y<=iyb;y++) for (let x=ixa;x<=ixb;x++)
+        if (!skip[y*W+x]) wall[y*W+x]=0;
     } else if (RW.maskAction==='open'){
       // open mode: seal perimeter gaps, then convert interior walls to non-wall
       const rx0=s[0]*RW.W, ry0=s[1]*RW.H, rx1=en[0]*RW.W, ry1=en[1]*RW.H;
@@ -816,10 +830,18 @@
       const val = RW.maskAction==='block' ? 1 : 0;
       RW._paintRect(s[0]*RW.W, s[1]*RW.H, en[0]*RW.W, en[1]*RW.H, val);
     }
-    const saveFloor = RW._areaFloor; if (RW.maskAction==='add') RW._areaFloor = 100;
-    RW._relabel(); RW.renderList(); RW.renderOverlay();
-    RW._areaFloor = saveFloor;
+    RW._relabel();
+    if (RW.maskAction==='add'){
+      // Force-include the region at the center of the drawn rect (ignore areaFloor)
+      const cx = Math.round((s[0]+en[0])/2 * RW.W), cy = Math.round((s[1]+en[1])/2 * RW.H);
+      if (cx>=0 && cx<RW.W && cy>=0 && cy<RW.H){
+        const l = RW.labels[cy*RW.W + cx];
+        if (l>=0 && RW.regions[l]) RW.regions[l].included = true;
+      }
+    }
+    RW.renderList(); RW.renderOverlay();
     RW._renderCommitPreview();
+    RW._showAreaHint(null);
   }, true);
 
   ac.addEventListener('click', function(e){
@@ -896,6 +918,117 @@
   }
   RW._syncRectBtn();
 
+  /* ---------- live area hint ---------- */
+  RW._showAreaHint = function(px){
+    const el = document.getElementById('rw-commit-status');
+    if (!el) return;
+    const floor = RW._areaFloor != null ? RW._areaFloor : 2500;
+    if (px == null){ el.innerText = ''; return; }
+    const ok = px >= floor;
+    el.innerHTML = '<span style="color:'+(ok?'#4c4':'#c44')+'">area: '+px+' px '+(ok?'≥':'<')+' '+floor+'</span>';
+  };
+  RW._polyArea = function(ptsN){
+    // Shoelace formula on normalized polygon points
+    let a=0; const n=ptsN.length;
+    for (let i=0;i<n;i++){ const j=(i+1)%n; a+=ptsN[i][0]*ptsN[j][1]-ptsN[j][0]*ptsN[i][1]; }
+    return Math.round(Math.abs(a/2) * RW.W * RW.H);
+  };
+
+  /* ---------- relabel with configured size floor ---------- */
+  RW.relabelAll = function(){
+    RW._relabel();
+    RW.renderList(); RW.renderOverlay();
+    RW._renderCommitPreview();
+  };
+
+  /* ---------- Global area-floor input (affects ALL tools + re-extract) ---------- */
+  if (bar && !document.getElementById('rw-relabel-inp')){
+    const inp = document.createElement('input');
+    inp.id = 'rw-relabel-inp';
+    inp.type = 'number';
+    inp.value = RW._areaFloor || 2500;
+    inp.title = 'Min region pixels (global). Affects all mask tools, Re-extract and Relabel.';
+    inp.style.cssText = 'font-size:11px;padding:1px 4px;width:52px;text-align:right;';
+    inp.onchange = function(){
+      const v = parseInt(this.value, 10);
+      RW._areaFloor = isNaN(v) ? 2500 : Math.max(1, v);
+    };
+    bar.appendChild(inp);
+    const rb = document.createElement('button');
+    rb.id = 'rw-relabel-btn';
+    rb.title = 'Relabel using the current pixel threshold.';
+    rb.style.cssText = 'font-size:11px;padding:2px 6px;';
+    rb.innerText = 'Relabel';
+    rb.onclick = ()=>RW.relabelAll();
+    bar.appendChild(rb);
+  }
+
+  /* ---------- wall overlay toggle (3-state: off → walls → floodable → off) ---------- */
+  RW.wallOverlayState = 0; // 0=off, 1=walls(red), 2=floodable(cyan)
+  RW.toggleWallOverlay = function(){
+    const existing = document.getElementById('rw-wall-overlay');
+    if (existing) existing.remove();
+    RW.wallOverlayState = (RW.wallOverlayState + 1) % 3;
+    if (RW.wallOverlayState === 0) return;
+    const {W,H,wall} = RW;
+    const ov = document.createElement('canvas');
+    ov.id = 'rw-wall-overlay';
+    ov.width = W; ov.height = H;
+    ov.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:44;opacity:0.7;image-rendering:pixelated;';
+    const ctx = ov.getContext('2d');
+    const img = ctx.createImageData(W, H);
+    if (RW.wallOverlayState === 1){
+      // Red = wall pixels
+      for (let i = 0; i < W*H; i++) {
+        if (wall[i] === 1) { img.data[i*4]=255; img.data[i*4+1]=60; img.data[i*4+2]=60; img.data[i*4+3]=220; }
+      }
+    } else {
+      // Cyan = enclosed white space (not reachable from border → would become regions)
+      // Match _relabel() behavior: existing included region pixels block the flood
+      const seen = new Uint8Array(W*H);
+      const q = [];
+      for (let x=0;x<W;x++){ q.push(x,(H-1)*W+x); }
+      for (let y=0;y<H;y++){ q.push(y*W,y*W+W-1); }
+      while(q.length){
+        const i = q.pop();
+        if (seen[i]||wall[i]) continue;
+        const ol = RW.labels[i];
+        if (ol>=0 && RW.regions[ol] && RW.regions[ol].included) continue;
+        seen[i]=1;
+        const x=i%W, y=(i/W)|0;
+        if(x>0)q.push(i-1); if(x<W-1)q.push(i+1);
+        if(y>0)q.push(i-W); if(y<H-1)q.push(i+W);
+      }
+      for (let i = 0; i < W*H; i++) {
+        if (!wall[i] && !seen[i]) { img.data[i*4]=60; img.data[i*4+1]=220; img.data[i*4+2]=255; img.data[i*4+3]=200; }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    document.getElementById('pdf-container').appendChild(ov);
+  };
+
+  /* ---------- W key: toggle wall overlay ---------- */
+  window.addEventListener('keydown', function(e){
+    const t = e.target;
+    if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
+    if (e.ctrlKey||e.metaKey||e.altKey) return;
+    if (e.key==='w'||e.key==='W'){
+      e.preventDefault(); e.stopImmediatePropagation();
+      RW.toggleWallOverlay();
+    }
+  }, true);
+
+  /* ---------- Walls panel button ---------- */
+  if (bar && !document.getElementById('rw-walls')){
+    const wb = document.createElement('button');
+    wb.id = 'rw-walls';
+    wb.title = 'Toggle wall overlay (W). Shows wall=1 pixels in red.';
+    wb.style.cssText = 'font-size:11px;padding:2px 6px;';
+    wb.innerText = 'Walls (W)';
+    wb.onclick = ()=>RW.toggleWallOverlay();
+    bar.appendChild(wb);
+  }
+
   return 'v2.1r unified rect up: B=rect (Shift+B toggles block/open), pan-stable';
 })()
 ;
@@ -952,7 +1085,8 @@
         const [px,py]=RW._toPx(nx,ny); return px+','+py;
       });
       if (cursorClient){
-        const [cnx,cny]=RW._toNorm(cursorClient.x,cursorClient.y);
+        let [cnx,cny]=RW._toNorm(cursorClient.x,cursorClient.y);
+        if (RW.maskMode2==='poly2' && RW._trySnap){ const s=RW._trySnap(cnx,cny); cnx=s[0]; cny=s[1]; }
         const [px,py]=RW._toPx(cnx,cny);
         pts.push(px+','+py);
       }
@@ -1477,8 +1611,9 @@
   ac.addEventListener('mousedown', function(e){
     if (!RW.maskMode2) return;
     e.stopPropagation(); e.preventDefault();
-    const [nx,ny]=RW._toNorm(e.clientX,e.clientY);
+    let [nx,ny]=RW._toNorm(e.clientX,e.clientY);
     if (RW.maskMode2==='poly2'){
+      if (RW._trySnap && !e.shiftKey){ const s=RW._trySnap(nx,ny); nx=s[0]; ny=s[1]; }
       RW._polyPtsN = RW._polyPtsN || [];
       RW._polyPtsN.push([nx,ny]);
       return;
@@ -1498,6 +1633,11 @@
     const [nx,ny]=RW._toNorm(e.clientX,e.clientY);
     if (RW.maskMode2==='poly2'){
       RW._renderPreview({x:e.clientX,y:e.clientY});
+      // Show polygon area (current vertices + cursor position)
+      if (RW._polyPtsN && RW._polyPtsN.length >= 2){
+        const pts = RW._polyPtsN.concat([[nx,ny]]);
+        RW._showAreaHint(RW._polyArea(pts));
+      }
       return;
     }
     if (RW.maskMode2==='brush'){
@@ -1507,6 +1647,12 @@
         RW._paintDisk(nx*RW.W, ny*RW.H, RW.brushR, val);
       }
       RW._renderBrushCursor(e.clientX, e.clientY);
+      // Show approximate brush area: stroke length × diameter
+      if (RW._brushDown && RW._brushStroke && RW._brushStroke.length > 1){
+        const strokes = RW._brushStroke.length;
+        const px = Math.round(strokes * RW.brushR * 2 * RW.brushR * 2);
+        RW._showAreaHint(px);
+      }
     }
   }, true);
 
@@ -1516,19 +1662,57 @@
     if (RW.maskMode2==='poly2') return;
     if (RW.maskMode2==='brush' && RW._brushDown){
       RW._brushDown = false;
+      RW._showAreaHint(null);
       if (RW.maskAction==='add'){
-        // Create perimeter ring around the cleared stroke
+        const {W,H,labels,regions,wall} = RW;
         const r = RW.brushR;
+        // Compute bbox of the brush stroke, build skip mask for existing regions
+        let bx0=W, by0=H, bx1=0, by1=0;
         for (const [snx,sny] of RW._brushStroke){
-          RW._paintDisk(snx*RW.W, sny*RW.H, r+2, 1);   // outer wall ring
+          const mx=Math.round(snx*W), my=Math.round(sny*H);
+          if (mx-(r+3)<bx0) bx0=mx-(r+3);
+          if (my-(r+3)<by0) by0=my-(r+3);
+          if (mx+(r+3)>bx1) bx1=mx+(r+3);
+          if (my+(r+3)>by1) by1=my+(r+3);
+        }
+        bx0=Math.max(0,bx0); by0=Math.max(0,by0);
+        bx1=Math.min(W-1,bx1); by1=Math.min(H-1,by1);
+        const skip = new Uint8Array(W*H);
+        for (let y=by0;y<=by1;y++) for (let x=bx0;x<=bx1;x++){
+          const l=labels[y*W+x];
+          if (l>=0 && regions[l] && regions[l].included) skip[y*W+x]=1;
+        }
+        // Create perimeter ring around the cleared stroke (skip existing regions)
+        for (const [snx,sny] of RW._brushStroke){
+          const mx=Math.round(snx*W), my=Math.round(sny*H);
+          const r0=Math.max(0,mx-(r+2)), r1=Math.min(W-1,mx+(r+2));
+          const c0=Math.max(0,my-(r+2)), c1=Math.min(H-1,my+(r+2));
+          for (let y=c0;y<=c1;y++) for (let x=r0;x<=r1;x++){
+            if (skip[y*W+x]) continue;
+            if ((x-mx)*(x-mx)+(y-my)*(y-my)<=(r+2)*(r+2)) wall[y*W+x]=1;
+          }
         }
         for (const [snx,sny] of RW._brushStroke){
-          RW._paintDisk(snx*RW.W, sny*RW.H, r-1, 0);    // reinforce interior clear
+          const mx=Math.round(snx*W), my=Math.round(sny*H);
+          const r0=Math.max(0,mx-(r-1)), r1=Math.min(W-1,mx+(r-1));
+          const c0=Math.max(0,my-(r-1)), c1=Math.min(H-1,my+(r-1));
+          for (let y=c0;y<=c1;y++) for (let x=r0;x<=r1;x++){
+            if (skip[y*W+x]) continue;
+            if ((x-mx)*(x-mx)+(y-my)*(y-my)<=(r-1)*(r-1)) wall[y*W+x]=0;
+          }
         }
       }
-      const saveFloor = RW._areaFloor; if (RW.maskAction==='add') RW._areaFloor = 100;
-      RW._relabel(); RW.renderList(); RW.renderOverlay();
-      RW._areaFloor = saveFloor;
+      RW._relabel();
+      if (RW.maskAction==='add' && RW._brushStroke && RW._brushStroke.length){
+        // Force-include the region at the center of the brush stroke
+        const sn = RW._brushStroke[Math.floor(RW._brushStroke.length/2)];
+        const cx = Math.round(sn[0]*RW.W), cy = Math.round(sn[1]*RW.H);
+        if (cx>=0 && cx<RW.W && cy>=0 && cy<RW.H){
+          const l = RW.labels[cy*RW.W + cx];
+          if (l>=0 && RW.regions[l]) RW.regions[l].included = true;
+        }
+      }
+      RW.renderList(); RW.renderOverlay();
       RW._renderCommitPreview();
     }
   }, true);
@@ -1539,9 +1723,34 @@
       if (RW._polyPtsN && RW._polyPtsN.length>=3){
       const mpts = RW._polyPtsN.map(([nx,ny])=>[nx*RW.W, ny*RW.H]);
       if (RW.maskAction==='add'){
-        // Clear interior first, then trace perimeter wall → creates new enclosed region
-        RW._paintPoly(mpts, 0);
-        RW._paintPolylineGap(mpts);
+        const {W,H,labels,regions,wall} = RW;
+        // Compute bbox of the polygon, build skip mask for existing regions
+        let bx0=W, by0=H, bx1=0, by1=0;
+        for (const [x,y] of mpts){
+          if (Math.round(x)-3<bx0) bx0=Math.round(x)-3;
+          if (Math.round(y)-3<by0) by0=Math.round(y)-3;
+          if (Math.round(x)+3>bx1) bx1=Math.round(x)+3;
+          if (Math.round(y)+3>by1) by1=Math.round(y)+3;
+        }
+        bx0=Math.max(0,bx0); by0=Math.max(0,by0);
+        bx1=Math.min(W-1,bx1); by1=Math.min(H-1,by1);
+        const skip = new Uint8Array(W*H);
+        for (let y=by0;y<=by1;y++) for (let x=bx0;x<=bx1;x++){
+          const l=labels[y*W+x];
+          if (l>=0 && regions[l] && regions[l].included) skip[y*W+x]=1;
+        }
+        // Fill-then-hollow with skip: paint wall over whitespace, clear interior
+        for (let y=by0;y<=by1;y++) for (let x=bx0;x<=bx1;x++) wall[y*W+x]=1;
+        // Shrink polygon inward by 2 mask px and clear the interior
+        const cx=mpts.reduce((s,[x])=>s+x,0)/mpts.length, cy=mpts.reduce((s,[,y])=>s+y,0)/mpts.length;
+        const inner = mpts.map(([x,y])=>{
+          const dx=x-cx, dy=y-cy, d=Math.hypot(dx,dy)||1;
+          return [x-(dx/d)*2, y-(dy/d)*2];
+        });
+        // Clear interior of the inner polygon, then restore skip pixels
+        RW._paintPoly(inner, 0);
+        for (let y=by0;y<=by1;y++) for (let x=bx0;x<=bx1;x++)
+          if (skip[y*W+x]) wall[y*W+x]=1;  // restore existing region pixels as wall
       } else if (RW.maskAction==='open'){
         // open mode: seal perimeter gaps, then convert interior walls to non-wall
         RW._paintPolylineGap(mpts);
@@ -1564,13 +1773,23 @@
       } else {
         RW._paintPoly(mpts, RW.maskAction==='block' ? 1 : 0);
       }
-      const saveFloor = RW._areaFloor; if (RW.maskAction==='add') RW._areaFloor = 100;
-      RW._relabel(); RW.renderList(); RW.renderOverlay();
-      RW._areaFloor = saveFloor;
+      RW._relabel();
+      if (RW.maskAction==='add' && RW._polyPtsN && RW._polyPtsN.length){
+        // Force-include the region at the centroid of the drawn poly
+        const cxN = RW._polyPtsN.reduce((s,[x])=>s+x,0)/RW._polyPtsN.length;
+        const cyN = RW._polyPtsN.reduce((s,[,y])=>s+y,0)/RW._polyPtsN.length;
+        const cx = Math.round(cxN*RW.W), cy = Math.round(cyN*RW.H);
+        if (cx>=0 && cx<RW.W && cy>=0 && cy<RW.H){
+          const l = RW.labels[cy*RW.W + cx];
+          if (l>=0 && RW.regions[l]) RW.regions[l].included = true;
+        }
+      }
+      RW.renderList(); RW.renderOverlay();
       RW._renderCommitPreview();
     }
     RW._polyPtsN=[];
     const pl=document.getElementById('rw-polyline'); if(pl) pl.remove();
+    RW._showAreaHint(null);
   }, true);
 
   ac.addEventListener('click', function(e){
@@ -1652,9 +1871,7 @@
     const k = e.key.toLowerCase();
     if (k==='a'){
       e.preventDefault(); e.stopImmediatePropagation();
-      const cycle = {block:'open',open:'add',add:'block'};
-      const next = e.shiftKey ? {add:'open',open:'block',block:'add'}[RW.maskAction] : cycle[RW.maskAction];
-      RW.setMaskAction(next);
+      RW.setMaskAction(RW.maskAction==='add' ? 'block' : 'add');
       return;
     }
     if (k==='n'){
@@ -1709,16 +1926,356 @@
   const bb = addBtn('rw-brush','Freehand mask stroke. Tab+scroll resizes. Shift+J toggles mode.');
   if (bb) bb.onclick=()=>RW.setMaskMode2(RW.maskMode2==='brush'?null:'brush');
   const ab = document.createElement('button');
-  ab.id='rw-addmode'; ab.title='Cycle mask action: block → open → add. A key toggles, Shift+A reverse.';
+  ab.id='rw-addmode'; ab.title='Toggle Add Region mode. A key also toggles.';
   ab.style.cssText='font-size:11px;padding:2px 6px;';
   ab.onclick=()=>{
-    const cycle = {block:'open',open:'add',add:'block'};
-    RW.setMaskAction(cycle[RW.maskAction]);
+    RW.setMaskAction(RW.maskAction==='add' ? 'block' : 'add');
   };
   bar.appendChild(ab);
   RW._syncToolButtons();
 
   return 'v2.6 up: Poly2 (N) + Brush (J) + Add (A)';
+})()
+
+;
+// ===== rw_snap.js =====
+// RW v2.7 — vertex snapping for the Poly2 tool.
+// Load AFTER rw_brushpoly.js (needs v2.6). Snaps freshly-placed Poly2 vertices
+// (mousedown) and the live preview point (mousemove) to nearby line
+// endpoints/intersections detected on the wall bitmap, so polygons lock onto
+// the actual linework instead of free-floating pixel positions.
+//
+// Pipeline (recomputed lazily, only when the wall bitmap has changed since
+// the last build — see RW._snapDirty):
+//   1. Density-prefilter RW.wall (RW._buildThinMask) via an integral image:
+//      any wall pixel whose local window is mostly wall gets excluded before
+//      skeletonizing. This matters a lot in practice — pavement-hatch fill
+//      routinely marks 30%+ of a whole drawing as "wall", and (a) that's WAY
+//      too many pixels to skeletonize synchronously without hanging the tab,
+//      and (b) hatching doesn't have meaningful line endpoints/junctions
+//      anyway, so it would just produce junk candidates. Only thin, line-like
+//      wall survives into step 2.
+//   2. Skeletonize the filtered mask (Zhang-Suen thinning, foreground-only
+//      active list so cost scales with surviving-pixel count, not full W×H).
+//   3. Classify skeleton pixels by 8-neighbor count: 1 neighbor = endpoint,
+//      3+ neighbors = junction (branch point). 2 = ordinary skeleton point,
+//      not a candidate.
+//   4. Cluster nearby candidates (skeletonization often yields a few adjacent
+//      pixels per real junction) into single snap points; junction wins over
+//      endpoint when a cluster mixes both kinds.
+//   5. Separately, add every included region's boundary pixel as an
+//      uncluustered 'edge' snap candidate (RW._buildEdgePoints) — this is what
+//      lets a vertex slide along any point of a region outline, not just its
+//      corners. Detected in a single O(W×H) pass over RW.labels (checking each
+//      included-region pixel's 4-neighbors for a different group/background),
+//      NOT by calling the existing RW._rawContour once per region — that
+//      function re-scans the entire W×H image on every call (it was written
+//      to trace 1-2 selected groups for a commit preview), so calling it per
+//      region here would be O(W×H × region count) and hang far worse than the
+//      density-fill issue this file already exists to avoid.
+//   6. Index the resulting points (clustered endpoints/junctions + raw edge
+//      pixels together) in a bucket grid for fast nearest-point lookup. The
+//      catch radius is recomputed per-query in current screen px
+//      (RW._snapCatchPx), so the snap feel stays constant across zoom levels
+//      the same way stroke widths do elsewhere in the workbench.
+(function(){
+  const RW = window.__RW;
+  if (!RW || !RW.v26) return 'need v2.6 first';
+  if (RW.v27) return 'v2.7 already installed';
+  RW.v27 = true;
+
+  RW._snapEnabled = true;
+  RW._snapDirty = true;
+  RW._snapPoints = [];
+  RW._lastSnapHit = null;
+
+  /* ---------- 1. density prefilter (integral image) ---------- */
+  // Window radius and density threshold that decide "thin line" vs "fill/hatch".
+  // Scaled to resolution the same way _areaFloor is (2592-px baseline).
+  RW._snapFillRadiusPx = function(){
+    return Math.max(4, Math.round(10 * (RW.W/2592)));
+  };
+  RW._snapFillDensityThresh = 0.55;
+
+  RW._buildThinMask = function(){
+    const {W,H,wall} = RW;
+    // Summed-area table, padded with a zero row/col so window queries never
+    // need to special-case the image edges.
+    const integ = new Float64Array((W+1)*(H+1));
+    for (let y=0;y<H;y++){
+      let rowSum=0;
+      const rowBase=(y+1)*(W+1), prevBase=y*(W+1);
+      for (let x=0;x<W;x++){
+        rowSum += wall[y*W+x];
+        integ[rowBase+x+1] = integ[prevBase+x+1] + rowSum;
+      }
+    }
+    function S(x,y){ return integ[(y+1)*(W+1)+(x+1)]; }
+    function windowSum(x0,y0,x1,y1){
+      x0=Math.max(0,x0); y0=Math.max(0,y0); x1=Math.min(W-1,x1); y1=Math.min(H-1,y1);
+      return S(x1,y1) - S(x0-1,y1) - S(x1,y0-1) + S(x0-1,y0-1);
+    }
+    const r = RW._snapFillRadiusPx();
+    const winArea = (2*r+1)*(2*r+1);
+    const capacity = winArea * RW._snapFillDensityThresh;
+    const thin = new Uint8Array(W*H);
+    for (let y=0;y<H;y++) for (let x=0;x<W;x++){
+      const i=y*W+x;
+      if (!wall[i]) continue;
+      if (windowSum(x-r,y-r,x+r,y+r) <= capacity) thin[i]=1;
+    }
+    return thin;
+  };
+
+  /* ---------- 2. skeletonize (Zhang-Suen, active-list optimized) ---------- */
+  // seed: the (already density-filtered) mask to thin — dense/hatched pixels
+  // are simply absent from it, so they're invisible to this step entirely.
+  RW._skeletonize = function(seed){
+    const {W,H} = RW;
+    const skel = new Uint8Array(seed);
+    let active = [];
+    for (let i=0;i<W*H;i++) if (skel[i]) active.push(i);
+
+    // 8-neighbors in clockwise order starting north (P2..P9 in the Zhang-Suen
+    // paper): N, NE, E, SE, S, SW, W, NW. Border pixels are skipped entirely
+    // (never deleted, never classified) so no bounds-wrapping logic is needed.
+    // Read as plain locals rather than a per-pixel array/object — this runs
+    // over the active list up to ~120 times, so allocation-per-pixel here is
+    // the difference between sub-second and tens of seconds.
+    let changed = true, iter = 0;
+    while (changed && iter < 60){
+      changed = false; iter++;
+      const del1 = [];
+      for (const i of active){
+        if (!skel[i]) continue;
+        const x=i%W, y=(i/W)|0;
+        if (x===0||x===W-1||y===0||y===H-1) continue;
+        const n0=skel[i-W], n1=skel[i-W+1], n2=skel[i+1], n3=skel[i+W+1],
+              n4=skel[i+W], n5=skel[i+W-1], n6=skel[i-1], n7=skel[i-W-1];
+        const B = n0+n1+n2+n3+n4+n5+n6+n7;
+        if (B<2||B>6) continue;
+        let A=0;
+        if (n0===0&&n1===1)A++; if(n1===0&&n2===1)A++; if(n2===0&&n3===1)A++; if(n3===0&&n4===1)A++;
+        if (n4===0&&n5===1)A++; if(n5===0&&n6===1)A++; if(n6===0&&n7===1)A++; if(n7===0&&n0===1)A++;
+        if (A!==1) continue;
+        if (n0*n2*n4!==0) continue; // P2*P4*P6
+        if (n2*n4*n6!==0) continue; // P4*P6*P8
+        del1.push(i);
+      }
+      if (del1.length){ for (const i of del1) skel[i]=0; changed=true; }
+
+      const del2 = [];
+      for (const i of active){
+        if (!skel[i]) continue;
+        const x=i%W, y=(i/W)|0;
+        if (x===0||x===W-1||y===0||y===H-1) continue;
+        const n0=skel[i-W], n1=skel[i-W+1], n2=skel[i+1], n3=skel[i+W+1],
+              n4=skel[i+W], n5=skel[i+W-1], n6=skel[i-1], n7=skel[i-W-1];
+        const B = n0+n1+n2+n3+n4+n5+n6+n7;
+        if (B<2||B>6) continue;
+        let A=0;
+        if (n0===0&&n1===1)A++; if(n1===0&&n2===1)A++; if(n2===0&&n3===1)A++; if(n3===0&&n4===1)A++;
+        if (n4===0&&n5===1)A++; if(n5===0&&n6===1)A++; if(n6===0&&n7===1)A++; if(n7===0&&n0===1)A++;
+        if (A!==1) continue;
+        if (n0*n2*n6!==0) continue; // P2*P4*P8
+        if (n0*n4*n6!==0) continue; // P2*P6*P8
+        del2.push(i);
+      }
+      if (del2.length){ for (const i of del2) skel[i]=0; changed=true; }
+
+      if (changed) active = active.filter(i=>skel[i]);
+    }
+    return {skel, pts: active};
+  };
+
+  /* ---------- 3. classify skeleton points ---------- */
+  RW._classifySkeleton = function(skel, pts){
+    const {W,H} = RW;
+    const candidates = [];
+    for (const i of pts){
+      const x=i%W, y=(i/W)|0;
+      if (x===0||x===W-1||y===0||y===H-1) continue;
+      const c = skel[i-W]+skel[i-W+1]+skel[i+1]+skel[i+W+1]
+              + skel[i+W]+skel[i+W-1]+skel[i-1]+skel[i-W-1];
+      if (c===1) candidates.push({x,y,kind:'endpoint'});
+      else if (c>=3) candidates.push({x,y,kind:'junction'});
+    }
+    return candidates;
+  };
+
+  /* ---------- 4. cluster nearby candidates ---------- */
+  // NOTE: a cluster is bucketed by its FIRST point's position; later merges
+  // can drift its centroid a little without re-bucketing. Harmless at the
+  // small merge radii used here (a few mask px).
+  RW._clusterPoints = function(candidates, mergeR){
+    const buckets = new Map();
+    const clusters = [];
+    for (const p of candidates){
+      const bx=(p.x/mergeR)|0, by=(p.y/mergeR)|0;
+      let found = null;
+      outer:
+      for (let dy=-1;dy<=1;dy++) for (let dx=-1;dx<=1;dx++){
+        const arr = buckets.get((bx+dx)+'_'+(by+dy));
+        if (!arr) continue;
+        for (const c of arr){
+          const ddx=c.x-p.x, ddy=c.y-p.y;
+          if (ddx*ddx+ddy*ddy <= mergeR*mergeR){ found=c; break outer; }
+        }
+      }
+      if (found){
+        found.sx+=p.x; found.sy+=p.y; found.n++;
+        found.x = found.sx/found.n; found.y = found.sy/found.n;
+        if (p.kind==='junction') found.kind='junction'; // junction beats endpoint
+      } else {
+        const c = {x:p.x,y:p.y,sx:p.x,sy:p.y,n:1,kind:p.kind};
+        clusters.push(c);
+        const k = ((c.x/mergeR)|0)+'_'+((c.y/mergeR)|0);
+        if (!buckets.has(k)) buckets.set(k, []);
+        buckets.get(k).push(c);
+      }
+    }
+    return clusters;
+  };
+
+  /* ---------- 5. region-outline edge points (single-pass, uncluustered) ---------- */
+  // Every included region's boundary pixel becomes its own snap candidate
+  // (not merged into one point like junctions are) so a vertex can land
+  // anywhere along the outline's length, not just at its corners.
+  RW._buildEdgePoints = function(){
+    const {W,H,labels,regions} = RW;
+    const edgePts = [];
+    function group(x,y){
+      const l = labels[y*W+x];
+      return (l>=0 && regions[l] && regions[l].included) ? regions[l].group : null;
+    }
+    for (let y=0;y<H;y++){
+      for (let x=0;x<W;x++){
+        const g = group(x,y);
+        if (g===null) continue;
+        const isBoundary =
+          (x===0   || group(x-1,y)!==g) ||
+          (x===W-1 || group(x+1,y)!==g) ||
+          (y===0   || group(x,y-1)!==g) ||
+          (y===H-1 || group(x,y+1)!==g);
+        if (isBoundary) edgePts.push({x,y,kind:'edge'});
+      }
+    }
+    return edgePts;
+  };
+
+  /* ---------- 6. spatial index + zoom-invariant catch radius ---------- */
+  RW._snapMergeRadiusPx = function(){
+    return Math.max(3, Math.round(6 * (RW.W/2592))); // same 2592-baseline scaling as _areaFloor
+  };
+  RW._snapCellPx = function(){
+    return Math.max(4, Math.round(RW.W/200));
+  };
+  RW._snapCatchPx = function(){
+    // constant ~14 screen px catch radius regardless of current zoom level
+    const cr = document.getElementById('pdf-container').getBoundingClientRect();
+    return (14 / cr.width) * RW.W;
+  };
+
+  RW._buildSnapIndex = function(){
+    const cell = RW._snapCellPx();
+    RW._snapCell = cell;
+    const grid = new Map();
+    for (const p of RW._snapPoints){
+      const k = ((p.x/cell)|0)+'_'+((p.y/cell)|0);
+      if (!grid.has(k)) grid.set(k, []);
+      grid.get(k).push(p);
+    }
+    RW._snapGrid = grid;
+  };
+
+  RW._nearestSnapPoint = function(mx, my){
+    const grid = RW._snapGrid; if (!grid) return null;
+    const cell = RW._snapCell;
+    const rad = RW._snapCatchPx();
+    const bx=(mx/cell)|0, by=(my/cell)|0;
+    const c = Math.max(1, Math.ceil(rad/cell));
+    let best=null, bestD=rad*rad;
+    for (let dy=-c;dy<=c;dy++) for (let dx=-c;dx<=c;dx++){
+      const arr = grid.get((bx+dx)+'_'+(by+dy));
+      if (!arr) continue;
+      for (const p of arr){
+        const ddx=p.x-mx, ddy=p.y-my;
+        const d=ddx*ddx+ddy*ddy;
+        if (d<bestD){ bestD=d; best=p; }
+      }
+    }
+    return best;
+  };
+
+  RW._buildSnapPoints = function(){
+    if (!RW.wall || !RW.W || !RW.H){ RW._snapPoints=[]; RW._snapDirty=false; return; }
+    const thin = RW._buildThinMask();
+    const {skel, pts} = RW._skeletonize(thin);
+    const candidates = RW._classifySkeleton(skel, pts);
+    const clustered = RW._clusterPoints(candidates, RW._snapMergeRadiusPx());
+    const edgePts = (RW.labels && RW.regions) ? RW._buildEdgePoints() : [];
+    RW._snapPoints = clustered.concat(edgePts);
+    RW._buildSnapIndex();
+    RW._snapDirty = false;
+  };
+
+  // nx,ny are normalized page coords. Returns [nx,ny], snapped if a nearby
+  // endpoint/junction was found and snapping is enabled.
+  RW._trySnap = function(nx, ny){
+    if (!RW._snapEnabled){ RW._lastSnapHit=null; return [nx, ny]; }
+    if (RW._snapDirty) RW._buildSnapPoints();
+    if (!RW._snapPoints || !RW._snapPoints.length){ RW._lastSnapHit=null; return [nx, ny]; }
+    const mx = nx*RW.W, my = ny*RW.H;
+    const hit = RW._nearestSnapPoint(mx, my);
+    RW._lastSnapHit = hit || null;
+    if (!hit) return [nx, ny];
+    return [hit.x/RW.W, hit.y/RW.H];
+  };
+
+  /* ---------- invalidate on any wall-bitmap change ---------- */
+  const origRelabel = RW._relabel;
+  RW._relabel = function(){ const r = origRelabel.apply(RW, arguments); RW._snapDirty = true; return r; };
+  const origExtract = RW.extract;
+  RW.extract = function(){ const r = origExtract.apply(RW, arguments); RW._snapDirty = true; return r; };
+
+  /* ---------- snap-hit marker on the poly2 preview ---------- */
+  (function(){
+    const orig = RW._renderPreview;
+    RW._renderPreview = function(cursorClient){
+      const ret = orig.call(RW, cursorClient);
+      if (RW.maskMode2==='poly2' && RW._lastSnapHit){
+        const svg = document.getElementById('rw-polyline');
+        if (svg){
+          const [px,py] = RW._toPx(RW._lastSnapHit.x/RW.W, RW._lastSnapHit.y/RW.H);
+          const ring = document.createElementNS('http://www.w3.org/2000/svg','circle');
+          ring.setAttribute('cx', px); ring.setAttribute('cy', py); ring.setAttribute('r', 6);
+          ring.setAttribute('fill','none');
+          ring.setAttribute('stroke', RW._lastSnapHit.kind==='junction' ? '#0f0' : RW._lastSnapHit.kind==='endpoint' ? '#0ff' : '#ff0');
+          ring.setAttribute('stroke-width','2');
+          svg.appendChild(ring);
+        }
+      }
+      return ret;
+    };
+  })();
+
+  /* ---------- panel toggle ---------- */
+  const bar = (document.getElementById('rw-pick') || {}).parentNode;
+  if (bar && !document.getElementById('rw-snap')){
+    const sb = document.createElement('button');
+    sb.id = 'rw-snap';
+    sb.title = 'Snap Poly2 vertices to nearby line endpoints/intersections (green/cyan) or along any included region\'s outline (yellow). Hold Shift while clicking to place a vertex without snapping.';
+    sb.style.cssText = 'font-size:11px;padding:2px 6px;';
+    function sync(){
+      sb.innerText = 'Snap ' + (RW._snapEnabled ? 'On' : 'Off');
+      sb.style.background = RW._snapEnabled ? 'rgba(50,205,50,0.3)' : '';
+    }
+    sb.onclick = ()=>{ RW._snapEnabled = !RW._snapEnabled; sync(); };
+    bar.appendChild(sb);
+    sync();
+  }
+
+  return 'v2.7 up: Poly2 vertex snapping (endpoints/intersections + region outlines). Shift bypasses.';
 })()
 
 ;

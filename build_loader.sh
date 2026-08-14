@@ -26,7 +26,7 @@ cat > "$OUT" <<'HEADER'
 HEADER
 
 FIRST=1
-for f in rw_panelux.js rw_install.js rw_masktools.js rw_stable.js rw_undo.js rw_commit.js rw_brushpoly.js wf_helpers.js; do
+for f in rw_panelux.js rw_install.js rw_masktools.js rw_stable.js rw_undo.js rw_commit.js rw_brushpoly.js rw_snap.js wf_helpers.js; do
   if [ $FIRST -eq 0 ]; then printf ';\n' >> "$OUT"; fi
   FIRST=0
   echo "// ===== $f =====" >> "$OUT"
