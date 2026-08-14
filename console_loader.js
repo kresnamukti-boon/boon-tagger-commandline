@@ -228,7 +228,14 @@
     const x2 = c2.getContext('2d');
     for (const a of annotationState.annotations){
       if (a._hidden || a.is_void) continue;
-      const pts = a.coordinates; if (!pts||!pts.length) continue;
+      // Array.isArray, not just !pts.length — a bbox-type annotation stores
+      // coordinates as {x,y,width,height}, not a point array. This specific
+      // check (!pts.length) happens to catch that case since `undefined`
+      // negates to true, but rw_healinterior.js/rw_textdetect.js used
+      // `pts.length<3` instead, which does NOT catch it (`undefined < 3` is
+      // false in JS) and crashed on .forEach — confirmed live. Using
+      // Array.isArray here too for real defense-in-depth, not just luck.
+      const pts = a.coordinates; if (!Array.isArray(pts) || !pts.length) continue;
       x2.fillStyle='#000';
       x2.beginPath();
       pts.forEach((p,i)=>{ const X=p.x*W, Y=p.y*H; i?x2.lineTo(X,Y):x2.moveTo(X,Y); });
@@ -2093,7 +2100,12 @@
       actx.fillStyle = '#000';
       for (const a of annotationState.annotations){
         if (a._hidden || a.is_void) continue;
-        const pts = a.coordinates; if (!pts || pts.length<3) continue;
+        // Array.isArray, not just !pts.length — a bbox-type annotation stores
+        // coordinates as {x,y,width,height}, not a point array; that object
+        // has no .length at all, and `undefined < 3` is false in JS, so the
+        // old `pts.length<3` guard let it silently through to pts.forEach(),
+        // which doesn't exist on a plain object. Confirmed live.
+        const pts = a.coordinates; if (!Array.isArray(pts) || pts.length<3) continue;
         actx.beginPath();
         pts.forEach((p,idx)=>{ const X=p.x*W, Y=p.y*H; idx?actx.lineTo(X,Y):actx.moveTo(X,Y); });
         actx.closePath(); actx.fill();
@@ -2827,7 +2839,12 @@
     ctx.fillStyle = '#000';
     for (const a of (typeof annotationState!=='undefined' ? annotationState.annotations : [])){
       if (a._hidden || a.is_void) continue;
-      const pts = a.coordinates; if (!pts || pts.length<3) continue;
+      // Array.isArray, not just !pts.length — a bbox-type annotation stores
+      // coordinates as {x,y,width,height}, not a point array; `undefined < 3`
+      // is false in JS, so the old guard let that object slip through to
+      // pts.forEach(), which doesn't exist on it. Confirmed live (same bug
+      // as rw_healinterior.js).
+      const pts = a.coordinates; if (!Array.isArray(pts) || pts.length<3) continue;
       ctx.beginPath();
       pts.forEach((p,i)=>{ const X=p.x*W, Y=p.y*H; i?ctx.lineTo(X,Y):ctx.moveTo(X,Y); });
       ctx.closePath(); ctx.fill();
@@ -2931,17 +2948,22 @@
   /* ---------- panel controls ---------- */
   const bar = (document.getElementById('rw-pick') || {}).parentNode;
   if (bar && !document.getElementById('rw-textdetect')){
+    // Single wrapper so the whole cluster (button + cell/min inputs + status)
+    // can be shown/hidden as one unit — see the "hide clutter" block below.
+    const group = document.createElement('span');
+    group.id = 'rw-textdetect-group';
+
     const b = document.createElement('button');
     b.id = 'rw-textdetect';
     b.title = 'Prototype: highlight areas where skeleton points cluster densely (likely text/dimensions). Detection only — nothing is edited.';
     b.style.cssText = 'font-size:11px;padding:2px 6px;';
     b.innerText = 'Text? (density)';
     b.onclick = () => RW.toggleTextOverlay();
-    bar.appendChild(b);
+    group.appendChild(b);
 
     const label1 = document.createElement('span');
     label1.innerText = 'cell'; label1.style.cssText = 'font-size:10px;opacity:0.7;margin-left:4px;';
-    bar.appendChild(label1);
+    group.appendChild(label1);
     const cellInp = document.createElement('input');
     cellInp.type = 'number'; cellInp.value = RW._textCellPx;
     cellInp.title = 'Density grid cell size (mask px). Roughly a character height.';
@@ -2952,11 +2974,11 @@
       RW._textDirty = true;
       RW._renderTextOverlay();
     };
-    bar.appendChild(cellInp);
+    group.appendChild(cellInp);
 
     const label2 = document.createElement('span');
     label2.innerText = 'min'; label2.style.cssText = 'font-size:10px;opacity:0.7;margin-left:4px;';
-    bar.appendChild(label2);
+    group.appendChild(label2);
     const minInp = document.createElement('input');
     minInp.type = 'number'; minInp.value = RW._textMinPerCell;
     minInp.title = 'Minimum candidate points per cell to flag as text-like.';
@@ -2967,13 +2989,25 @@
       RW._textDirty = true;
       RW._renderTextOverlay();
     };
-    bar.appendChild(minInp);
+    group.appendChild(minInp);
 
     const status = document.createElement('span');
     status.id = 'rw-textdetect-count';
     status.style.cssText = 'font-size:10px;opacity:0.7;margin-left:4px;';
-    bar.appendChild(status);
+    group.appendChild(status);
+
+    bar.appendChild(group);
   }
+
+  /* ---------- hide clutter (per user request, not currently useful for
+     their work) — hide, don't remove, so the underlying functionality stays
+     intact and easy to re-enable later. Same convention rw_brushpoly.js
+     already uses to hide its own legacy 'poly' button. Done here (loaded
+     last) since Relabel/Add live in earlier-loaded files. ---------- */
+  ['rw-relabel-btn', 'rw-addmode', 'rw-textdetect-group'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
 
   return 'v2.9 up: text-density overlay (detection only, no edits) — "Text? (density)" panel button';
 })()
