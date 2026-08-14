@@ -8,8 +8,7 @@ annotation page — no server, no build step, nothing persists until you click t
 ## Files & load order
 
 Each module is a versioned IIFE gated on the previous module's version flag, so this order is
-load-bearing, not cosmetic. `console_loader.js` concatenates 1-10; `console_loader_sam.js` adds
-11.
+load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in order.
 
 1. **rw_panelux.js** — loads first, before anything else exists. Collapsible panel UI, and the
    **RW: ON/OFF** master killswitch that gates every handler the later modules register.
@@ -33,13 +32,10 @@ load-bearing, not cosmetic. `console_loader.js` concatenates 1-10; `console_load
 10. **rw_textdetect.js** — **Text? (density)** whole-page detection-only overlay (see below).
     Currently hidden in the panel along with **Relabel** and **Add ⊕** (not removed — see
     "Hidden controls" below).
-11. **rw_sam.js** (SAM build only) — **SAM3 Box (S)**: draw a box, SAM3-via-Replicate segments
-    it through a local proxy (`sam3_proxy.py`, not in this repo, must be running on port 5001).
 
 **To rebuild** after editing any `rw_*.js` source module:
 ```bash
 bash build_loader.sh          # console_loader.js
-bash build_loader_sam.sh      # console_loader_sam.js (SAM build)
 bash build_userscript.sh      # region-workbench.user.js (Tampermonkey build, not in active use)
 ```
 
@@ -47,8 +43,7 @@ bash build_userscript.sh      # region-workbench.user.js (Tampermonkey build, no
 
 1. Navigate to the Constructions Tagger annotation page.
 2. Press **F12** → **Console** tab.
-3. Paste the entire contents of `console_loader.js` (or `console_loader_sam.js` if you need SAM),
-   press **Enter**.
+3. Paste the entire contents of `console_loader.js`, press **Enter**.
 4. The workbench installs automatically once the page canvas is ready (up to ~30s).
 
 Paste again after each page navigation — nothing persists server-side until you manually click
@@ -82,7 +77,6 @@ Rect/Poly2/Brush respectively.
 | Shift (hold, placing a Poly2 vertex) | bypass vertex snap for that click |
 | `` ` `` (backtick) | undo last mask edit (block/open/poly/brush/cut/merge/heal) |
 | `Escape` | cancel current workbench mode / clear in-progress poly vertices |
-| `Shift+S` | toggle SAM3 Box mode (SAM build only) |
 
 Merge has no hotkey (app uses `M` for mirror) — select 2+ regions, click **Merge** in panel.
 

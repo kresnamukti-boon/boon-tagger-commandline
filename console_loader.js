@@ -2433,7 +2433,6 @@
         if (RW._syncRectBtn) RW._syncRectBtn();
       }
       if (RW.maskMode2) RW.setMaskMode2(null);
-      if (RW.samBoxMode) RW.samBoxMode = false;
       if (!RW._healPreviewOn || !RW._healNoiseMask){
         if (!RW.selected.size){
           console.warn('[RW] Heal Brush: pick a region and preview Heal Interior first');
@@ -2539,14 +2538,6 @@
       if (mode && RW.healBrushMode) RW.setHealBrushMode(false);
     };
   }
-  // SAM Box (rw_sam.js, SAM build only) has no equivalent shared touchpoint —
-  // fall back to catching its keyboard shortcut specifically.
-  window.addEventListener('keydown', function(e){
-    const t = e.target;
-    if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
-    if (RW.healBrushMode && e.key==='S' && e.shiftKey) RW.setHealBrushMode(false);
-  }, true);
-
   if (bar && !document.getElementById('rw-healbrush-btn')){
     const hb = document.createElement('button');
     hb.id = 'rw-healbrush-btn';
