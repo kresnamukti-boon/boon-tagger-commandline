@@ -30,8 +30,15 @@ in the page until reload/navigation, then must be re-injected.
    - "Heal Interior?" previews wall pixels inside the Pick-mode selection that are safe to erase
      (text/hatch/dimension marks) without merging the region into a neighbor or an existing
      annotation; "Apply Heal" commits it (undo-tracked like other mask edits)
+   - "Edit Heal (Brush)" lets you manually correct the preview: drag to mark more area as noise,
+     Shift+drag to protect/un-mark an area the detector got wrong; Tab+scroll resizes the brush
    - `hole≤` panel input tunes how big a non-included neighboring area can be before it's
      protected rather than treated as negligible noise
+   - `barrier≥` panel input protects a thick boundary line from being partially eaten through
+     its middle — set it to roughly the line's full pixel thickness, not half. Protection only
+     expands inward from the line's outer face (the side facing a different region/exterior),
+     never from the side facing the selected region's own interior, so half the thickness isn't
+     enough
 
 6. **rw_snap.js** — Poly2 vertex snapping (v2.7, needs rw_brushpoly)
    - Poly2 vertices snap to nearby line endpoints/intersections detected on the wall bitmap

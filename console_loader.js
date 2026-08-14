@@ -1951,9 +1951,11 @@
 // Status: shipped, in both console loaders. Paused for a time after four
 // rounds of live testing each surfacing a genuinely different failure mode
 // (see below); a fifth round (annotation-knockout protection) fixed the
-// remaining known issue and this was re-enabled. If a new failure mode turns
-// up, read the five rounds below first before assuming it's something new —
-// the fix for one round has occasionally looked like it broke another.
+// remaining known issue and this was re-enabled. A sixth round (barrier-
+// margin expansion) fixed a thick-line erosion issue found afterward. If a
+// new failure mode turns up, read all six rounds below first before assuming
+// it's something new — the fix for one round has occasionally looked like it
+// broke another.
 //
 // Reframed from the whole-page text-density overlay (rw_textdetect.js) after
 // live testing showed the real problem isn't "where does text sit on the
@@ -1965,7 +1967,7 @@
 // text/hatch shape itself, producing a jagged polygon instead of one clean
 // outline.
 //
-// Five failure modes found live, in order:
+// Six failure modes found live, in order:
 //   1. Connected-component veto (flood all touching wall into one blob, veto
 //      the WHOLE blob if any part touches something unsafe) was fatally
 //      coarse — dimension/leader lines touch the real perimeter often enough
@@ -2001,6 +2003,39 @@
 //      annotation-knockout mask here and hard-excluding it, both from the
 //      reachability flood (never steps into it) and as a final filter on the
 //      result (belt-and-suspenders, given the history above).
+//   6. (Fixed, currently shipped.) The original per-pixel safety test only
+//      checks each wall pixel's OWN immediate 1-hop neighbors — correct for
+//      thin (1-2px) barriers, since every pixel in a thin line directly
+//      touches the outside. But on a THICK drawn barrier (a wide stroke),
+//      only its outer ~1px skin touches anything unsafe this way; pixels in
+//      the middle of the thickness are surrounded by more of the same wall
+//      on all sides and look exactly like real interior noise. Confirmed
+//      live: a thick black boundary line got partially hollowed out through
+//      its middle — never merges two regions (so the OLD test wasn't
+//      "wrong" by its own rule), but visibly damages a real boundary and
+//      would corrupt the commit contour along that stretch. Fixed by finding
+//      the "unsafe shell" (wall pixels whose own neighbor is unsafe, i.e.
+//      exactly what the old test flagged as protected) and widening it by a
+//      bounded multi-source BFS (RW._healBarrierMargin, default ~12px at
+//      2592-baseline resolution) through reachable wall only.
+//
+//      IMPORTANT, verified with a synthetic test after shipping: this only
+//      protects HALF as deep as it looks like it should for the most common
+//      case — a region's own boundary line facing a *different* region or
+//      exterior. The near face of that line (the side touching the region's
+//      own interior) never starts "unsafe" — crossing into your own open
+//      space is never foreign — so the BFS only ever expands inward from the
+//      single far face. A 16px-thick barrier in testing needed
+//      RW._healBarrierMargin ~= 16 (the FULL thickness) to be fully
+//      protected; margin=10 (~2/3 of the thickness) still left ~23% of it
+//      erodable. The "up to 2x margin thick, expansion from both sides meet
+//      in the middle" framing only holds when NEITHER face of the wall
+//      segment is the target region's own interior, which is the rare case,
+//      not the norm. Practical upshot: set barrier≥ to roughly the visible
+//      line's FULL pixel thickness, not half of it. (Genuine deep-interior
+//      noise, far from any real boundary, is unaffected by this and still
+//      gets flagged correctly at any margin setting — confirmed in the same
+//      test.)
 //
 // The throughline: this approach can only ever reason from wall/label
 // topology, and real drawings have cases (structure connected via a small
@@ -2160,17 +2195,69 @@
       }
     }
 
-    // Per-pixel safety test, restricted to the reachable wall set.
+    // Per-pixel safety test, restricted to the reachable wall set. This finds
+    // the "unsafe shell" — reachable wall pixels whose own immediate neighbor
+    // is exterior/protected/annotation. On a THICK barrier (a wide drawn
+    // line), only its outer ~1px skin touches something unsafe this way —
+    // pixels in the middle of the thickness are surrounded by more of the
+    // same wall on all sides, so they look exactly like real interior noise
+    // and get flagged too. Confirmed live: a thick black boundary line got
+    // partially hollowed out through its middle, leaving thin slivers of the
+    // original line on both edges — technically never merges two regions,
+    // but visibly damages a real boundary and would corrupt the commit
+    // contour along exactly that stretch.
+    const unsafeShell = new Uint8Array(W*H);
+    for (let i=0;i<W*H;i++){
+      if (!reachableWall[i] || annotationMask[i]) continue;
+      const x=i%W, y=(i/W)|0;
+      let unsafe = false;
+      if (x>0 && (exterior[i-1] || isProtectedRegion(i-1) || annotationMask[i-1])) unsafe=true;
+      if (!unsafe && x<W-1 && (exterior[i+1] || isProtectedRegion(i+1) || annotationMask[i+1])) unsafe=true;
+      if (!unsafe && y>0 && (exterior[i-W] || isProtectedRegion(i-W) || annotationMask[i-W])) unsafe=true;
+      if (!unsafe && y<H-1 && (exterior[i+W] || isProtectedRegion(i+W) || annotationMask[i+W])) unsafe=true;
+      if (unsafe) unsafeShell[i]=1;
+    }
+
+    // Widen that shell by a bounded margin (RW._healBarrierMargin, default
+    // ~12px at this job's resolution) via a multi-source BFS through
+    // reachable wall pixels only — this "thickens" protection to cover
+    // realistic barrier widths. NOTE: for the common case (a region's own
+    // boundary facing a different region/exterior), only the OUTER face ever
+    // starts in unsafeShell — the inner face touches the region's own
+    // interior, which is never "foreign" — so expansion only reaches inward
+    // from that single face. Set the margin to roughly the line's FULL
+    // pixel thickness, not half; verified live that margin=thickness/2 still
+    // leaves a real fraction of the line erodable. Genuinely deep interior
+    // noise (further than the margin from any real boundary) still gets
+    // flagged regardless. Bounded and cheap: it only walks the already-small
+    // reachable-wall set, not the whole image.
+    const margin = RW._healBarrierMargin != null ? RW._healBarrierMargin : Math.max(4, Math.round(12*(RW.W/2592)));
+    const protectedExpanded = new Uint8Array(W*H);
+    {
+      let frontier = [];
+      for (let i=0;i<W*H;i++) if (unsafeShell[i]){ protectedExpanded[i]=1; frontier.push(i); }
+      for (let step=0; step<margin && frontier.length; step++){
+        const next = [];
+        for (const i of frontier){
+          const x=i%W, y=(i/W)|0;
+          const neigh = [];
+          if (x>0) neigh.push(i-1);
+          if (x<W-1) neigh.push(i+1);
+          if (y>0) neigh.push(i-W);
+          if (y<H-1) neigh.push(i+W);
+          for (const n of neigh){
+            if (protectedExpanded[n] || !reachableWall[n]) continue;
+            protectedExpanded[n]=1;
+            next.push(n);
+          }
+        }
+        frontier = next;
+      }
+    }
+
     const noise = new Uint8Array(W*H);
     for (let i=0;i<W*H;i++){
-      if (!reachableWall[i] || annotationMask[i]) continue; // belt-and-suspenders on top of the flood exclusion above
-      const x=i%W, y=(i/W)|0;
-      let safe = true;
-      if (x>0 && (exterior[i-1] || isProtectedRegion(i-1) || annotationMask[i-1])) safe=false;
-      if (safe && x<W-1 && (exterior[i+1] || isProtectedRegion(i+1) || annotationMask[i+1])) safe=false;
-      if (safe && y>0 && (exterior[i-W] || isProtectedRegion(i-W) || annotationMask[i-W])) safe=false;
-      if (safe && y<H-1 && (exterior[i+W] || isProtectedRegion(i+W) || annotationMask[i+W])) safe=false;
-      if (safe) noise[i]=1;
+      if (reachableWall[i] && !annotationMask[i] && !protectedExpanded[i]) noise[i]=1;
     }
     return noise;
   };
@@ -2282,6 +2369,30 @@
       }, 250);
     };
     bar.appendChild(holeInp);
+
+    const label3 = document.createElement('span');
+    label3.innerText = 'barrier≥'; label3.style.cssText = 'font-size:10px;opacity:0.7;margin-left:4px;';
+    bar.appendChild(label3);
+    const marginInp = document.createElement('input');
+    marginInp.type = 'number';
+    marginInp.value = RW._healBarrierMargin != null ? RW._healBarrierMargin : Math.max(4, Math.round(12*(RW.W/2592)));
+    marginInp.title = 'Protection margin (mask px) around any real barrier — raise this if a thick boundary line is getting partially eaten through its middle. Set this to roughly the FULL pixel thickness of the line you see (not half) — protection only expands inward from the line\'s outer face, not from both sides at once.';
+    marginInp.style.cssText = 'font-size:11px;padding:1px 4px;width:44px;text-align:right;';
+    let marginDebounce = null;
+    marginInp.oninput = function(){
+      clearTimeout(marginDebounce);
+      const v = parseInt(marginInp.value, 10);
+      if (isNaN(v)) return;
+      marginDebounce = setTimeout(function(){
+        RW._healBarrierMargin = Math.max(0, v);
+        if (RW._healPreviewOn && RW.selected.size){
+          RW._healNoiseMask = RW._computeInteriorNoise(RW.selected);
+          RW._renderHealPreview();
+          RW._syncHealButtons();
+        }
+      }, 250);
+    };
+    bar.appendChild(marginInp);
   }
 
   /* ---------- manual brush correction for the heal preview ---------- */
