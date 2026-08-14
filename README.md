@@ -26,11 +26,23 @@ in the page until reload/navigation, then must be re-injected.
    - Poly: Backspace removes last vertex; first Escape clears vertices, second closes tool
    - Block/Open/Poly-commit/Cut/Merge: snapshot undo stack, backtick (`) or panel button
 
-5. **rw_snap.js** — Poly2 vertex snapping (v2.7, needs rw_brushpoly)
+5. **rw_healinterior.js** — Interior noise healing (v3, needs rw_undo)
+   - "Heal Interior?" previews wall pixels inside the Pick-mode selection that are safe to erase
+     (text/hatch/dimension marks) without merging the region into a neighbor or an existing
+     annotation; "Apply Heal" commits it (undo-tracked like other mask edits)
+   - `hole≤` panel input tunes how big a non-included neighboring area can be before it's
+     protected rather than treated as negligible noise
+
+6. **rw_snap.js** — Poly2 vertex snapping (v2.7, needs rw_brushpoly)
    - Poly2 vertices snap to nearby line endpoints/intersections detected on the wall bitmap
    - Hold Shift while placing a vertex to bypass snapping; panel "Snap On/Off" toggles it globally
 
-6. **wf_helpers.js** — Independent utilities (any order)
+7. **rw_textdetect.js** — Text/hatch density overlay (v2.9, needs rw_snap)
+   - "Text? (density)" panel toggle highlights likely text/dimension areas across the whole
+     page for manual review — detection only, never edits the mask
+   - `cell`/`min` panel inputs tune the density threshold live
+
+8. **wf_helpers.js** — Independent utilities (any order)
    - `[` / `]` — prev/next page in job
    - `/` — focus tag search box
    - `H` — coverage heatmap (red = no annotation there yet)
@@ -75,12 +87,18 @@ Merge has no hotkey (app uses M for mirror) — select 2+ regions, click Merge i
 
 Modes: A pan, S select, D draw, F label, G crop, M mirror
 Tools (draw mode): Q linear, W bounding box, E count, R polygon, T polyline, Y circle, U revision cloud
-V void mode, 1-9/0 tag select+draw, Space temp pan
+K magic wand (tolerance/detail sliders), X wrap, V void mode, 1-9/0 tag select+draw, Space temp pan
 Ctrl/Cmd +/-/0 zoom, Ctrl+scroll zoom
 Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo
 Delete/Backspace delete selected, Ctrl+C/V copy/paste, Ctrl+Shift+V mirror paste
 Double-click finishes polygon/polyline
 Arrows nudge selection 1px, Shift+arrows 10px
+
+**Known collision:** the workbench's own **K** (Cut mode) is bound on `document` in the
+capture phase and calls `stopPropagation()`, so it fully shadows the app's **K = Magic Wand**
+keyboard shortcut whenever the workbench is loaded and enabled. To use the app's own Magic
+Wand tool, either click its "K Wand" button directly (mouse clicks aren't affected) or toggle
+the workbench's **RW: ON/OFF** killswitch off first.
 
 ## Boundaries
 
