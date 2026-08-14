@@ -42,11 +42,6 @@ in the page until reload/navigation, then must be re-injected.
      page for manual review — detection only, never edits the mask
    - `cell`/`min` panel inputs tune the density threshold live
 
-8. **wf_helpers.js** — Independent utilities (any order)
-   - `[` / `]` — prev/next page in job
-   - `/` — focus tag search box
-   - `H` — coverage heatmap (red = no annotation there yet)
-
 ## Injection
 
 Open the annotation page, then paste the full `console_loader.js` into the browser console:
@@ -77,9 +72,6 @@ bash build_loader.sh
 | Escape (in poly) | clear vertices first, then close tool |
 | ` (backtick) | undo last mask edit (block/open/poly/cut/merge) |
 | Escape | cancel current workbench mode |
-| H | coverage heatmap toggle |
-| [ / ] | prev / next page |
-| / | focus tag search |
 
 Merge has no hotkey (app uses M for mirror) — select 2+ regions, click Merge in panel.
 
