@@ -1,24 +1,16 @@
 // RW v2.8 — collapsible panel + master killswitch.
-// MUST be loaded FIRST (before rw_install). Establishes RW.enabled and
-// wraps annotation-canvas's addEventListener so every handler registered
-// by subsequent modules checks RW.enabled automatically.
-// Panel UX (collapse/resize/toggle) attaches at the end.
+// MUST be loaded FIRST (before rw_install). Wraps annotation-canvas's
+// addEventListener so every handler registered by later modules auto-checks
+// RW.enabled.
 (function boot(){
   'use strict';
 
-  // Do NOT create __RW here — rw_install will create it. We just set up
-  // the addEventListener wrappers so subsequent modules get auto-gated.
-  // After rw_install runs, poll for __RW and attach our state + panel UX.
-
-  // We need RW.enabled accessible BEFORE rw_install runs (the wrapper checks
-  // it). Store it on a separate object that the wrapper reads.
+  // __RW doesn't exist yet (rw_install creates it). Gate lives on a separate
+  // object until retrofit().
   if (!window.__RWgate) window.__RWgate = { enabled: true };
   const gate = window.__RWgate;
 
   /* ---------- auto-gate all annotation-canvas listeners ---------- */
-  // Override addEventListener on the annotation-canvas so any handler
-  // registered by us checks RW.enabled first. Store the original under
-  // _rawAdd so the override itself doesn't get wrapped.
   const ac = document.getElementById('annotation-canvas');
   if (ac && !ac.__RWrawAdd){
     ac.__RWrawAdd = ac.addEventListener;
@@ -31,12 +23,11 @@
     };
   }
 
-  // Also wrap window keydown (capture) for the modules that attach there
+  // Also wraps window keydown (capture)
   if (!window.__RWrawAddKey){
     window.__RWrawAddKey = window.addEventListener;
     window.addEventListener = function(type, handler, options){
       if (type === 'keydown' && options === true){
-        // This is how our modules attach key handlers (capture phase)
         const wrapped = function(e){
           if (!window.__RWgate || !window.__RWgate.enabled) return;
           return handler.call(this, e);
@@ -54,17 +45,15 @@
     const panel = document.getElementById('rw-panel');
     if (!panel) return;
 
-    // sync the enabled flag from our gate object to RW
     RW.enabled = gate.enabled;
     RW.v28 = true;
 
-    // wrap existing children into collapsible body
+    // wrap existing panel children into a collapsible body
     const body = document.createElement('div');
     body.id = 'rw-body';
     while (panel.firstChild) body.appendChild(panel.firstChild);
     panel.appendChild(body);
 
-    // header bar
     const header = document.createElement('div');
     header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;user-select:none;';
 
@@ -92,7 +81,6 @@
     };
     panel.insertBefore(header, body);
 
-    // panel styling
     panel.style.position = 'relative';
     panel.style.resize = 'vertical';
     panel.style.overflow = 'auto';

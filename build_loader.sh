@@ -26,7 +26,10 @@ cat > "$OUT" <<'HEADER'
 HEADER
 
 FIRST=1
-for f in rw_panelux.js rw_install.js rw_masktools.js rw_stable.js rw_undo.js rw_commit.js rw_brushpoly.js rw_healinterior.js rw_snap.js rw_textdetect.js; do
+# rw_panelsections.js must stay after every module that uses the
+# `#rw-pick`-parentNode idiom (i.e. after all of them) and before any module
+# that calls RW.panelSection (currently just rw_elbow.js).
+for f in rw_panelux.js rw_install.js rw_masktools.js rw_stable.js rw_undo.js rw_commit.js rw_brushpoly.js rw_healinterior.js rw_snap.js rw_textdetect.js rw_wallspan.js rw_panelsections.js rw_elbow.js; do
   if [ $FIRST -eq 0 ]; then printf ';\n' >> "$OUT"; fi
   FIRST=0
   echo "// ===== $f =====" >> "$OUT"
@@ -36,7 +39,7 @@ done
 
 cat >> "$OUT" <<'FOOTER'
 
-  console.log('[RW] workbench ready: ' + __RW.regions.filter(r=>r.included).length + ' regions. Keys: P pick, K cut, B/O rects, N poly, J brush, ` undo, H heatmap, [ ] pages.');
+  console.log('[RW] workbench ready: ' + __RW.regions.filter(r=>r.included).length + ' regions. Keys: P pick, K cut, B rect, N poly, J brush, A add, W walls, C pipe, L elbow, ` undo.');
 })()
 FOOTER
 

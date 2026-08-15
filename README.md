@@ -32,6 +32,17 @@ load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in ord
 10. **rw_textdetect.js** — **Text? (density)** whole-page detection-only overlay (see below).
     Currently hidden in the panel along with **Relabel** and **Add ⊕** (not removed — see
     "Hidden controls" below).
+11. **rw_wallspan.js** — **Pipe (C)** / **Trace** / **Commit Pipe** for annotating piping
+    centerlines as a fixed-width path (see below) — deliberately doesn't trace pixels, since the
+    rest of the toolset only handles enclosed areas and pixel-tracing a pipe's actual linework
+    turned out to be too fragile against text/fittings crossing the line.
+12. **rw_panelsections.js** — reorganizes the panel into labelled sections (REGIONS / MASK TOOLS /
+    HEAL / PIPE / FITTINGS / VIEW) by relocating every earlier module's controls by id; purely
+    cosmetic, no tool behavior changes. Must load after every module above (so their controls
+    already exist to move) and before **rw_elbow.js** (so it can mount into the FITTINGS section).
+13. **rw_elbow.js** — **Elbow (L)** / **Commit Elbow** for annotating elbow pipe fittings: drag a
+    box (or click-click-click + double-click a tighter polygon region) around the fitting and it
+    traces the real drawn linework inside it (see below).
 
 **To rebuild** after editing any `rw_*.js` source module:
 ```bash
@@ -77,6 +88,8 @@ Rect/Poly2/Brush respectively.
 | Shift (hold, placing a Poly2 vertex) | bypass vertex snap for that click |
 | `` ` `` (backtick) | undo last mask edit (block/open/poly/brush/cut/merge/heal) |
 | `Escape` | cancel current workbench mode / clear in-progress poly vertices |
+| `C` | Pipe mode — click a path along a pipe's centerline (see Pipe annotation below) |
+| `L` | Elbow mode — drag a box, or click points + double-click to close a tighter region, around an elbow fitting (see Elbow fitting below) |
 
 Merge has no hotkey (app uses `M` for mirror) — select 2+ regions, click **Merge** in panel.
 
@@ -108,6 +121,92 @@ its corners). Hold Shift to bypass for one click; **Snap On/Off** toggles both g
 Whole-page, detection-only overlay highlighting areas where line-endpoint/junction candidates
 cluster more densely than real linework does (text glyphs are small and stroke-heavy). Never
 edits the mask — a manual-review aid only. `cell`/`min` inputs tune sensitivity live.
+
+### Pipe annotation (`rw_wallspan.js`)
+
+For piping-centerline drawings. Deliberately does **not** trace the drawing's actual pixels —
+early versions did, but pipes are routinely interrupted by text labels crossing them, leader
+lines, and fitting symbols, and no amount of pixel-analysis tuning fully survives that. Instead:
+
+- **Click** points along the pipe's visible centerline — first click is the start, each next
+  click is a bend — the same way the existing Poly2 tool places vertices (optionally snapped to
+  nearby line endpoints/junctions, Shift bypasses for one click).
+- **Double-click** finishes the path. `Backspace` drops the last point, `Escape` clears the
+  in-progress path (or exits Pipe mode if the path is already empty).
+- **Drag** anywhere (a real drag, not a click) measures the **width**: just the on-screen
+  distance you drag, converted to a fixed value — drag across the pipe's drawn thickness once
+  to set it, or type a value directly into the `width` panel input. It stays set across
+  multiple pipes until you drag again or edit it, and this is a plain distance measurement, not
+  anything read off the drawing's pixels.
+- The tool then builds a constant-width ribbon along your clicked path — crossing a text label
+  or a fitting symbol never changes its direction or width, since nothing about it depends on
+  what's actually drawn in between the points you clicked.
+- **Trace** previews the exact ribbon polygon; **Commit Pipe** stages it, reusing the same
+  commit pipeline every other tool uses (no new annotation type).
+- Every bend along the path gets the same simple mitered/beveled corner, regardless of whether
+  it's a slight direction change or a real elbow fitting — elbow fittings get their own
+  **dedicated tool** instead (`L`, see "Elbow fitting" below), not a special vertex flag here. An
+  earlier version of this tool had a middle-click-to-flag-an-elbow feature built in; it's been
+  moved out, not deleted — see "Elbow fitting" below and `CLAUDE.md` for why.
+- The measured width is recorded in the pipe's own **notes** field (e.g. `pipe width: 15.00 px`)
+  — visible by selecting the annotation and checking its data panel. (An earlier version staged
+  a second small "dimension line" tick shape alongside the ribbon for this; live testing found it
+  didn't read as a dimension line at all — just an unlabeled, disconnected box — so it was
+  dropped. See `CLAUDE.md` for the full account.)
+- The `width` panel input shows real decimal precision (e.g. `0.63`), not rounded to a whole
+  number — a genuinely sub-1px measurement no longer looks like the drag failed.
+- No undo for a committed pipe specifically (only pre-commit: Escape/Backspace both work) — to
+  remove a staged pipe, select it in the app and press Delete before you Save.
+
+### Elbow fitting (`rw_elbow.js`)
+
+A dedicated tool for annotating elbow pipe fittings — separate from the Pipe tool above, so a
+plain bend in a pipe's path stays a plain mitered corner, and only an elbow you actually box gets
+special handling.
+
+- Press **`L`** to arm the tool, then either **drag a box** around the elbow fitting (a real drag,
+  not a click — same 5px threshold every other drag tool uses), or **click a series of points and
+  double-click to close** a tighter polygon region — useful when a rectangle would inevitably
+  sweep in unrelated nearby linework.
+- The tool reads the **actual drawn linework pixels** inside that box/region (not a shape inferred
+  from where you dragged) at a higher resolution than the page's own mask (`res`), traces the
+  **exact** pixel-grid boundary, then collapses any staircased diagonal or curved run into clean
+  straight chords (Douglas-Peucker) — a real 90° corner stays sharp while only the staircase around
+  it collapses. The traced shape is always clamped to stay **inside** the box/region.
+- If the box/region contains more than one disconnected piece of linework, only the piece with the
+  **most pixels** is traced and committed — not a merged/bridged union. If your fitting's real
+  linework is genuinely two separate strokes (e.g. a double-line pipe wall), use a tighter color
+  pick/tolerance so both strokes read as one connected piece, or draw a polygon region that
+  excludes the piece you don't want.
+- **`pts`** sets a target vertex count for the traced output polygon (`0` = auto).
+- **Pick Color** / **Clear Color**: by default, detection uses a flat "how dark is this pixel"
+  threshold. Click **Pick Color**, then click the fitting's actual ink, and detection switches to
+  matching THAT color instead (within **`tol`**) — replaces the darkness test entirely, the
+  **primary** control over what counts as ink. **Clear Color** goes back to the darkness threshold.
+  (Only works against a live canvas — falls back to the darkness threshold if detection has to use
+  the page's own coarser mask.)
+- **`min px`**: minimum pixel-count for a piece to be a candidate at all — raise it to ignore a
+  stray speck near the fitting; if every piece in the box/region is below this floor, detection
+  refuses. **`width`**: enter the fitting's approximate line thickness (mask px) to seed `min px`
+  from it. Defaults: `tol` 100, `min px` 1, `res` 100, `pts` 24, `width` 2.
+- Once a box/region is drawn, **drag any corner (box) or vertex (region)** to reshape it — the
+  outline and handles update immediately as you drag, and the traced highlight re-detects live
+  (debounced) without needing to redraw from scratch.
+- **`sub ann`** (on by default) excludes already-committed annotations from the detection.
+- **Px?** cycles a debug overlay: source (thresholded, before piece-selection) → selected (the
+  piece that gets traced/committed) → off.
+- **Commit Elbow** stages the traced polygon; the active tunables are recorded in its notes.
+- `Escape` backs out one step at a time: cancels an in-progress region first, then clears a
+  committed box/region/trace, then exits the tool.
+- History (rejected approaches, an in-pipe predecessor, a removed `fuse`/`hug`/`shrink` pipeline):
+  see `CLAUDE.md`.
+
+### Panel layout
+
+The panel is organized into labelled sections — **REGIONS**, **MASK TOOLS**, **HEAL**, **PIPE**,
+**FITTINGS**, **VIEW** — instead of one long unlabeled row of buttons. This is purely visual
+(`rw_panelsections.js` relocates every other module's existing controls by id after they load);
+no tool's behavior changes because of it.
 
 ### Hidden controls
 
