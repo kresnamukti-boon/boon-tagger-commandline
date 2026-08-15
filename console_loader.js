@@ -17,14 +17,14 @@
 
 // ===== rw_panelux.js =====
 // RW v2.8 — collapsible panel + master killswitch.
-// MUST be loaded FIRST (before rw_install): wraps annotation-canvas's
+// MUST be loaded FIRST (before rw_install). Wraps annotation-canvas's
 // addEventListener so every handler registered by later modules auto-checks
 // RW.enabled.
 (function boot(){
   'use strict';
 
-  // __RW doesn't exist yet (rw_install creates it) — RW.enabled must still be
-  // readable before then, so the gate lives on a separate object until retrofit().
+  // __RW doesn't exist yet (rw_install creates it). Gate lives on a separate
+  // object until retrofit().
   if (!window.__RWgate) window.__RWgate = { enabled: true };
   const gate = window.__RWgate;
 
@@ -41,7 +41,7 @@
     };
   }
 
-  // Also wrap window keydown (capture) for the modules that attach there
+  // Also wraps window keydown (capture)
   if (!window.__RWrawAddKey){
     window.__RWrawAddKey = window.addEventListener;
     window.addEventListener = function(type, handler, options){
@@ -187,7 +187,7 @@
   /* ---------- segmentation ---------- */
   RW.extract = function(){
     const src = document.getElementById('pdf-canvas');
-    // scale extraction resolution to native canvas size so thin lines survive
+    // scale extraction resolution to native canvas size
     let {W,H} = RW;
     const nw = src.width, nh = src.height;
     if (nw && nh && (nw > W*1.3 || nh > H*1.3)){
@@ -202,18 +202,17 @@
     const d = ctx.getImageData(0,0,W,H).data;
     let wall = new Uint8Array(W*H);
     for (let i=0;i<W*H;i++){
-      // min RGB channel catches colored (yellow/green/blue) lines too, not just black
+      // min RGB channel: catches colored (yellow/green/blue) lines too
       const minChan = Math.min(d[i*4], d[i*4+1], d[i*4+2]);
       if (minChan < 200) wall[i]=1;
     }
-    // no morphological pass — mask boundary sits exactly at the line edge
+    // no morphological pass
     // knock out existing annotations
     const c2 = document.createElement('canvas'); c2.width=W; c2.height=H;
     const x2 = c2.getContext('2d');
     for (const a of annotationState.annotations){
       if (a._hidden || a.is_void) continue;
-      // Array.isArray guard: bbox-type annotations store {x,y,width,height}, not a point
-      // array — pts.length<3 wouldn't catch that (undefined<3 is false) and crashes .forEach.
+      // Array.isArray guard: bbox-type annotations store {x,y,width,height}, not a point array
       const pts = a.coordinates; if (!Array.isArray(pts) || !pts.length) continue;
       x2.fillStyle='#000';
       x2.beginPath();
@@ -601,7 +600,7 @@
 
 ;
 // ===== rw_masktools.js =====
-// RW v2.1-revised — unified Rect tool (supplants separate Block/Open).
+// RW v2.1-revised — unified Rect tool.
 // Paints into RW.wall via RW.maskAction (block/open/add), re-labels preserving groups.
 // Uses normalized coords (_toNorm/_toPx from rw_stable.js) for pan-stable previews.
 (function(){
@@ -613,7 +612,7 @@
   /* ---------- rect tool: unified block/open via maskAction ---------- */
   if (!('maskAction' in RW)) RW.maskAction = 'block';
 
-  // coordinate helpers (mirror v2.2 — available before rw_stable loads)
+  // coordinate helpers, available before rw_stable loads
   if (!RW._toNorm) RW._toNorm = function(cx,cy){
     const cr = document.getElementById('pdf-container').getBoundingClientRect();
     return [(cx-cr.x)/cr.width, (cy-cr.y)/cr.height];
@@ -665,8 +664,7 @@
     }
   };
 
-  // Bresenham polyline — paints wall=1 only on wall=0 pixels not already part of an
-  // included region (seals linework gaps without cutting through mask regions).
+  // Bresenham polyline — paints wall=1 only on wall=0 pixels not already part of an included region.
   RW._paintPolylineGap = function(pts){
     const {W,H,wall,labels,regions} = RW;
     function line(x0,y0,x1,y1){
@@ -696,7 +694,7 @@
   RW._relabel = function(){
     if (!RW.labels) RW.extract(); // auto-bootstrap if no mask exists yet
     const {W,H,wall} = RW;
-    // snapshot old regions BEFORE flood — used to protect existing mask from border absorption
+    // snapshot old regions before flood
     const oldRegions = RW.regions;
     const oldLabels = RW.labels;
     const oldCent = {};
@@ -749,7 +747,6 @@
   const ac = document.getElementById('annotation-canvas');
 
   // v2.6 handles poly2/brush (maskMode2); this module only handles maskMode==='rect'.
-  // Legacy B/O keys are gone — B here only acts while maskMode2 is null.
 
   ac.addEventListener('mousedown', function(e){
     if (RW.maskMode!=='rect') return;
@@ -776,7 +773,7 @@
     const en=RW._toNorm(e.clientX,e.clientY);
     if (RW.maskAction==='add'){
       // Fill-then-hollow: paint rect as wall, then shrink 2px and clear interior,
-      // skipping a skip-mask of existing included-region pixels (bbox only, cheap).
+      // skipping existing included-region pixels (bbox scope).
       const {W,H,labels,regions,wall} = RW;
       const rx0=s[0]*W, ry0=s[1]*H, rx1=en[0]*W, ry1=en[1]*H;
       const xa=Math.max(0,Math.min(rx0,rx1)|0), xb=Math.min(W-1,Math.max(rx0,rx1)|0);
@@ -823,8 +820,7 @@
     if (RW.maskMode==='rect'){ e.stopPropagation(); e.preventDefault(); }
   }, true);
 
-  // Wraps v2.2's _renderPreview (which only handles maskMode==='poly') so its
-  // mousemove calls this instead, adding rect support.
+  // Wraps v2.2's _renderPreview (which only handles maskMode==='poly'), adding rect support.
   RW._renderPreview2 = function(cursorClient){
     RW._renderPreview(cursorClient);
     if (RW.maskMode!=='rect' || !RW.__rectStartN) return;
@@ -844,7 +840,7 @@
     const t=e.target;
     if (t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
     if (e.ctrlKey||e.metaKey||e.altKey) return;
-    // Disarm v2.6 tools first so B switches directly to rect in one keystroke.
+    // Disarm v2.6 tools first.
     if (e.key==='b'||e.key==='B'){
       if (RW.maskMode2){ RW.setMaskMode2(null); }
       e.preventDefault(); e.stopImmediatePropagation();
@@ -955,8 +951,7 @@
       }
     } else {
       // Cyan = enclosed space not reached by border flood (would become regions).
-      // Must mirror _relabel()'s flood exactly (incl. included regions as barriers)
-      // or this preview will disagree with the real relabel.
+      // Mirrors _relabel()'s flood exactly (incl. included regions as barriers).
       const seen = new Uint8Array(W*H);
       const q = [];
       for (let x=0;x<W;x++){ q.push(x,(H-1)*W+x); }
@@ -1046,7 +1041,7 @@
 
   // re-render previews from normalized state (call on mousemove AND on pan/zoom)
   RW._renderPreview = function(cursorClient){
-    const sw = 1.5;   // constant screen px — zoom-invariant
+    const sw = 1.5;   // constant screen px
     const dotR = 2.5;
 
     // poly (legacy 'poly' via maskMode, v2.6 'poly2' via maskMode2)
@@ -1083,7 +1078,7 @@
 
   const ac = document.getElementById('annotation-canvas');
 
-  // v4 listeners (guarded by _previewV so older handlers no-op)
+  // v4 listeners (guarded by _previewV)
   ac.addEventListener('mousedown', function(e){
     if (RW._previewV!==4 || !RW.maskMode) return;
     e.stopPropagation(); e.preventDefault();
@@ -1143,7 +1138,7 @@
     const pl=document.getElementById('rw-polyline'); if(pl) pl.remove();
   }, true);
 
-  // keep preview glued during pan/zoom: re-render on scroll + wheel
+  // re-render preview on scroll
   const sc = document.getElementById('canvas-scroll-container');
   RW.__scrollRaf = false;
   sc.addEventListener('scroll', function(){
@@ -1158,7 +1153,7 @@
       if (RW._renderCommitPreview) RW._renderCommitPreview();
     });
   }, {passive:true});
-  // wheel = zoom (Ctrl+scroll) — re-render so stroke stays zoom-invariant
+  // wheel = zoom (Ctrl+scroll)
   ac.addEventListener('wheel', function(e){
     if (RW._previewV!==4) return;
     if (!RW.maskMode && !RW.maskMode2) return;
@@ -1169,7 +1164,7 @@
     });
   }, {passive:true});
   document.addEventListener('mouseup', function(){
-    // after any pan gesture ends, re-render so preview re-anchors
+    // re-render preview after mouseup
     if (RW._previewV!==4 || !RW.maskMode) return;
     setTimeout(()=>RW._renderPreview(null), 30);
   }, true);
@@ -1224,14 +1219,14 @@
     if (b) b.innerText = 'Undo (`)' + (RW._undoStack.length ? ' '+RW._undoStack.length : '');
   };
 
-  // window-level capture: fires before element handlers
+  // mousedown capture (window-level)
   window.addEventListener('mousedown', function(e){
     if (RW._previewV!==4 || !RW.maskMode) return;
     if (e.target !== ac && !ac.contains(e.target)) return;
     if (RW.maskMode==='block' || RW.maskMode==='open' || RW.maskMode==='rect') RW._snapshot(RW.maskMode);
   }, true);
 
-  // _paintPoly wrapper snapshots once per commit — dblclick is the sole caller with a full polygon
+  // _paintPoly wrapper: snapshots once per commit
   const origPaintPoly = RW._paintPoly;
   let polySnapArmed = false;
   RW._paintPoly = function(pts, val){
@@ -1256,7 +1251,7 @@
     return origMerge.apply(RW, arguments);
   };
 
-  // window capture beats older document handlers
+  // keydown capture (window-level)
   window.addEventListener('keydown', function(e){
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
@@ -1306,21 +1301,18 @@
 
 ;
 // ===== rw_commit.js =====
-// RW v2.5 — Direct-write commit: mask contours become real pending annotations
-// via the app's own state + EditHistory contract. No synthetic clicks.
+// RW v2.5 — mask contours become real pending annotations via
+// annotationState/editHistory.
 //
-// Mechanism (mirrors createPolygonPolylineAnnotation exactly):
+// Mechanism:
 //   1. build newAnnotation { id: temp_*, tag, measurement_type:'POLYGON',
 //      coordinates: <normalized pts>, _pending: true, _data: {page_id,
 //      measurement_type, points_data, notes, tag_id, temp_id} }
 //   2. annotationState.annotations.push(newAnnotation)
-//   3. editHistory.push(createHistoryEntry('create_annotation', {before:null,
-//      after: newAnnotation})) — this is what buildSaveManifest classifies
-//      into the create bucket; saveAnnotationChanges then POSTs _data.
-//   4. render via the app's own redraw: simulated by nudging UI through their
-//      exposed controls (zoom round-trip) since renderAnnotations is module-scoped.
+//   3. editHistory.push(createHistoryEntry('create_annotation', {before:null, after:newAnnotation}))
+//   4. re-render via a zoom-button round-trip
 //
-// Load AFTER rw_undo.js (needs v2.3). Replaces v2.4 click-replay commit.
+// Load AFTER rw_undo.js (needs v2.3).
 (function(){
   const RW = window.__RW;
   if (!RW || !RW.v23) return 'need v2.3 first';
@@ -1328,22 +1320,15 @@
   RW.v25 = true;
 
   /* ---------- contour tracing (Moore neighbor), generic over any 1/0 mask ----------
-     Traces/smooths/simplifies any 1/0 mask (not just RW.labels regions), so
-     e.g. rw_wallspan.js's wall-span selections share this pipeline. Reads no
-     global RW.smoothPasses/RW.smoothEps — callers pass explicit
-     smoothPasses/eps; _groupToPolygon (below) is the only place those
-     globals are read, preserving region-commit behavior.
-     opts: { seed:{x,y}|null (skip the O(W*H) scan if the caller already
-              knows a mask pixel), smoothPasses:int (Chaikin rounds, ~0.5-1px
+     Traces/smooths/simplifies any 1/0 mask, not just RW.labels regions.
+     Reads no global RW.smoothPasses/RW.smoothEps; callers pass explicit
+     smoothPasses/eps.
+     opts: { seed:{x,y}|null, smoothPasses:int (Chaikin rounds, ~0.5-1px
               inward erosion each), eps:number (DP tolerance, ignored if
               targetPts set), targetPts:int|null (bisect eps to the vertex
-              count closest to, without exceeding, this target — see
-              rw_elbow.js's `pts`; bisects only the cheap final simplify
-              step, not the trace/Chaikin), W:int, H:int (override RW.W/RW.H
-              for a local raster not sized to the page, e.g. rw_elbow.js's
-              detection crop; defaults to RW.W/RW.H) } */
-  // Douglas-Peucker on an OPEN polyline, self-recursing via RW._dpOpen (not a
-  // closure) so RW._traceGridBoundary's own `pts` cap can reuse it too.
+              count closest to, without exceeding, this target), W:int, H:int
+              (override RW.W/RW.H, default RW.W/RW.H) } */
+  // Douglas-Peucker on an open polyline.
   RW._dpOpen = function(pts, eps2){
     if (pts.length<3) return pts;
     const [x1,y1]=pts[0], [x2,y2]=pts[pts.length-1];
@@ -1360,20 +1345,9 @@
     return [pts[0], pts[pts.length-1]];
   };
 
-  // Simplify a CLOSED ring at a given eps — splits at the point farthest
-  // from ring[0] (eps-independent; pass a precomputed `far` when bisecting
-  // many eps values to skip re-scanning) into two open chains, DP-simplifies
-  // each, merges. Works on any closed point ring regardless of source
-  // (Chaikin-smoothed Moore trace or RW._traceGridBoundary's exact walk).
-  //
-  // FIXED BUG: the second half used to run `RW._dpOpen(ring.slice(far),
-  // eps2)`, stopping at ring[n-1] instead of wrapping back to ring[0] — the
-  // final `.slice(0,-1)` merge then silently dropped the ring's true closing
-  // vertex. Invisible for years on Chaikin-smoothed rings (the dropped point
-  // sits ~0.25-0.75px from ring[0]) but a real, visible defect on an exact
-  // grid-boundary trace (e.g. a rectangle simplified to a 3-point triangle at
-  // any eps). Fixed by appending ring[0] onto the second half before
-  // simplifying, so DP sees the true closing edge.
+  // Simplify a closed ring at a given eps: splits at the point farthest from
+  // ring[0] into two open chains (each including ring[0] as an endpoint),
+  // DP-simplifies each, merges. `far` optional, precomputed if given.
   RW._simplifyRing = function(ring, eps2, far){
     if (far == null){
       let farD=0; far=0;
@@ -1387,23 +1361,13 @@
     return h1.slice(0,-1).concat(h2.slice(0,-1));
   };
 
-  // Bisect eps to land at the vertex count closest to, without exceeding,
-  // `targetPts` — extracted out of RW._maskToPolygon's inline bisection so
-  // RW._traceGridBoundary's own `pts` cap can reuse the exact same bracket
-  // and "unreachable" handling instead of re-deriving it. `far` is passed
-  // straight through to RW._simplifyRing on every iteration (still
-  // eps-independent, so still safe to reuse — see RW._simplifyRing's own
-  // comment); each of the ~20 iterations only re-runs the cheap DP halves,
-  // never re-traces or re-Chaikins.
+  // Bisects eps (range 0.05-1e5) to the point count closest to, without
+  // exceeding, `targetPts`.
   RW._bisectRingToTargetPts = function(ring, targetPts, far){
-    // Floor above 0 (not at it): eps->0 makes DP retain nearly every point,
-    // and its recursion depth scales with retained-point count — a real
-    // risk once `ring` is large (a high-resolution local raster, see
-    // rw_elbow.js's `res` tunable).
     let lo = 0.05, hi = 1e5;
     const at = (eps) => RW._simplifyRing(ring, eps, far);
     if (at(lo).length <= targetPts) return at(lo);
-    if (at(hi).length > targetPts) return at(hi); // unreachable even at max simplification — caller should notice
+    if (at(hi).length > targetPts) return at(hi);
     for (let iter=0; iter<20; iter++){
       const mid = (lo+hi)/2;
       if (at(mid).length <= targetPts) hi = mid; else lo = mid;
@@ -1438,9 +1402,7 @@
       if (!found) break;
       if (cx===sx&&cy===sy&&path.length>3) break;
     }
-    // Chaikin corner-cutting: smooth pixel staircases (dragon's teeth) on
-    // diagonal edges. Each vertex -> two points at 25%/75% of adjacent edges.
-    // `rounds` progressively erode ~0.5-1px inward per pass at mask res.
+    // Chaikin corner-cutting: each vertex -> two points at 25%/75% of adjacent edges.
     function chaikin(pts, rounds){
       let out = pts;
       for (let p=0;p<rounds;p++){
@@ -1454,12 +1416,6 @@
       }
       return out;
     }
-    // The `path.length>=8` gate and Chaikin's `work`/`far` split are both
-    // eps-independent (far is picked by max distance from work[0], computed
-    // before any eps comparison) — run them ONCE, then RW._simplifyRing just
-    // re-runs the cheap DP halves. This is what makes targetPts's bisection
-    // below affordable: each of its ~20 iterations only redoes DP, not the
-    // Moore trace or Chaikin smoothing.
     let work = null, far = 0;
     if (path.length >= 8){
       work = chaikin(path, passes);
@@ -1482,54 +1438,28 @@
     return simp.map(([x,y])=>({x:+(x/W).toFixed(6), y:+(y/H).toFixed(6)}));
   };
 
-  /* ---------- exact pixel-EDGE boundary tracer, distinct from the Moore
-     pixel-CENTER tracer above ----------
-     RW._maskToPolygon walks pixel CENTERS (8-connected, diagonal jumps
-     allowed) and relies on Chaikin+DP to turn the resulting staircase into a
-     smooth curve. This tracer instead walks the grid EDGES *between* pixels
-     — every output edge is purely horizontal or vertical, and a vertex is
-     emitted only where the walk genuinely changes direction, so a long
-     straight run of boundary pixels collapses to one edge for free, with no
-     simplification pass needed. Built for rw_elbow.js's "pixel-precise"
-     trace mode (RW._elbowPixelPrecise) — the user's own ask, after finding
-     the Px:src debug overlay more trustworthy than the smoothed trace once a
-     color has been picked.
+  /* ---------- exact pixel-edge boundary tracer ----------
+     Walks the grid edges between pixels: every output edge is horizontal or
+     vertical, a vertex only where the walk changes direction. No Chaikin/DP.
 
-     Construction: each foreground pixel's 4 sides bordering background (or
-     out-of-bounds, background by convention) become directed edges between
-     the two grid corners at that side, foreground always on the RIGHT of
-     travel — repeated right turns cycle N->E->S->W->N, clockwise in this
-     codebase's y-down coordinates, matching the Moore tracer's orientation.
+     Each foreground pixel's 4 sides bordering background (or out-of-bounds)
+     are directed edges between the two grid corners at that side, foreground
+     on the RIGHT of travel — right turns cycle N->E->S->W->N, clockwise in
+     this codebase's y-down coordinates.
 
-     No seed: always starts at the topmost-then-leftmost foreground pixel,
-     which is provably unambiguous (an ambiguous corner needs its diagonal-
-     opposite pixel foreground too, which would have to appear earlier in
-     raster order — a contradiction).
+     Starts at the topmost-then-leftmost foreground pixel, no seed param.
 
-     Ambiguous corners: an 8-connected region can touch itself diagonally at
-     one corner, which this construction sees as 2 valid outgoing directions
-     there (always an opposite pair). RULE: take the direction 90 degrees
-     COUNTER-CLOCKWISE from the incoming one. This is the correct pairing for
-     8-connected-foreground/4-connected-background (the standard convention
-     that avoids ambiguity at a shared corner) — the CLOCKWISE reading
-     instead traces only half of a diagonally-touching component, or (for a
-     ring with a hole) splices the hole into the outer boundary as one wrong
-     shape. Derived by hand and independently re-derived by an adversarial
-     review; full worked proof (a 2x2 checkerboard, a 3x3 ring) is in
-     CLAUDE.md and directly tested in verify_gridboundary.js. **Do not "fix"
-     this back to clockwise without re-reading that proof** — it looks like
-     an arbitrary choice but isn't.
+     Ambiguous corner (an 8-connected region touching itself diagonally, 2
+     valid outgoing directions): take the direction 90 degrees
+     COUNTER-CLOCKWISE from the incoming one. Full proof: CLAUDE.md,
+     verify_gridboundary.js.
 
-     Output can be a WEAKLY simple polygon (a genuine pinch point revisits
-     one corner) — exact for area, but a caller simplifying with DP
-     (RW._bisectRingToTargetPts) must check for a resulting true self-
-     intersection; that check lives in rw_elbow.js, not here, since this
-     function's job is to trace exactly, not simplify.
+     Output can be a weakly simple polygon (a pinch point revisits one
+     corner); a caller simplifying with DP (RW._bisectRingToTargetPts) must
+     check for a resulting self-intersection (done in rw_elbow.js).
 
-     opts: { W:int, H:int }. Returns [{x,y}] (same 0-1 fraction format as
-     RW._maskToPolygon) or null if the mask is empty or the walk can't close
-     (a bug, not expected on a real boundary — the step budget is a safety
-     net only). */
+     opts: { W:int, H:int }. Returns [{x,y}] or null if the mask is empty or
+     the walk can't close. */
   RW._traceGridBoundary = function(mask, opts){
     opts = opts || {};
     const W = opts.W != null ? opts.W : RW.W;
@@ -1542,10 +1472,10 @@
     const fg = (x,y) => x>=0 && x<W && y>=0 && y<H && mask[y*W+x]===1;
     const DIRS = { E:[1,0], S:[0,1], W:[-1,0], N:[0,-1] };
     const CCW  = { N:'W', W:'S', S:'E', E:'N' };
-    const maxSteps = 4*fgCount + 8; // a correct trace can never exceed this — mirrors RW._maskToPolygon's own step<400000 bailout idiom
+    const maxSteps = 4*fgCount + 8;
 
     let cx = startX, cy = startY;
-    let dir = 'E'; // proven unambiguous first direction, see header comment
+    let dir = 'E';
     const verts = [[cx, cy]];
     let steps = 0;
     while (true){
@@ -1553,21 +1483,16 @@
       cx += dx; cy += dy;
       steps++;
       if (steps > maxSteps) return null;
-      if (cx === startX && cy === startY) break; // closed — start corner's position is already verts[0]
+      if (cx === startX && cy === startY) break;
 
-      // The 4 pixels touching this corner: NW=(cx-1,cy-1), NE=(cx,cy-1),
-      // SW=(cx-1,cy), SE=(cx,cy). Each of the 4 possible outgoing directions
-      // from a corner is valid iff exactly one of its two flanking pixels is
-      // foreground — derived directly from the per-pixel-side construction
-      // above (e.g. "outgoing east" is pixel(cx,cy)'s own top edge, valid
-      // iff SE is foreground and NE is not).
+      // 4 pixels touching this corner: NW=(cx-1,cy-1), NE=(cx,cy-1), SW=(cx-1,cy), SE=(cx,cy).
       const NW = fg(cx-1,cy-1), NE = fg(cx,cy-1), SW = fg(cx-1,cy), SE = fg(cx,cy);
       const validE = SE && !NE, validS = SW && !SE, validW = NW && !SW, validN = NE && !NW;
       const count = (validE?1:0) + (validS?1:0) + (validW?1:0) + (validN?1:0);
-      if (count === 0) return null; // structurally impossible on a real boundary — safety net, not an expected path
+      if (count === 0) return null;
       const nextDir = count === 1
         ? (validE ? 'E' : validS ? 'S' : validW ? 'W' : 'N')
-        : CCW[dir]; // ambiguous corner — see header proof
+        : CCW[dir];
       if (nextDir !== dir) verts.push([cx, cy]);
       dir = nextDir;
     }
@@ -1584,8 +1509,6 @@
       const l = labels[i];
       uni[i] = (l>=0 && memberIds.has(l)) ? 1 : 0;
     }
-    // Globals win here, exactly as before the v3.1 refactor — _maskToPolygon
-    // itself no longer looks at RW.smoothPasses/RW.smoothEps at all.
     const passes = RW.smoothPasses != null ? RW.smoothPasses : 4;
     const e2 = RW.smoothEps != null ? RW.smoothEps : (eps||1.2);
     return RW._maskToPolygon(uni, {seed:null, smoothPasses:passes, eps:e2});
@@ -1593,11 +1516,7 @@
 
   /* ---------- direct annotation creation ---------- */
   let tempCounter = 1;
-  // notes: optional string (default '', matching every caller before this
-  // parameter existed) — e.g. rw_wallspan.js's commitPipe uses this to record
-  // the measured pipe width, and rw_elbow.js's commitElbow uses it to record
-  // its detection tunables, without inventing a new annotation type or a
-  // text-rendering mechanism of its own.
+  // notes: optional string, default ''.
   RW._createPendingAnnotation = function(normPts, notes){
     notes = notes || '';
     const st = annotationState;
@@ -1621,9 +1540,7 @@
       _pending: true,
       _data: annotationData,
     };
-    // 1. state
     st.annotations.push(newAnnotation);
-    // 2. WAL entry (this is what buildSaveManifest reads)
     window.editHistory.push(window.createHistoryEntry('create_annotation', {
       description: 'Draw polygon',
       targetId: newAnnotation.id,
@@ -1634,9 +1551,7 @@
     return newAnnotation;
   };
 
-  /* ---------- redraw: force the app to re-render annotations ----------
-     renderAnnotations is module-scoped. The exposed zoom controls trigger a
-     full re-render pipeline. We do a silent zoom round-trip. */
+  /* ---------- redraw: zoom-button round-trip ---------- */
   RW._forceRender = async function(){
     const zin = document.getElementById('zoom-in-btn');
     const zout = document.getElementById('zoom-out-btn');
@@ -1979,7 +1894,7 @@
     let inner = '<circle cx="'+px+'" cy="'+py+'" r="'+pr+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dasharray="8"/>';
     if (RW._brushDown && RW._brushStroke && RW._brushStroke.length){
       const fill = RW.maskAction==='add' ? 'rgba(50,205,50,0.35)' : (RW.maskAction==='block' ? 'rgba(255,120,0,0.30)' : 'rgba(60,180,255,0.30)');
-      // Single thick polyline, not N circles — 1 DOM node vs. hundreds, big perf win for long strokes
+      // Single thick polyline, not N circles
       const ptsStr = RW._brushStroke.map(([snx,sny])=>{
         const [spx,spy]=RW._toPx(snx,sny);
         return spx+','+spy;
@@ -2089,54 +2004,26 @@
 // ===== rw_healinterior.js =====
 // RW v3 — interior noise healing.
 //
-// Reframed from the whole-page text-density overlay (rw_textdetect.js): the
-// real problem is "which wall pixels inside a region about to be committed
-// are pure interior noise (text/hatch/dimension/leader marks) versus the
-// region's genuine perimeter" — dimension/leader lines legitimately touch a
-// region's true boundary too, so the commit contour trace weaves into them.
+// Detects wall pixels inside a selected region's group that are interior
+// noise (text/hatch/dimension/leader marks) rather than the region's
+// perimeter, and can erase them.
 //
-// Six failure modes found live, in order (topology alone can't always
-// distinguish noise from real content — see each fix below):
-//   1. Component veto (flood + veto the WHOLE blob if any part touches
-//      something unsafe) was fatally coarse — leader lines touch the real
-//      perimeter often enough that ~65% of a region's wall got vetoed
-//      together. Fixed with a per-pixel test instead of a whole-component one.
-//   2. Per-pixel test bounded by fixed padding around the region's open-pixel
-//      bbox failed on hatch-heavy jobs: the clearing sits deep inside a much
-//      larger hatch mass and the pad never reaches real exterior (100%
-//      false-safe). Fixed by bounding via REACHABILITY, not a guessed pad —
-//      the flood stops naturally at real barriers.
-//   3. Unbounded reachability flood explored ~2.65M px (nearly the whole
-//      page) when a region had no nearby neighbor to fence it in. Fixed with
-//      a hole-size threshold (RW._healNoiseHoleMax): a big enough
-//      neighboring open area counts as protected even if not `included`.
-//   4. That threshold still can't help when door-opening gaps merge a real
-//      building's floor plan into the SAME open region as the noise — no
-//      second label exists to be "not merged with." Indistinguishable from
-//      noise by pure topology; not fully fixed, documented as a known limit.
-//   5. (Fixed, shipped.) Existing annotations' wall-knockout looked exactly
-//      like real noise from the inside. Fixed by rebuilding that knockout
-//      mask here and hard-excluding it from both the flood and the result.
-//   6. (Fixed, shipped.) The per-pixel test only checks 1-hop neighbors —
-//      correct for thin lines, but on a THICK drawn barrier only its ~1px
-//      outer skin registers unsafe, so healing hollowed out its middle.
-//      Fixed by widening that "unsafe shell" via a bounded BFS
-//      (RW._healBarrierMargin, ~12px default).
+// Detection steps:
+//   1. Per-pixel safety test (not a whole-component veto).
+//   2. Bounded by reachability flood, not a fixed pad.
+//   3. Hole-size threshold (RW._healNoiseHoleMax): a neighboring open area
+//      larger than this counts as protected even if not `included`.
+//   4. Door-opening gaps that merge a floor plan into the same open region
+//      as the noise are not distinguished from noise.
+//   5. Existing annotations' wall-knockout mask is rebuilt and excluded from
+//      both the flood and the result.
+//   6. Unsafe shell widened via a bounded BFS (RW._healBarrierMargin).
 //
-//      IMPORTANT: this margin only protects from ONE side. A region's own
-//      boundary line always has that region's own interior on its near face,
-//      which never registers as unsafe (crossing into your own open space
-//      isn't foreign) — so the BFS only expands inward from the line's
-//      single outer face. Verified: a 16px-thick barrier needed margin~=16
-//      (the FULL thickness) to be fully protected; margin=10 (~2/3) still
-//      left ~23% erodable. Set barrier≥ to the line's full visible
-//      thickness, not half. Deep interior noise is unaffected either way.
+// RW._healBarrierMargin expands only inward from a region's own outer wall
+// face, not both sides. Set barrier≥ to the line's full visible thickness,
+// not half.
 (function(){
   const RW = window.__RW;
-  // Needs v26 (rw_brushpoly.js): the cross-disarm wrap below reads
-  // RW.setMaskMode2, which doesn't exist until then. Without this gate the
-  // wrap silently no-ops instead of erroring, and Poly2/Brush stop disarming
-  // the heal brush — confirmed live.
   if (!RW || !RW.v26) return 'need v2.6 (rw_brushpoly.js) first';
   if (RW.v3) return 'v3 already installed';
   RW.v3 = true;
@@ -2149,8 +2036,7 @@
   //       path of only wall/same-region pixels (never crossing into exterior,
   //       a different included region, or a tiny excluded speck), and
   //   (b) SAFE — none of the pixel's own 4-neighbors are true unenclosed
-  //       exterior or a different included region (per-pixel, not a
-  //       connected-component veto — see failure modes 1-2 above).
+  //       exterior or a different included region (per-pixel test).
   RW._computeInteriorNoise = function(gids){
     const {W,H,labels,regions,wall} = RW;
     const memberIds = new Set(regions.filter(r=>gids.has(r.group)).map(r=>r.id));
@@ -2158,11 +2044,7 @@
 
     const isSameRegion = i => { const l=labels[i]; return l>=0 && memberIds.has(l); };
 
-    // A neighboring open area is "protected" if included, OR bigger than
-    // RW._healNoiseHoleMax — deliberately separate from RW._areaFloor (that
-    // tunes candidate-region selectability, not noise-vs-feature size): real
-    // rooms measured live at 868-5296px, well below a typical area-floor of
-    // 6026px, so reusing area-floor here failed to protect them.
+    // Protected: included, or bigger than RW._healNoiseHoleMax.
     const holeMax = RW._healNoiseHoleMax != null ? RW._healNoiseHoleMax : Math.round(300*(RW.W/2592));
     const isProtectedRegion = i => {
       const l = labels[i];
@@ -2171,12 +2053,7 @@
       return !!r && (r.included || r.size > holeMax);
     };
 
-    // Existing annotations get knocked out into RW.wall as filled interior
-    // (mirroring RW.extract()) but that knockout is indistinguishable from
-    // text/hatch wall by topology alone — a wall pixel deep inside an
-    // existing annotation looked "safe" too (failure mode 5). Rebuild the
-    // same knockout mask here and hard-exclude it from both the flood and
-    // the result.
+    // Rebuild existing annotations' wall-knockout mask; excluded from both the flood and the result.
     const annotationMask = new Uint8Array(W*H);
     if (typeof annotationState !== 'undefined'){
       const cv = document.createElement('canvas'); cv.width=W; cv.height=H;
@@ -2184,10 +2061,6 @@
       actx.fillStyle = '#000';
       for (const a of annotationState.annotations){
         if (a._hidden || a.is_void) continue;
-        // bbox annotations store {x,y,width,height}, not a point array — the
-        // old `pts.length<3` guard let it through (`undefined<3` is false)
-        // to a pts.forEach() that doesn't exist on a plain object. Confirmed
-        // live; Array.isArray guards it now.
         const pts = a.coordinates; if (!Array.isArray(pts) || pts.length<3) continue;
         actx.beginPath();
         pts.forEach((p,idx)=>{ const X=p.x*W, Y=p.y*H; idx?actx.lineTo(X,Y):actx.moveTo(X,Y); });
@@ -2197,9 +2070,7 @@
       for (let i=0;i<W*H;i++) if (adata[i*4+3]>127) annotationMask[i]=1;
     }
 
-    // True-unenclosed-exterior mask (reachable from the sheet border without
-    // crossing a wall or any protected region), mirroring the same
-    // border-protected flood RW._relabel already uses internally.
+    // True-unenclosed-exterior mask: reachable from the sheet border without crossing a wall or protected region.
     const exterior = new Uint8Array(W*H);
     {
       const q = [];
@@ -2216,10 +2087,7 @@
       }
     }
 
-    // Reachability flood: from the region's own open pixels, step only into
-    // wall/same-region pixels — exterior, other included regions, and tiny
-    // specks are natural stopping barriers. Everything reached is "relevant"
-    // wall; anything unreached is left alone.
+    // Reachability flood from the region's own open pixels, stepping only into wall/same-region pixels.
     const reachableWall = new Uint8Array(W*H);
     const seenReach = new Uint8Array(W*H);
     const q2 = [];
@@ -2234,17 +2102,13 @@
       if (y<H-1) neigh.push(i+W);
       for (const n of neigh){
         if (seenReach[n]) continue;
-        if (annotationMask[n]) continue; // never enter an existing annotation's knockout
+        if (annotationMask[n]) continue;
         if (wall[n]===1){ seenReach[n]=1; reachableWall[n]=1; q2.push(n); }
         else if (isSameRegion(n)){ seenReach[n]=1; q2.push(n); }
-        // otherIncluded / exterior / tiny-speck-open: stop here, don't cross
       }
     }
 
-    // Per-pixel safety test restricted to reachable wall: flags reachable
-    // wall pixels whose immediate neighbor is exterior/protected/annotation
-    // (the "unsafe shell"). On a thick barrier only the outer ~1px skin
-    // triggers this — see failure mode 6 above.
+    // Unsafe shell: reachable wall pixels whose immediate neighbor is exterior/protected/annotation.
     const unsafeShell = new Uint8Array(W*H);
     for (let i=0;i<W*H;i++){
       if (!reachableWall[i] || annotationMask[i]) continue;
@@ -2257,10 +2121,7 @@
       if (unsafe) unsafeShell[i]=1;
     }
 
-    // Widen the unsafe shell by RW._healBarrierMargin via bounded BFS through
-    // reachable wall only — protects realistic barrier widths. One-sided
-    // only (see header): expansion only reaches inward from the barrier's
-    // outer face, so set the margin to the line's FULL thickness, not half.
+    // Widen the unsafe shell by RW._healBarrierMargin via bounded BFS through reachable wall.
     const margin = RW._healBarrierMargin != null ? RW._healBarrierMargin : Math.max(4, Math.round(12*(RW.W/2592)));
     const protectedExpanded = new Uint8Array(W*H);
     {
@@ -2343,7 +2204,6 @@
     if (ab) ab.style.display = (RW._healPreviewOn && RW._healNoiseMask) ? '' : 'none';
   };
 
-  // keep the preview in sync if the selection changes while it's on
   const origToggleGroup = RW.toggleGroup;
   RW.toggleGroup = function(gid){
     origToggleGroup.call(RW, gid);
@@ -2357,8 +2217,6 @@
   /* ---------- panel controls ---------- */
   const bar = (document.getElementById('rw-pick') || {}).parentNode;
   if (bar && !document.getElementById('rw-heal-btn')){
-    // Wrapped in a span so rw_panelsections.js can relocate the whole Heal
-    // cluster as one unit (same idiom as #rw-pipe-group/#rw-textdetect-group).
     const group = document.createElement('span');
     group.id = 'rw-heal-group';
     group.style.cssText = 'display:inline-flex;gap:4px;align-items:center;';
@@ -2462,7 +2320,6 @@
 
   RW.setHealBrushMode = function(on){
     if (on){
-      // cross-disarm the other mask tools, same pattern used throughout
       if (RW.maskMode){
         RW.maskMode=null; ac.style.cursor='';
         const rl=document.getElementById('rw-rectline'); if(rl) rl.remove();
@@ -2530,10 +2387,6 @@
     RW._renderHealBrushCursor(e.clientX, e.clientY);
   }, {capture:true, passive:false});
 
-  // RW.__tabHeld is shared, but rw_brushpoly.js's Tab handler only sets it
-  // when RW.maskMode2==='brush' — extend the same keydown/keyup pair to also
-  // fire for RW.healBrushMode (cross-disarm guarantees only one tool is
-  // active at a time, so sharing the flag is safe).
   window.addEventListener('keydown', function(e){
     if (e.key==='Tab' && RW.healBrushMode){
       RW.__tabHeld = true;
@@ -2553,8 +2406,6 @@
     }
   }, true);
 
-  // Reactive cross-disarm: wrap the shared arm functions Rect/Poly2/Brush
-  // already call, so both keyboard and panel-button arming disarm this tool.
   if (RW._syncRectBtn){
     const origSyncRectBtn = RW._syncRectBtn;
     RW._syncRectBtn = function(){
@@ -2589,25 +2440,15 @@
 // and the live preview point (mousemove) to nearby line endpoints/
 // intersections on the wall bitmap, or to any included region's outline.
 //
-// Pipeline (rebuilt lazily — only when RW._snapDirty, on the next snap query):
-//   1. Density-prefilter RW.wall (RW._buildThinMask, integral image): a wall
-//      pixel whose local window is mostly wall gets excluded before
-//      skeletonizing. Load-bearing, not an optimization nicety — hatch fill
-//      can mark 30%+ of a drawing as "wall", which hangs the tab if
-//      skeletonized directly and has no real line endpoints/junctions anyway.
-//   2. Skeletonize (Zhang-Suen thinning, active-list only — cost scales with
-//      surviving-pixel count, not full W×H).
-//   3. Classify by 8-neighbor count: 1 = endpoint, 3+ = junction, 2 = not a
-//      candidate.
-//   4. Cluster nearby candidates into one point per real junction (junction
-//      wins over endpoint in a mixed cluster).
+// Pipeline (rebuilt lazily on RW._snapDirty):
+//   1. Density-prefilter RW.wall (RW._buildThinMask, integral image).
+//   2. Skeletonize (Zhang-Suen thinning, active-list based).
+//   3. Classify by 8-neighbor count: 1 = endpoint, 3+ = junction, 2 = not a candidate.
+//   4. Cluster nearby candidates (junction wins over endpoint in a mixed cluster).
 //   5. RW._buildEdgePoints adds every included region's boundary pixel as its
-//      own unclustered 'edge' candidate (lets a vertex slide anywhere along an
-//      outline, not just corners), via one O(W×H) pass over RW.labels — NOT
-//      via RW._rawContour (rw_install.js), which re-scans the whole image per
-//      call and would be O(W×H × region count) here.
-//   6. Index all points in a bucket grid; catch radius (RW._snapCatchPx) is
-//      recomputed per-query to stay ~14 screen px regardless of zoom.
+//      own unclustered 'edge' candidate.
+//   6. Index all points in a bucket grid; catch radius (RW._snapCatchPx)
+//      recomputed per-query, ~14 screen px regardless of zoom.
 (function(){
   const RW = window.__RW;
   if (!RW || !RW.v26) return 'need v2.6 first';
@@ -2629,7 +2470,7 @@
 
   RW._buildThinMask = function(){
     const {W,H,wall} = RW;
-    // Summed-area table, padded with a zero row/col so edge queries need no special-casing.
+    // Summed-area table, padded with a zero row/col.
     const integ = new Float64Array((W+1)*(H+1));
     for (let y=0;y<H;y++){
       let rowSum=0;
@@ -2657,7 +2498,7 @@
   };
 
   /* ---------- 2. skeletonize (Zhang-Suen, active-list optimized) ---------- */
-  // seed: the already density-filtered mask — hatched pixels are absent, so invisible here.
+  // seed: the already density-filtered mask.
   RW._skeletonize = function(seed){
     const {W,H} = RW;
     const skel = new Uint8Array(seed);
@@ -2665,10 +2506,7 @@
     for (let i=0;i<W*H;i++) if (skel[i]) active.push(i);
 
     // 8-neighbors clockwise from north (P2..P9, Zhang-Suen paper). Border
-    // pixels are skipped (never deleted/classified), avoiding bounds-wrapping.
-    // Kept as plain locals, not a per-pixel allocation — this runs over the
-    // active list up to ~120 times; allocating per-pixel here would be the
-    // difference between sub-second and tens of seconds.
+    // pixels are skipped (never deleted/classified).
     let changed = true, iter = 0;
     while (changed && iter < 60){
       changed = false; iter++;
@@ -2731,8 +2569,6 @@
   };
 
   /* ---------- 4. cluster nearby candidates ---------- */
-  // A cluster is bucketed by its FIRST point's position; later merges can
-  // drift its centroid without re-bucketing. Harmless at these small merge radii.
   RW._clusterPoints = function(candidates, mergeR){
     const buckets = new Map();
     const clusters = [];
@@ -2764,8 +2600,6 @@
   };
 
   /* ---------- 5. region-outline edge points (single-pass, unclustered) ---------- */
-  // Each boundary pixel is its own candidate (not merged like junctions),
-  // so a vertex can land anywhere along the outline, not just at corners.
   RW._buildEdgePoints = function(){
     const {W,H,labels,regions} = RW;
     const edgePts = [];
@@ -2790,13 +2624,12 @@
 
   /* ---------- 6. spatial index + zoom-invariant catch radius ---------- */
   RW._snapMergeRadiusPx = function(){
-    return Math.max(3, Math.round(6 * (RW.W/2592))); // same 2592-baseline scaling as _areaFloor
+    return Math.max(3, Math.round(6 * (RW.W/2592)));
   };
   RW._snapCellPx = function(){
     return Math.max(4, Math.round(RW.W/200));
   };
   RW._snapCatchPx = function(){
-    // ~14 screen px catch radius regardless of zoom
     const cr = document.getElementById('pdf-container').getBoundingClientRect();
     return (14 / cr.width) * RW.W;
   };
@@ -2837,8 +2670,6 @@
     const thin = RW._buildThinMask();
     const {skel, pts} = RW._skeletonize(thin);
     const candidates = RW._classifySkeleton(skel, pts);
-    // Cached raw (unclustered) so density-based detectors (rw_textdetect.js) can
-    // read local point density — _clusterPoints below deliberately erases it.
     RW._skeletonCandidates = candidates;
     const clustered = RW._clusterPoints(candidates, RW._snapMergeRadiusPx());
     const edgePts = (RW.labels && RW.regions) ? RW._buildEdgePoints() : [];
@@ -2909,10 +2740,8 @@
 // ===== rw_textdetect.js =====
 // RW v2.9 — text/dimension density overlay (DETECTION ONLY — no mask edits).
 // Load AFTER rw_snap.js (needs v27, reuses its skeleton-candidate data).
-// Flags areas where skeleton endpoint/junction candidates cluster densely —
-// text glyphs are small, stroke-heavy shapes, so they produce far more
-// candidates per unit area than real linework. Never touches
-// RW.wall/RW.labels/RW.regions — visualization only.
+// Flags areas where skeleton endpoint/junction candidates cluster densely.
+// Never touches RW.wall/RW.labels/RW.regions — visualization only.
 (function(){
   const RW = window.__RW;
   if (!RW || !RW.v27) return 'need v2.7 (rw_snap.js) first';
@@ -2924,9 +2753,7 @@
   RW._textDirty = true;
   RW._textCandidates = [];
 
-  // Annotation interiors skeletonize into dense branch-point tangles that
-  // mimic text — rebuilt here (not read off RW.wall, which already merged
-  // this mask with linework) so those pixels can be excluded from the scan.
+  // Mask of annotation interiors.
   RW._buildAnnotationMask = function(){
     const {W,H} = RW;
     const cv = document.createElement('canvas'); cv.width=W; cv.height=H;
@@ -2934,8 +2761,6 @@
     ctx.fillStyle = '#000';
     for (const a of (typeof annotationState!=='undefined' ? annotationState.annotations : [])){
       if (a._hidden || a.is_void) continue;
-      // Array.isArray guard: a bbox-type annotation stores {x,y,width,height},
-      // not a point array — pts.forEach would throw (same bug as rw_healinterior.js).
       const pts = a.coordinates; if (!Array.isArray(pts) || pts.length<3) continue;
       ctx.beginPath();
       pts.forEach((p,i)=>{ const X=p.x*W, Y=p.y*H; i?ctx.lineTo(X,Y):ctx.moveTo(X,Y); });
@@ -2949,7 +2774,7 @@
 
   /* ---------- grid-bucket candidate density, then connect hot cells ---------- */
   RW._buildTextCandidates = function(){
-    if (RW._snapDirty) RW._buildSnapPoints(); // ensures RW._skeletonCandidates is fresh
+    if (RW._snapDirty) RW._buildSnapPoints();
     const annMask = RW._buildAnnotationMask();
     const pts = (RW._skeletonCandidates || []).filter(p => !annMask[p.y*RW.W + p.x]);
     const cell = RW._textCellPx;
@@ -2969,8 +2794,7 @@
     const hot = new Set();
     for (const [k,c] of counts) if (c >= minPerCell) hot.add(k);
 
-    // connect adjacent hot cells (4-connected) — same flood-fill pattern as
-    // RW.extract's component labeling, over a density grid.
+    // connect adjacent hot cells (4-connected)
     const visited = new Set();
     const candidates = [];
     for (const k of hot){
@@ -3026,8 +2850,6 @@
     if (status) status.innerText = RW._textCandidates.length + ' candidates';
   };
 
-  // piggyback on RW._snapDirty (already wired to RW._relabel/RW.extract)
-  // instead of adding a second wrapper layer.
   RW._textDirty = true;
   const origBuildSnapPoints = RW._buildSnapPoints;
   RW._buildSnapPoints = function(){ origBuildSnapPoints.apply(RW, arguments); RW._textDirty = true; };
@@ -3035,7 +2857,6 @@
   /* ---------- panel controls ---------- */
   const bar = (document.getElementById('rw-pick') || {}).parentNode;
   if (bar && !document.getElementById('rw-textdetect')){
-    // wrapper lets the whole cluster be hidden as one unit (see below).
     const group = document.createElement('span');
     group.id = 'rw-textdetect-group';
 
@@ -3085,9 +2906,6 @@
     bar.appendChild(group);
   }
 
-  /* ---------- hide clutter (per user request): hide, don't remove — same
-     convention as rw_brushpoly.js's legacy 'poly' button. Done here since
-     Relabel/Add live in earlier-loaded files. ---------- */
   ['rw-relabel-btn', 'rw-addmode', 'rw-textdetect-group'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
@@ -3098,25 +2916,14 @@
 
 ;
 // ===== rw_wallspan.js =====
-// RW v3.1 — Pipe annotation: a fixed-width path, not a traced pixel blob.
+// RW v3.1 — Pipe annotation: a fixed-width path. Click along the centerline
+// (multiple points for bends), drag once to measure a fixed width, builds a
+// constant-width ribbon. Reads RW.wall only via the Poly2 vertex-snap index,
+// for point precision. Full history: CLAUDE.md.
 //
-// An earlier version traced actual drawn pixels (flood-fill through RW.wall,
-// bounded by auto-detected fittings) — abandoned because piping-centerline
-// drawings are visually interrupted by text labels, leader lines, and gaps,
-// which broke the real pixel linework in ways no tuning could fix (full
-// history in CLAUDE.md). This version reads RW.wall only indirectly, via the
-// Poly2 vertex-snap index for point precision — never to decide the pipe's
-// path/width. Click along the centerline (multiple points for bends), drag
-// once to measure a fixed width off the drawing, and it builds a constant-
-// width ribbon: crossing a text label or fitting symbol never changes
-// direction/width, since nothing depends on what's actually drawn in between.
+// Load LAST (after rw_textdetect.js, needs v2.9).
 //
-// Load LAST (after rw_textdetect.js, needs v2.9) — position kept for
-// build_loader.sh stability, no longer a real dependency.
-//
-// Elbow fittings moved out to their own tool (rw_elbow.js, v3.2, press L) —
-// this file no longer reads any pixels at all. See CLAUDE.md for the
-// in-pipe predecessor this replaced and the bug it hit.
+// Elbow fittings: rw_elbow.js, v3.2, press L.
 (function(){
   const RW = window.__RW;
   if (!RW || !RW.v29) return 'need v2.9 (rw_textdetect.js) first';
@@ -3129,42 +2936,27 @@
   RW.pipeMode      = false;
   RW._pipePts      = [];     // confirmed path points, normalized [nx,ny] page-space
   RW._pipeFinished = false;  // true once double-click has closed off the path
-  RW._pipeWidth    = Math.max(3, Math.round(6 * (RW.W/2592))); // mask px, 2592-baseline like other stroke widths in this codebase
-  let downPos = null;         // client {x,y} at mousedown, for click-vs-drag
-  let dragging = false;       // true once movement has exceeded the click threshold
+  RW._pipeWidth    = Math.max(3, Math.round(6 * (RW.W/2592))); // mask px
+  let downPos = null;         // client {x,y} at mousedown
+  let dragging = false;
   let dragCurClient = null;   // live end point of an in-progress width-measure drag
 
-  // RW._pipeWidth is a plain float — a drag distance under 1 mask-px is
-  // real and legitimate (e.g. a thin line at a zoomed-out view), never
-  // rounded in the actual geometry. Every DISPLAY of it must show that same
-  // precision instead of Math.round()'ing it to 0/1, which looked like the
-  // measurement had failed (confirmed live: a sub-1px drag showed "0" or "1"
-  // in the panel despite the real value being used correctly underneath).
   RW._fmtWidth = function(v){
     return (Math.round(v*100)/100).toString();
   };
 
   /* ---------- geometry: path + width -> closed ribbon polygon ---------- */
   // ptsN: [nx,ny] normalized points, widthPx: mask-px width. Returns {x,y}
-  // normalized points (same shape RW._maskToPolygon produces) or null if the
-  // path can't form a ribbon.
+  // normalized points or null.
   //
-  // Standard "stroke to filled ribbon": walk one rail forward, the other
-  // rail backward, close into one loop. Interior vertices use a scaled-
-  // average-perpendicular miter join, falling back to a true bevel (two
-  // separate points, one per segment's own perpendicular) past MITER_LIMIT —
-  // same concept SVG/canvas stroke rendering uses. This bevel fallback is a
-  // real bug fix: an earlier version clamped the miter's MAGNITUDE instead
-  // of switching to a bevel, which doesn't bound the resulting SHAPE — an
-  // acute bend still flared into a wide triangle (confirmed live). A true
-  // bevel point sits exactly `half` from the vertex along its own segment's
-  // perpendicular, incapable of that flare.
+  // Walk one rail forward, the other rail backward, close into one loop.
+  // Interior vertices use a scaled-average-perpendicular miter join, falling
+  // back to a true bevel (two separate points, one per segment's own
+  // perpendicular) past MITER_LIMIT.
   const MITER_LIMIT = 4;
   function analyticPipeRibbon(ptsN, widthPx){
     const {W,H} = RW;
     const pts = ptsN.map(([nx,ny]) => [nx*W, ny*H]);
-    // drop consecutive duplicate points (e.g. a double-click's extra vertex
-    // landing on the same spot as the click just before it)
     const clean = [pts[0]];
     for (let i=1;i<pts.length;i++){
       const [px,py] = clean[clean.length-1], [x,y] = pts[i];
@@ -3174,7 +2966,6 @@
     const n = clean.length;
     const half = widthPx/2;
 
-    // per-segment unit perpendiculars (rotate the segment direction 90°)
     const perp = [];
     for (let i=0;i<n-1;i++){
       const [x1,y1] = clean[i], [x2,y2] = clean[i+1];
@@ -3182,8 +2973,6 @@
       perp.push([-dy/len, dx/len]);
     }
 
-    // flat, incrementally-pushed rails (not one point per vertex) — an
-    // interior vertex contributes one point (miter) or two (bevel fallback).
     const left = [], right = [];
     left.push([clean[0][0]+perp[0][0]*half, clean[0][1]+perp[0][1]*half]);
     right.push([clean[0][0]-perp[0][0]*half, clean[0][1]-perp[0][1]*half]);
@@ -3193,7 +2982,7 @@
       const [vx,vy] = clean[i];
       let ax = p1[0]+p2[0], ay = p1[1]+p2[1];
       const alen = Math.hypot(ax,ay);
-      let bevel = alen < 1e-6; // ~180° reversal — degenerate miter direction, always bevel
+      let bevel = alen < 1e-6;
       let mx=0, my=0;
       if (!bevel){
         ax/=alen; ay/=alen;
@@ -3220,10 +3009,6 @@
 
   RW._pipeRibbon = function(ptsN, widthPx){
     if (!ptsN || ptsN.length < 2 || !(widthPx > 0)) return null;
-    // dedup in mask-px terms (matching analyticPipeRibbon's own internal
-    // threshold exactly) — NOT normalized-coordinate distance, which would
-    // be off by a factor of RW.W/RW.H and make this far less aggressive
-    // than intended.
     const {W,H} = RW;
     const clean = [ptsN[0]];
     for (let i=1;i<ptsN.length;i++){
@@ -3234,21 +3019,7 @@
     return analyticPipeRibbon(clean, widthPx);
   };
 
-  /* ---------- dimension line: tried and reverted ----------
-     A first version staged a SECOND small annotation (a tick straddling the
-     path's start, width in its own notes) alongside the ribbon. Live testing
-     showed it read as a random unlabeled shape, not a measurement — no
-     visible number on the canvas, and it sat wherever the path happened to
-     start rather than where the user was looking. Reverted: the width is now
-     recorded directly in the ribbon's own notes (RW.commitPipe below). If a
-     real dimension-line indicator is wanted again, it needs an actual
-     visible number on the drawing — check the app's annotation model
-     supports text rendering first (full account: CLAUDE.md). */
-
   /* ---------- sanity check before commit ---------- */
-  // Trivial compared to the pixel-tracing version — there's no pixel blob
-  // for a leaked-area/containment check to apply to; a valid path + a
-  // positive width is definitionally a sane ribbon.
   RW._pipeSanityCheck = function(ptsN, widthPx){
     if (!ptsN || ptsN.length < 2) return 'need at least a start and finish point';
     if (!(widthPx > 0)) return 'width must be greater than 0 — drag across the pipe to measure it';
@@ -3286,9 +3057,6 @@
     if (!d) return;
     const dist = Math.hypot(e.clientX-d.x, e.clientY-d.y);
     if (dragging || dist > 5){
-      // drag: measure width as the on-screen drag distance, converted to
-      // mask px the same zoom-invariant way RW._snapCatchPx does (screen px
-      // -> mask px via the live pdf-container width).
       const [ax,ay] = RW._toNorm(d.x, d.y), [bx,by] = RW._toNorm(e.clientX, e.clientY);
       const mx1=ax*RW.W, my1=ay*RW.H, mx2=bx*RW.W, my2=by*RW.H;
       const w = Math.hypot(mx2-mx1, my2-my1);
@@ -3300,8 +3068,7 @@
       RW._renderPipePreview(e.clientX, e.clientY);
       return;
     }
-    // click: add a path vertex (Poly2's exact placement idiom — rw_brushpoly.js).
-    if (RW._pipeFinished){ RW._pipePts = []; RW._pipeFinished = false; } // start a fresh path after a finished one
+    if (RW._pipeFinished){ RW._pipePts = []; RW._pipeFinished = false; }
     let [nx,ny] = RW._toNorm(e.clientX, e.clientY);
     if (RW._trySnap && !e.shiftKey){ const s = RW._trySnap(nx,ny); nx=s[0]; ny=s[1]; }
     RW._pipePts.push([nx,ny]);
@@ -3328,10 +3095,6 @@
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
     if (!RW.pipeMode) return;
-    if (e.key==='c'||e.key==='C'){
-      // still allow toggling the mode off/on via C even while mid-path — matches
-      // every other tool's own key both arming and disarming itself.
-    }
     if (e.key==='Escape'){
       e.preventDefault(); e.stopImmediatePropagation();
       if (RW._pipePts.length){
@@ -3349,8 +3112,6 @@
     }
   }, true);
 
-  // `C` arms/disarms the tool itself — separate listener so it works even
-  // when RW.pipeMode is currently false (the block above only fires once armed).
   window.addEventListener('keydown', function(e){
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
@@ -3362,9 +3123,6 @@
   }, true);
 
   /* ---------- preview rendering ---------- */
-  // Live while drawing: the confirmed points plus (if the mouse isn't
-  // mid-drag) the current cursor as a provisional last point — same idiom
-  // as Poly2's own live area hint (rw_brushpoly.js:91-94).
   RW._renderPipePreview = function(clientX, clientY){
     const old = document.getElementById('rw-pipe-preview'); if (old) old.remove();
     if (!RW.pipeMode) return;
@@ -3373,7 +3131,6 @@
       const svg = RW._mkSvg('rw-pipe-preview', 71);
       svg.innerHTML = '<line x1="'+downPos.x+'" y1="'+downPos.y+'" x2="'+dragCurClient.x+'" y2="'+dragCurClient.y
         + '" stroke="#ff8c00" stroke-width="2" stroke-dasharray="4,3"/>';
-      // same mask-px conversion mouseup uses when it actually locks the value in
       const [ax,ay] = RW._toNorm(downPos.x, downPos.y), [bx,by] = RW._toNorm(dragCurClient.x, dragCurClient.y);
       const liveW = Math.hypot((bx-ax)*RW.W, (by-ay)*RW.H);
       RW._commitStatus('width: ' + RW._fmtWidth(liveW) + 'px (release to set)');
@@ -3427,18 +3184,10 @@
     if (problem){ RW._commitStatus('refused: ' + problem); return; }
     const ribbon = RW._pipeRibbon(RW._pipePts, RW._pipeWidth);
     if (!ribbon || ribbon.length < 4){ RW._commitStatus('refused: could not build a ribbon from this path'); return; }
-    // The measured width is recorded in the pipe's own notes rather than a
-    // second visible shape — see the "dimension line, tried and reverted"
-    // history note above RW._pipeSanityCheck for why a separate tick
-    // annotation was tried first and dropped.
     const a = RW._createPendingAnnotation(ribbon, 'pipe width: ' + RW._pipeWidth.toFixed(2) + ' px');
     await RW._forceRender();
     RW._lastCommit = [a];
     RW.clearPipe({keepStatus:true});
-    // set AFTER clearPipe, not before — clearPipe blanks the status by
-    // default (used by Escape/mode-off), which would otherwise overwrite
-    // this success message before the user ever sees it. Confirmed live:
-    // without keepStatus, this message flashed and vanished instantly.
     RW._commitStatus('staged 1 pipe (' + ribbon.length + ' pts, width ' + RW._fmtWidth(RW._pipeWidth) + 'px)'
       + ' — review and Save. To remove it before Save, select it in the app and press Delete.'
       + ' Got an elbow fitting to mark? Press L.');
@@ -3566,34 +3315,17 @@
 ;
 // ===== rw_panelsections.js =====
 // RW vsec — panel reorganization: labelled sections instead of one long
-// wrapping row (no collapsing/hiding — not asked for).
+// wrapping row. Post-load reflow: modules keep appending to the original
+// anonymous button-bar; this module moves controls by id into labelled
+// sections afterward.
 //
-// Approach: POST-LOAD REFLOW, not editing every module to mount into named
-// containers. Modules keep appending to the original anonymous button-bar;
-// this module moves controls BY ID into labelled sections afterward — so a
-// missed/renamed id just leaves the control visible in the leftover bar
-// instead of silently vanishing (no test suite, non-programmer users). Also
-// keeps the `(document.getElementById('rw-pick')||{}).parentNode` idiom every
-// module uses working unmodified — that element still exists, just gets
-// emptied after everyone else has appended to it.
-//
-// Timing: rw_panelux.js's retrofit() (wraps everything into #rw-body) is
-// deferred via setTimeout(...,100). This module runs synchronously near the
-// end of the same concatenated script, so it's guaranteed to finish first —
-// anchored off #rw-list's OWN parent (not #rw-panel by name) so it's correct
-// either way.
-//
-// Load AFTER every tool module (so controls exist to move) and BEFORE
-// rw_elbow.js (so RW.panelSection exists for it to call).
+// Load AFTER every tool module and BEFORE rw_elbow.js.
 (function(){
   const RW = window.__RW;
   if (!RW || !RW.v31) return 'need v3.1 (rw_wallspan.js) first';
   if (RW.vsec) return 'panel sections already installed';
   RW.vsec = true;
 
-  // Shared style constants (the ~18x copy-pasted strings this codebase uses
-  // everywhere) — for NEW code to reuse; existing modules keep their own
-  // inline copies untouched.
   RW.ui = {
     BTN: 'font-size:11px;padding:2px 6px;',
     NUM: 'font-size:11px;padding:1px 4px;width:44px;text-align:right;',
@@ -3605,7 +3337,6 @@
   const host = list && list.parentNode; // #rw-panel now, or #rw-body if retrofit already ran
   if (!host){ return 'panel sections: #rw-list not found, skipping'; }
 
-  // Capture the legacy bar BEFORE the sweep, same lookup every module uses.
   const legacyBar = (document.getElementById('rw-pick') || {}).parentNode;
 
   const sections = document.createElement('div');
@@ -3638,8 +3369,7 @@
     return row;
   };
 
-  // Pre-create every section in display order (an empty one, e.g. FITTINGS
-  // before rw_elbow.js mounts anything, is hidden below).
+  // Pre-create every section in display order.
   const REGIONS  = RW.panelSection('regions',  'REGIONS');
   const MASK     = RW.panelSection('mask',     'MASK TOOLS');
   const HEAL     = RW.panelSection('heal',     'HEAL');
@@ -3647,8 +3377,7 @@
   const FITTINGS = RW.panelSection('fittings', 'FITTINGS');
   const VIEW     = RW.panelSection('view',     'VIEW');
 
-  // id -> destination section, in intended visual order. A missing id is
-  // just skipped, never a hard failure.
+  // id -> destination section.
   const moves = [
     [REGIONS, ['rw-pick','rw-merge','rw-cut','rw-commit','rw-refresh','rw-undo']],
     [MASK,    ['rw-rect','rw-poly2','rw-brush','rw-snap','rw-relabel-inp','rw-relabel-btn','rw-addmode']],
@@ -3657,8 +3386,7 @@
     [VIEW,    ['rw-walls','rw-hide','rw-textdetect-group']],
   ];
 
-  // The area-floor input never had a visible label (stray unlabeled box next
-  // to Rect) — give it one now so it travels into MASK TOOLS with the input.
+  // Label for the area-floor input.
   const relabelInp = document.getElementById('rw-relabel-inp');
   if (relabelInp && !document.getElementById('rw-relabel-label')){
     const l = document.createElement('span');
@@ -3681,16 +3409,7 @@
     });
   });
 
-  // Restore flex/gap on group-wrapper spans (#rw-pipe-group/#rw-textdetect-group
-  // predate this reorg and need it set explicitly; #rw-heal-group already sets
-  // its own).
-  //
-  // Real bug found live: `cssText += 'display:inline-flex;...'` appends a
-  // second `display` declaration rather than replacing it — for
-  // #rw-textdetect-group the existing one is `display:none` (rw_textdetect.js's
-  // deliberate hide), and the LATER declaration wins, silently un-hiding it.
-  // Fixed by setting individual style properties and preserving `display:none`
-  // on anything already hidden.
+  // Set flex/gap on group-wrapper spans, preserving display:none if already hidden.
   ['rw-pipe-group','rw-textdetect-group'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -3700,8 +3419,6 @@
     el.style.alignItems = 'center';
   });
 
-  // Safety net: an unanticipated leftover control stays visible (unsectioned)
-  // with a console warning, rather than silently disappearing.
   if (legacyBar){
     if (legacyBar.children.length){
       console.warn('[RW] unmapped panel controls left in the legacy bar:',
@@ -3711,11 +3428,7 @@
     }
   }
 
-  // Hide a section that ended up with zero children — build-time only, not a
-  // live re-evaluation. Deferred via setTimeout(0): checked synchronously,
-  // FITTINGS would always look empty here since rw_elbow.js (loaded right
-  // after this module) hasn't run yet, and would get hidden permanently.
-  // Deferring to the next tick runs this after the whole loader has finished.
+  // Hide any section with zero children, deferred via setTimeout(0).
   setTimeout(function(){
     Object.keys(sectionEls).forEach(key => {
       const row = sectionEls[key];
@@ -3729,28 +3442,21 @@
 ;
 // ===== rw_elbow.js =====
 // RW v3.2 — Elbow fitting: drag a box (or click points + double-click to
-// close a tighter polygon region) around a pipe fitting and trace the REAL
-// linework inside it into a polygon (not a shape inferred from where you
-// dragged). Color-pick + tolerance is the primary control over what counts
-// as ink; the single largest connected piece inside the box/region is
+// close a tighter polygon region) around a pipe fitting and trace the real
+// linework inside it into a polygon. Color-pick + tolerance control what
+// counts as ink; the single largest connected piece inside the box/region is
 // selected, traced pixel-exactly (RW._traceGridBoundary), then diagonal/
-// curved staircase runs are collapsed into clean chords via the same
-// Douglas-Peucker simplifier region commits use (RW._simplifyRing).
+// curved staircase runs are collapsed via RW._simplifyRing.
 //
-// Full design history (rejected approaches, live-found bugs, why fuse/hug/
-// shrink were removed) lives in CLAUDE.md — this file only carries the
-// "why" that's load-bearing for the code itself.
+// Full design history: CLAUDE.md.
 //
 // Load LAST (after rw_panelsections.js, needs v31). Depends on:
-//   - RW.wall / RW.extract (rw_install.js) — fallback linework source.
-//   - RW._buildAnnotationMask (rw_textdetect.js) — excludes already-committed
-//     annotations from the detection source.
-//   - RW._traceGridBoundary, RW._dpOpen/_simplifyRing/_bisectRingToTargetPts
-//     (rw_commit.js) — exact tracing + Douglas-Peucker collapsing.
-//   - RW._createPendingAnnotation, RW._forceRender, RW._commitStatus (rw_commit.js).
+//   - RW.wall / RW.extract (rw_install.js).
+//   - RW._buildAnnotationMask (rw_textdetect.js).
+//   - RW._traceGridBoundary, RW._dpOpen/_simplifyRing/_bisectRingToTargetPts,
+//     RW._createPendingAnnotation, RW._forceRender, RW._commitStatus (rw_commit.js).
 //   - RW._toNorm/_toPx/_mkSvg (rw_stable.js).
-//   - RW.panelSection (rw_panelsections.js) — optional; falls back to the
-//     legacy #rw-pick-parentNode bar-append idiom if absent.
+//   - RW.panelSection (rw_panelsections.js) — optional.
 (function(){
   const RW = window.__RW;
   if (!RW || !RW.v31) return 'need v3.1 (rw_wallspan.js) first';
@@ -3761,38 +3467,33 @@
 
   /* ---------- state ---------- */
   RW.elbowMode      = false;
-  RW._elbowBoxN     = null;   // detection box {x0,y0,x1,y1}, normalized, min/max-ordered — always set (even for a region, it's the region's own bbox)
-  RW._elbowRegionN  = null;   // committed polygon region, normalized [[x,y],...], or null (rectangle-only detection)
-  RW._elbowRegionWip = null;  // in-progress (not yet double-clicked closed) polygon vertices, normalized [[x,y],...]
-  RW._elbowPoly     = null;   // detected polygon, normalized [{x,y}], or null — one shape (the largest qualifying piece)
-  RW._elbowRaster   = null;   // {localW,localH,pad,scale,gx0,gy0, src,selected} — for the Px debug overlay
+  RW._elbowBoxN     = null;   // detection box {x0,y0,x1,y1}, normalized, min/max-ordered
+  RW._elbowRegionN  = null;   // committed polygon region, normalized [[x,y],...], or null
+  RW._elbowRegionWip = null;  // in-progress polygon vertices, normalized [[x,y],...]
+  RW._elbowPoly     = null;   // detected polygon, normalized [{x,y}], or null
+  RW._elbowRaster   = null;   // {localW,localH,pad,scale,gx0,gy0, src,selected}
   RW._elbowMeta     = null;   // {totalComps,candidateComps,keptPx,srcPx,coverage,source,capFallback}
-  // Tunables, mask-px, defaults per user preference (not the resolution-scaled formula).
   RW._elbowMinArea  = 1;
-  RW._elbowSubAnn   = true;   // subtract already-committed annotations from the detection source
-  RW._elbowRes      = 100;    // sample the box at this many x the current mask resolution (RASTER_BUDGET still caps a large box)
-  RW._elbowTargetPts = 24;    // 0 = auto; >0 = bisect eps to hit this many output vertices
-  RW._elbowPxState  = 0;      // 0 off, 1 source (thresholded+clipped), 2 selected (the piece that gets traced/committed)
-  RW._elbowPicking     = false; // one-shot "next click samples a color" mode, armed by the Pick Color button
-  RW._elbowTargetColor = null;  // {r,g,b} once picked — replaces the darkness threshold when set
-  RW._elbowColorTol    = 100;   // Euclidean RGB distance tolerance, used when RW._elbowTargetColor is set
-  RW._elbowDragHandle  = null;  // {type:'box', anchor:[nx,ny]} or {type:'region', index} while dragging an existing corner/vertex
+  RW._elbowSubAnn   = true;
+  RW._elbowRes      = 100;
+  RW._elbowTargetPts = 24;    // 0 = auto
+  RW._elbowPxState  = 0;      // 0 off, 1 source, 2 selected
+  RW._elbowPicking     = false;
+  RW._elbowTargetColor = null;  // {r,g,b} once picked
+  RW._elbowColorTol    = 100;
+  RW._elbowDragHandle  = null;  // {type:'box', anchor:[nx,ny]} or {type:'region', index}
 
   let downClient  = null;   // client {x,y} at mousedown, for the click-vs-drag threshold
   let dragStartN  = null;   // normalized start corner of the in-progress box drag
   let dragging    = false;
   let elbowRerunTimer = null;
-  // Shared 250ms-debounced re-detect, used by both the panel's tunable
-  // inputs and handle-dragging below, so dragging doesn't re-run the full
-  // raster/trace pipeline on every mousemove frame.
+  // 250ms-debounced re-detect, shared by panel tunables and handle-dragging.
   function scheduleElbowRerun(){
     clearTimeout(elbowRerunTimer);
     elbowRerunTimer = setTimeout(() => { if (RW._elbowBoxN) RW._runElbowDetect(); }, 250);
   }
 
-  // Hit-tests an existing box corner or region vertex against a client
-  // point, for click-and-drag editing. Container-relative px, matching
-  // RW._toPx's own coordinate space.
+  // Hit-tests an existing box corner or region vertex against a client point. Container-relative px.
   function hitTestElbowHandle(clientX, clientY){
     const cr = document.getElementById('pdf-container').getBoundingClientRect();
     const mx = clientX - cr.x, my = clientY - cr.y;
@@ -3865,12 +3566,7 @@
     return Math.abs(a)/2;
   }
 
-  // Segment-intersection test (orientation-based) — used only to check a
-  // Douglas-Peucker-capped grid-boundary trace for a genuine self-crossing.
-  // RW._traceGridBoundary's raw output can be a WEAKLY simple ring (a pinch
-  // point revisits one corner — harmless on its own), and DP could in
-  // principle cut across the pinch into a true crossing. Adjacent edges
-  // (sharing a ring index, including the wraparound pair) are skipped.
+  // Segment-intersection test (orientation-based).
   function segmentsIntersect(p1,p2,p3,p4){
     function orient(a,b,c){ return (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]); }
     function onSeg(a,b,c){
@@ -3900,9 +3596,7 @@
     return true;
   }
 
-  // Pixel color-match decision, extracted so it's directly Node-testable
-  // without a real canvas. No color picked -> the flat darkness threshold
-  // RW.extract also uses; once picked, this REPLACES the darkness test.
+  // Pixel color-match decision. No color picked -> flat darkness threshold; once picked, replaces it.
   RW._elbowColorMatch = function(r, g, b){
     const tc = RW._elbowTargetColor;
     if (!tc) return Math.min(r,g,b) < 200;
@@ -3911,16 +3605,12 @@
     return Math.sqrt(dr*dr+dg*dg+db*db) < tol;
   };
 
-  // width -> {minArea} seed formula, so the panel's `width` input can stay a
-  // one-shot write (see its oninput handler below) rather than a standing
-  // recompute rule.
+  // width -> {minArea} seed formula.
   RW._elbowSeedFromWidth = function(width){
     return { minArea: Math.max(1, Math.round(2.5 * width * width)) };
   };
 
-  // Even-odd scanline fill of a polygon (given in LOCAL raster px already)
-  // into a fresh mask — a from-scratch reimplementation rather than reusing
-  // RW._paintPoly (rw_masktools.js), which is hardcoded to RW.wall/RW.W/RW.H.
+  // Even-odd scanline fill of a polygon (local raster px) into a fresh mask.
   function rasterizePolyLocal(localPts, w, h){
     const mask = new Uint8Array(w*h);
     let minY=Infinity, maxY=-Infinity;
@@ -3941,14 +3631,9 @@
     return mask;
   }
 
-  /* ---------- raster acquisition ----------
-     Two sources, tried in order. Kept separate from the pure pixel pipeline
-     below (RW._elbowProcessRaster) so the Node test suite keeps injecting a
-     synthetic raster directly, while the real DOM path stays exercised live. */
+  /* ---------- raster acquisition: two sources, tried in order ---------- */
 
-  // Eyedropper: sample #pdf-canvas's actual pixel color at a normalized page
-  // point. Only meaningful against the real canvas — RW.wall has already
-  // thrown color information away by the time it's a binary mask.
+  // Eyedropper: sample #pdf-canvas's pixel color at a normalized page point.
   RW._elbowSampleColorAt = function(nx, ny){
     try {
       const src = document.getElementById('pdf-canvas');
@@ -3967,11 +3652,9 @@
     }
   };
 
-  // Primary: sample #pdf-canvas directly at `res` x the current mask
-  // resolution — sidesteps RW.extract's page-wide width cap so a small box
-  // genuinely benefits from more source detail. Returns null (falls through
-  // to the RW.wall crop) if the canvas is unavailable, throws, or the
-  // sampled region comes back entirely blank.
+  // Sample #pdf-canvas directly at `res` x the current mask resolution.
+  // Returns null (falls through to the RW.wall crop) if the canvas is
+  // unavailable, throws, or the sampled region comes back entirely blank.
   RW._elbowAcquireRaster = function(geom){
     try {
       const src = document.getElementById('pdf-canvas');
@@ -3980,17 +3663,11 @@
       cv.width = geom.localW; cv.height = geom.localH;
       const ctx = cv.getContext('2d');
       if (!ctx) return null;
-      // Fill white first: a fresh canvas reads back (0,0,0,0) wherever
-      // nothing is drawn, and the darkness threshold would mark that as
-      // wall — the pad margin needs to read as genuinely empty.
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, geom.localW, geom.localH);
       const dw = geom.rawW*geom.scale, dh = geom.rawH*geom.scale;
       // geom.* are RW.W-space; pdf-canvas's native backing store can be a
-      // larger, different resolution when RW.extract's width cap kicked in
-      // — scale through nativeScale so drawImage samples the right region
-      // (a real bug, found live: an un-scaled crop silently sampled the
-      // wrong sub-region on a page where the cap had triggered).
+      // different resolution — scale through nativeScale.
       const nativeScale = src.width / RW.W;
       const sgx0 = geom.gx0*nativeScale, sgy0 = geom.gy0*nativeScale;
       const srawW = geom.rawW*nativeScale, srawH = geom.rawH*nativeScale;
@@ -4001,7 +3678,7 @@
       for (let i=0;i<data.length;i++){
         if (RW._elbowColorMatch(img[i*4], img[i*4+1], img[i*4+2])){ data[i]=1; srcPx++; }
       }
-      if (!srcPx) return null; // blank crop -> fall back rather than report a false empty box
+      if (!srcPx) return null;
       if (RW._elbowSubAnn && typeof annotationState !== 'undefined'){
         const acv = document.createElement('canvas');
         acv.width = geom.localW; acv.height = geom.localH;
@@ -4024,15 +3701,12 @@
       return { data, localW:geom.localW, localH:geom.localH, pad:geom.pad, scale:geom.scale,
         gx0:geom.gx0, gy0:geom.gy0, source:'canvas' };
     } catch (e){
-      return null; // e.g. a tainted canvas
+      return null;
     }
   };
 
-  // Fallback: crop the existing page-wide RW.wall mask. Loses anything only
-  // visible in RW.wall and not on the real canvas but never hard-fails.
-  // Fills each source pixel's full scale x scale destination footprint
-  // (not just a single rounded point) so upsampling (`scale`>1) doesn't
-  // leave a sparse, gap-riddled pattern.
+  // Fallback: crop the existing page-wide RW.wall mask, filling each source
+  // pixel's full scale x scale destination footprint.
   function acquireFromWall(geom){
     if (!RW.wall) RW.extract();
     const ann = RW._elbowSubAnn && RW._buildAnnotationMask ? RW._buildAnnotationMask() : null;
@@ -4065,15 +3739,11 @@
   }
 
   /* ---------- pure pixel pipeline ----------
-     A function of a raster + tunables only — no DOM, directly Node-testable.
-     Returns {poly, stages, meta} or {error}. */
+     Function of a raster + tunables only. Returns {poly, stages, meta} or {error}. */
   RW._elbowProcessRaster = function(raster, opts){
     const { localW, localH } = raster;
     let src = raster.data;
-    // Clip to the region polygon if one is active, otherwise the box's own
-    // interior (pad is just working room for the trace/coordinate math near
-    // the raster edge — nothing dilates past this clip once applied, since
-    // there's no dilation step anymore).
+    // Clip to the region polygon if active, otherwise the box interior.
     let clipMask;
     if (opts.regionLocalPts){
       clipMask = rasterizePolyLocal(opts.regionLocalPts, localW, localH);
@@ -4096,41 +3766,29 @@
     const minAreaLocal = Math.max(1, Math.round(opts.minArea * raster.scale * raster.scale));
     const cx = localW/2, cy = localH/2;
 
-    // Label 8-connected components on the thresholded, clipped source
-    // directly — no dilation/bridging. Color-pick + `tol` is the primary
-    // control over what counts as ink; a genuinely separate piece just
-    // isn't included rather than being forced together.
     const { labels, comps } = labelComponents(src, localW, localH, cx, cy);
     if (!comps.length) return { error: 'no connected shape found inside the box — try picking a color, or raising "tol"' };
     const candidates = comps.filter(c => c.size >= minAreaLocal);
     if (!candidates.length){
       return { error: 'only noise-sized pieces found inside the box — lower "min px"' };
     }
-    // Pick the component with the MOST raw pixels.
     candidates.sort((a,b) => b.size - a.size);
     const keep = candidates[0];
 
     const selected = new Uint8Array(localW*localH);
     for (let i=0;i<selected.length;i++) if (labels[i]===keep.id) selected[i]=1;
 
-    // Exact rectilinear trace — the only tracer.
     let traced = RW._traceGridBoundary(selected, { W:localW, H:localH });
     if (!traced) return { error: 'trace failed — try adjusting the box, the color, or "tol"' };
     const rawAreaPx = shoelaceAreaPx(traced, localW, localH);
     if (rawAreaPx < 4) return { error: 'traced shape is too small (likely noise) — try a bigger box or raise "min px"' };
 
-    // Diagonal collapsing: Douglas-Peucker (RW._simplifyRing /
-    // RW._bisectRingToTargetPts, rw_commit.js) on the exact trace's raw
-    // vertices — a small fixed eps by default, or bisected to a `pts` target.
     let capFallback = false;
     const targetPts = opts.targetPts != null && opts.targetPts > 0 ? Math.max(5, Math.round(opts.targetPts)) : 0;
     const ring = traced.map(p => [p.x*localW, p.y*localH]);
     const simplifiedRing = targetPts
       ? RW._bisectRingToTargetPts(ring, targetPts, null)
       : RW._simplifyRing(ring, 0.8, null);
-    // The raw trace can be only WEAKLY simple (a pinch point) — DP over a
-    // pinch could in principle cut across it into a true self-intersection.
-    // Fall back to the full uncollapsed trace rather than ship a bad polygon.
     if (isSimplePolygon(simplifiedRing)){
       traced = simplifiedRing.map(([x,y]) => ({ x:+(x/localW).toFixed(6), y:+(y/localH).toFixed(6) }));
     } else {
@@ -4138,7 +3796,6 @@
     }
     if (traced.length < 3) return { error: 'traced shape has too few points' };
 
-    // Map local-normalized -> global mask-px -> page-normalized.
     const poly = traced.map(p => ({
       x: +((((p.x*localW) - raster.pad)/raster.scale + raster.gx0)/RW.W).toFixed(6),
       y: +((((p.y*localH) - raster.pad)/raster.scale + raster.gy0)/RW.H).toFixed(6),
@@ -4165,9 +3822,6 @@
     const rawW = gx1-gx0, rawH = gy1-gy0;
     if (rawW < 4 || rawH < 4) return { error: "that's a click, not a box — drag out a bigger area around the fitting" };
 
-    // Budget-scale-cap: scale = min(res, sqrt(budget/area)) — bounds a
-    // pathologically large box while letting `res` genuinely upscale a
-    // normal-sized one.
     const RASTER_BUDGET = 1_500_000;
     const res = RW._elbowRes != null ? RW._elbowRes : 3;
     const scale = Math.min(res, Math.sqrt(RASTER_BUDGET / Math.max(1, rawW*rawH)));
@@ -4194,19 +3848,13 @@
 
     const polyAreaPx = shoelaceAreaPx(result.poly, W, H);
     const boxAreaPx = rawW*rawH;
-    // Coverage against the REGION's own area when one is active, not its
-    // (larger) bounding box's — otherwise a tight region inside a much
-    // looser bbox would read as artificially low coverage.
     result.meta.coverage = regionAreaPx != null
       ? (regionAreaPx>0 ? polyAreaPx/regionAreaPx : 0)
       : (boxAreaPx>0 ? polyAreaPx/boxAreaPx : 0);
     return result;
   };
 
-  /* ---------- sanity check ----------
-     Refuses on structurally-broken results; WARNS (doesn't refuse) on a
-     high-coverage trace — the user decides whether a near-100% trace is
-     right or a sign the box sat inside an existing annotation/solid fill. */
+  /* ---------- sanity check: refuses on structurally-broken results, warns on high coverage ---------- */
   RW._elbowSanityCheck = function(poly, boxN, meta){
     if (!poly || poly.length < 3) return 'traced shape has too few points';
     if (meta && meta.coverage < 0.0002) return 'found almost nothing inside the box — try picking a color, or raising "tol"';
@@ -4266,10 +3914,7 @@
     RW._syncElbowBtns();
   };
 
-  /* ---------- interaction: drag a box, OR click a series of points and
-     double-click to close a tighter polygon region (same 5px click/drag
-     threshold and capture-phase mousedown/mousemove/mouseup/click/dblclick
-     template the Rect mask tool / Pipe tool already use) ---------- */
+  /* ---------- interaction: drag a box, or click points + double-click to close a region ---------- */
   ac.addEventListener('mousedown', function(e){
     if (!RW.elbowMode) return;
     e.stopPropagation(); e.preventDefault();
@@ -4290,9 +3935,6 @@
   ac.addEventListener('mousemove', function(e){
     if (!RW.elbowMode || !downClient) return;
     e.stopPropagation();
-    // dragging an existing box corner or region vertex: mutate it, redraw
-    // immediately, and debounce a full re-detect so the traced highlight
-    // updates live without re-running the pipeline on every mouse event.
     if (RW._elbowDragHandle){
       const n = RW._toNorm(e.clientX, e.clientY);
       if (RW._elbowDragHandle.type === 'box'){
@@ -4307,8 +3949,6 @@
       scheduleElbowRerun();
       return;
     }
-    // once a region vertex exists, never fall into rectangle-drag — a shaky
-    // click while placing a vertex shouldn't silently discard the polygon.
     if (RW._elbowRegionWip && RW._elbowRegionWip.length) return;
     const d = Math.hypot(e.clientX-downClient.x, e.clientY-downClient.y);
     if (d > 5) dragging = true;
@@ -4325,8 +3965,6 @@
     const rl = document.getElementById('rw-elbow-rect'); if (rl) rl.remove();
     const wasDragging = dragging; dragging = false;
     if (RW._elbowDragHandle){
-      // release: settle on an immediate, non-debounced detect so the final
-      // result matches exactly where the handle was dropped.
       RW._elbowDragHandle = null;
       clearTimeout(elbowRerunTimer);
       RW._runElbowDetect();
@@ -4352,12 +3990,6 @@
       return;
     }
     if (!wasDragging){
-      // a plain click: place (or continue) a polygon-region vertex, at the
-      // MOUSEDOWN position (not mouseup) so it lands where the user aimed.
-      // Every plain click adds a vertex, whether or not one already exists —
-      // an earlier version of this handler returned early once a first
-      // vertex existed, which silently discarded every click after the
-      // first and made a polygon region impossible to ever close.
       if (!RW._elbowRegionWip) RW._elbowRegionWip = [];
       RW._elbowRegionWip.push(RW._toNorm(down.x, down.y));
       dragStartN = null;
@@ -4380,9 +4012,6 @@
     if (!RW.elbowMode) return;
     e.stopPropagation(); e.preventDefault();
     if (!RW._elbowRegionWip || RW._elbowRegionWip.length < 3) return;
-    // a real double-click fires two full mousedown/mouseup pairs before this
-    // event, so the closing click already appended a near-duplicate vertex
-    // — drop it.
     const pts = RW._elbowRegionWip.slice();
     const [lx,ly] = pts[pts.length-1], [px,py] = pts[pts.length-2];
     if (Math.hypot(lx-px, ly-py) < 0.002) pts.pop();
@@ -4415,8 +4044,6 @@
     }
   }, true);
 
-  // `L` arms/disarms the tool itself — works even when RW.elbowMode is
-  // currently false (matches RW.pipeMode's own `C` key, rw_wallspan.js).
   window.addEventListener('keydown', function(e){
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
@@ -4446,7 +4073,6 @@
       const [bx0,by0] = RW._toPx(b.x0,b.y0), [bx1,by1] = RW._toPx(b.x1,b.y1);
       html += '<rect x="'+bx0+'" y="'+by0+'" width="'+(bx1-bx0)+'" height="'+(by1-by0)
         + '" fill="none" stroke="#ff8c00" stroke-width="1" stroke-dasharray="4,3" opacity="0.6"/>';
-      // draggable corner handles
       [[b.x0,b.y0],[b.x1,b.y0],[b.x1,b.y1],[b.x0,b.y1]].forEach(([nx,ny])=>{
         const [px,py] = RW._toPx(nx,ny);
         html += '<circle cx="'+px+'" cy="'+py+'" r="5" fill="#fff" stroke="#ff8c00" stroke-width="2"/>';
@@ -4455,7 +4081,6 @@
     if (RW._elbowRegionN){
       const pts = RW._elbowRegionN.map(([nx,ny]) => { const [px,py]=RW._toPx(nx,ny); return px+','+py; }).join(' ');
       html += '<polygon points="'+pts+'" fill="none" stroke="#ff8c00" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.7"/>';
-      // draggable vertex handles
       RW._elbowRegionN.forEach(([nx,ny])=>{
         const [px,py] = RW._toPx(nx,ny);
         html += '<circle cx="'+px+'" cy="'+py+'" r="5" fill="#fff" stroke="#ff8c00" stroke-width="2"/>';
@@ -4474,9 +4099,7 @@
     RW._renderElbowPx();
   };
 
-  // Debug overlay — a 2-state cycle (source / selected), mirroring the `W`
-  // wall-overlay convention. Positioned in PERCENTAGE coordinates of
-  // #pdf-container so it stays glued to the drawing through pan/zoom.
+  // Debug overlay: 2-state cycle (source / selected). Positioned in percentage coordinates of #pdf-container.
   RW._renderElbowPx = function(){
     const old = document.getElementById('rw-elbow-px'); if (old) old.remove();
     if (!RW._elbowPxState || !RW._elbowRaster) return;
@@ -4579,8 +4202,6 @@
   }
 
   /* ---------- panel ---------- */
-  // Mounts into the FITTINGS section (rw_panelsections.js) if present;
-  // otherwise falls back to the legacy bar-append idiom.
   const sec = (RW.panelSection && RW.panelSection('fittings', 'FITTINGS'))
     || (document.getElementById('rw-pick') || {}).parentNode;
 
@@ -4672,8 +4293,6 @@
     resInp.oninput    = () => { const v=parseFloat(resInp.value);    if (!isNaN(v) && v>0){  RW._elbowRes=v;     scheduleElbowRerun(); } };
     ptsInp.oninput    = () => { const v=parseInt(ptsInp.value,10);   if (!isNaN(v) && v>=0){ RW._elbowTargetPts=v; scheduleElbowRerun(); } };
     tolInp.oninput    = () => { const v=parseFloat(tolInp.value);    if (!isNaN(v) && v>=0){ RW._elbowColorTol=v; scheduleElbowRerun(); } };
-    // width is a ONE-SHOT seed, not a standing tunable — writes a concrete
-    // value into "min px" once, exactly like typing into that input directly.
     widthInp.oninput  = () => {
       const v = parseFloat(widthInp.value);
       if (isNaN(v) || v<=0) return;
