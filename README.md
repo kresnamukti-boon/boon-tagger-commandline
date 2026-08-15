@@ -131,8 +131,28 @@ lines, and fitting symbols, and no amount of pixel-analysis tuning fully survive
 - **Click** points along the pipe's visible centerline — first click is the start, each next
   click is a bend — the same way the existing Poly2 tool places vertices (optionally snapped to
   nearby line endpoints/junctions, Shift bypasses for one click).
-- **Double-click** finishes the path. `Backspace` drops the last point, `Escape` clears the
-  in-progress path (or exits Pipe mode if the path is already empty).
+- **Double-click** finishes the path — and immediately starts the next one, so you can keep
+  drawing. `Backspace` drops the last point of the path you're currently drawing. `Escape` steps
+  back one stage at a time: clears the in-progress path, then discards any finished-but-uncommitted
+  segments, then exits Pipe mode.
+- **Branching/connecting**: click a point on or near an already-finished pipe (this session's, or
+  one already committed on the page) and it snaps onto that pipe's true centerline — a white/
+  magenta ring marks the hit, with a cross for an end-to-end connection or a dot for a mid-span
+  tee. This works even before you've clicked Commit Pipe.
+- **Commit Pipe stages every finished segment from the session in one batch** — draw a main pipe
+  plus any branches, then one click stages them (button label shows the resulting annotation
+  count, e.g. `Commit 3 Pipes`). Each segment keeps the width it had when you finished it, so a
+  branch can be a different diameter — there's no way to re-measure a segment's width after
+  finishing it; discard it (Escape) and redraw if it's wrong.
+- **Segments connected by snapping merge into one combined polygon** instead of staying separate
+  shapes — draw a main pipe, then a branch that snaps onto it (mid-span tee or end-to-end), and
+  Commit Pipe (and Trace) produce a single polygon covering the true outline of both. This only
+  applies to this session's unstaged segments; connecting to a pipe already committed from an
+  earlier action still snaps precisely but never rewrites that existing annotation. A merged
+  annotation's notes record the segment/width breakdown instead of a single width, and — unlike a
+  plain unmerged pipe — it can't be used as a snap target again in a future session. If a fitting's
+  real linework is two separate strokes that don't actually connect after merging, the tool falls
+  back to committing them separately rather than guessing.
 - **Drag** anywhere (a real drag, not a click) measures the **width**: just the on-screen
   distance you drag, converted to a fixed value — drag across the pipe's drawn thickness once
   to set it, or type a value directly into the `width` panel input. It stays set across
@@ -141,8 +161,9 @@ lines, and fitting symbols, and no amount of pixel-analysis tuning fully survive
 - The tool then builds a constant-width ribbon along your clicked path — crossing a text label
   or a fitting symbol never changes its direction or width, since nothing about it depends on
   what's actually drawn in between the points you clicked.
-- **Trace** previews the exact ribbon polygon; **Commit Pipe** stages it, reusing the same
-  commit pipeline every other tool uses (no new annotation type).
+- **Trace** previews the exact polygon(s) that Commit Pipe would stage — connected segments show
+  as one merged outline — reusing the same commit pipeline every other tool uses (no new
+  annotation type).
 - Every bend along the path gets the same simple mitered/beveled corner, regardless of whether
   it's a slight direction change or a real elbow fitting — elbow fittings get their own
   **dedicated tool** instead (`L`, see "Elbow fitting" below), not a special vertex flag here. An
