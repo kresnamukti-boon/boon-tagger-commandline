@@ -15,7 +15,7 @@ load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in ord
 2. **rw_install.js** — core region engine. Flood-fills the drawing canvas into wall/background,
    labels enclosed areas as candidate regions, region list panel, **Pick** mode, **Merge**/**Cut**.
 3. **rw_masktools.js** — unified **Rect** mask tool (block/open/add, see below), the global area
-   floor input + **Relabel** button, the **Walls (W)** diagnostic overlay, live area hint while
+   floor input + **Relabel** button, the **Walls (O)** diagnostic overlay, live area hint while
    dragging.
 4. **rw_stable.js** — pan/zoom-stable preview rendering; no user-facing controls of its own.
 5. **rw_undo.js** — snapshot undo stack (backtick) shared by every mask edit, plus poly vertex
@@ -83,7 +83,7 @@ Rect/Poly2/Brush respectively.
 | `J` | Brush mask mode (freehand stroke) |
 | `A` | toggle Add mode on/off for Rect/Poly2/Brush |
 | `Shift+B` / `Shift+N` / `Shift+J` | cycle block → open → add for that tool |
-| `W` | cycle the wall diagnostic overlay (red wall → cyan floodable space → off) |
+| `O` | cycle the wall diagnostic overlay (red wall → cyan floodable space → off) |
 | Shift (hold, placing a Poly2 vertex) | bypass vertex snap for that click |
 | `` ` `` (backtick) | undo last mask edit (block/open/poly/brush/cut/merge/heal) |
 | `Escape` | cancel current workbench mode / clear in-progress poly vertices |
@@ -250,6 +250,9 @@ capture phase and calls `stopPropagation()`, so it fully shadows the app's **K =
 keyboard shortcut whenever the workbench is loaded and enabled. To use the app's own Magic
 Wand tool, either click its "K Wand" button directly (mouse clicks aren't affected) or toggle
 the workbench's **RW: ON/OFF** killswitch off first.
+
+The wall diagnostic overlay is bound to **O**, not **W**, specifically because the app's own
+**W = Bounding Box** tool would otherwise be fully shadowed the same way K is above.
 
 ## Boundaries
 

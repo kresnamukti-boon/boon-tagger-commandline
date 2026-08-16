@@ -974,12 +974,14 @@
     document.getElementById('pdf-container').appendChild(ov);
   };
 
-  /* ---------- W key: toggle wall overlay ---------- */
+  /* ---------- O key: toggle wall overlay ---------- */
+  // O, not W — the app's own native keymap already binds W to its bounding-box
+  // tool; O (for "overlay") avoids that collision entirely.
   window.addEventListener('keydown', function(e){
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
     if (e.ctrlKey||e.metaKey||e.altKey) return;
-    if (e.key==='w'||e.key==='W'){
+    if (e.key==='o'||e.key==='O'){
       e.preventDefault(); e.stopImmediatePropagation();
       RW.toggleWallOverlay();
     }
@@ -989,9 +991,9 @@
   if (bar && !document.getElementById('rw-walls')){
     const wb = document.createElement('button');
     wb.id = 'rw-walls';
-    wb.title = 'Toggle wall overlay (W). Shows wall=1 pixels in red.';
+    wb.title = 'Toggle wall overlay (O). Shows wall=1 pixels in red.';
     wb.style.cssText = 'font-size:11px;padding:2px 6px;';
-    wb.innerText = 'Walls (W)';
+    wb.innerText = 'Walls (O)';
     wb.onclick = ()=>RW.toggleWallOverlay();
     bar.appendChild(wb);
   }
@@ -4745,5 +4747,5 @@
 })()
 
 
-  console.log('[RW] workbench ready: ' + __RW.regions.filter(r=>r.included).length + ' regions. Keys: P pick, K cut, B rect, N poly, J brush, A add, W walls, C pipe, L elbow, ` undo.');
+  console.log('[RW] workbench ready: ' + __RW.regions.filter(r=>r.included).length + ' regions. Keys: P pick, K cut, B rect, N poly, J brush, A add, O walls, C pipe, L elbow, ` undo.');
 })()

@@ -39,7 +39,7 @@ done
 
 cat >> "$OUT" <<'FOOTER'
 
-  console.log('[RW] workbench ready: ' + __RW.regions.filter(r=>r.included).length + ' regions. Keys: P pick, K cut, B rect, N poly, J brush, A add, W walls, C pipe, L elbow, ` undo.');
+  console.log('[RW] workbench ready: ' + __RW.regions.filter(r=>r.included).length + ' regions. Keys: P pick, K cut, B rect, N poly, J brush, A add, O walls, C pipe, L elbow, ` undo.');
 })()
 FOOTER
 
