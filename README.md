@@ -139,8 +139,9 @@ early versions did, but pipes are routinely interrupted by text labels crossing 
 lines, and fitting symbols, and no amount of pixel-analysis tuning fully survives that. Instead:
 
 - **Click** points along the pipe's visible centerline — first click is the start, each next
-  click is a bend — the same way the existing Poly2 tool places vertices (optionally snapped to
-  nearby line endpoints/junctions, Shift bypasses for one click).
+  click is a bend — the same way the existing Poly2 tool places vertices. Snapping here is
+  **pipe-only**: a click snaps to another pipe (this session's or already committed), never to
+  generic wall/region geometry — Shift bypasses it for one click.
 - **Double-click** finishes the path — and immediately starts the next one, so you can keep
   drawing. `Backspace` drops the last point of the path you're currently drawing. `Escape` steps
   back one stage at a time: clears the in-progress path, then discards any finished-but-uncommitted
@@ -148,7 +149,9 @@ lines, and fitting symbols, and no amount of pixel-analysis tuning fully survive
 - **Branching/connecting**: click a point on or near an already-finished pipe (this session's, or
   one already committed on the page) and it snaps onto that pipe's true centerline — a white/
   magenta ring marks the hit, with a cross for an end-to-end connection or a dot for a mid-span
-  tee. This works even before you've clicked Commit Pipe.
+  tee. This works even before you've clicked Commit Pipe. This pipe-to-pipe snap is the *only*
+  snap in Pipe mode (see above) — it's what makes branching reliable without also picking up an
+  unrelated wall or region edge nearby.
 - **Commit Pipe stages every finished segment from the session in one batch** — draw a main pipe
   plus any branches, then one click stages them (button label shows the resulting annotation
   count, e.g. `Commit 3 Pipes`). Each segment keeps the width it had when you finished it, so a
@@ -158,16 +161,28 @@ lines, and fitting symbols, and no amount of pixel-analysis tuning fully survive
   shapes — draw a main pipe, then a branch that snaps onto it (mid-span tee or end-to-end), and
   Commit Pipe (and Trace) produce a single polygon covering the true outline of both. This only
   applies to this session's unstaged segments; connecting to a pipe already committed from an
-  earlier action still snaps precisely but never rewrites that existing annotation. A merged
-  annotation's notes record the segment/width breakdown instead of a single width, and — unlike a
-  plain unmerged pipe — it can't be used as a snap target again in a future session. If a fitting's
-  real linework is two separate strokes that don't actually connect after merging, the tool falls
-  back to committing them separately rather than guessing.
+  earlier action still snaps precisely but never rewrites that existing annotation. How the merge
+  is built depends on the shape of the connection:
+  - A **simple end-to-end chain** (every connection is tip-to-tip, no branch tee-ing onto another
+    segment's side) merges as a single continuous vector path — no rasterizing at all. Its notes
+    stay the ordinary `pipe width: 15.00 px — 3 segments joined` form, so — unlike a raster
+    merge — it's still a fully valid snap target in a future session, branchable exactly like a
+    plain unmerged pipe.
+  - Any **mid-span tee** (a branch attaching to the side of another pipe, not its tip) merges via
+    a raster-union-and-retrace instead. Its notes record the segment/width breakdown (`pipe run:
+    3 segments merged, widths 10.00, 12.00 px — branched outline, centerline not recoverable`) and
+    it can't be used as a snap target again in a future session.
+
+  If a fitting's real linework is two separate strokes that don't actually connect after merging,
+  the tool falls back to committing each segment separately rather than guessing.
 - **Drag** anywhere (a real drag, not a click) measures the **width**: just the on-screen
   distance you drag, converted to a fixed value — drag across the pipe's drawn thickness once
   to set it, or type a value directly into the `width` panel input. It stays set across
   multiple pipes until you drag again or edit it, and this is a plain distance measurement, not
-  anything read off the drawing's pixels.
+  anything read off the drawing's pixels. While dragging, a live **dimension line** follows the
+  cursor — perpendicular end ticks plus a labeled width readout — so the measured value is
+  visible right on the drawing, not just in the panel status line. It's a live-only preview:
+  nothing is committed or persists once you release.
 - The tool then builds a constant-width ribbon along your clicked path — crossing a text label
   or a fitting symbol never changes its direction or width, since nothing about it depends on
   what's actually drawn in between the points you clicked.
@@ -181,9 +196,11 @@ lines, and fitting symbols, and no amount of pixel-analysis tuning fully survive
   moved out, not deleted — see "Elbow fitting" below and `CLAUDE.md` for why.
 - The measured width is recorded in the pipe's own **notes** field (e.g. `pipe width: 15.00 px`)
   — visible by selecting the annotation and checking its data panel. (An earlier version staged
-  a second small "dimension line" tick shape alongside the ribbon for this; live testing found it
-  didn't read as a dimension line at all — just an unlabeled, disconnected box — so it was
-  dropped. See `CLAUDE.md` for the full account.)
+  a second small "dimension line" tick **annotation** alongside the ribbon for this at commit
+  time; live testing found it didn't read as a dimension line at all — just an unlabeled,
+  disconnected box — so it was dropped. The dimension line described above is different in kind:
+  a live-only overlay shown while you drag, never a committed shape. See `CLAUDE.md` for the full
+  account of both.)
 - The `width` panel input shows real decimal precision (e.g. `0.63`), not rounded to a whole
   number — a genuinely sub-1px measurement no longer looks like the drag failed.
 - No undo for a committed pipe specifically (only pre-commit: Escape/Backspace both work) — to

@@ -2976,6 +2976,7 @@
   RW._pipeCommitting  = false; // re-entrancy guard for commitPipe
   RW._pipeMergeRes    = 4;      // local raster px per mask px, for merging connected segments
   RW._pipeMergeBudget = 12_000_000; // local raster px cap
+  RW._pipeMergeEpsMaskPx = 1.0; // DP tolerance target, in MASK px (not raster px) — scaled by `scale` at use, so it stays a constant real-world tolerance regardless of merge resolution
   let downPos = null;         // client {x,y} at mousedown
   let dragging = false;
   let dragCurClient = null;   // live end point of an in-progress width-measure drag
@@ -3157,9 +3158,18 @@
         if (d > rad) continue;
         const rank = (d <= halfPx) ? 0 : 1; // inside the body beats merely near
         if (!best || rank < best.rank || (rank === best.rank && d < best.dist)){
+          // Real click precision almost never lands exactly past a segment's
+          // own true endpoint (the old t===0/t===1 clamp test), so an
+          // intended end-to-end click routinely came back mid-span. Use a
+          // distance tolerance against the true endpoint instead — same
+          // catchPx radius the snap itself already uses, no new tunable.
+          let te = null;
+          if (i === 0 && Math.hypot(mx-ax, my-ay) <= catchPx) te = 'start';
+          else if (i === last && Math.hypot(mx-bx, my-by) <= catchPx) te = 'end';
           best = { x:fx, y:fy, nx:fx/RW.W, ny:fy/RW.H, dist:d, rank:rank,
                     inside:(rank===0),
-                    atEnd:((i===0 && t===0) || (i===last && t===1)),
+                    atEnd:(te !== null),
+                    targetEnd:te, // 'start'|'end'|null — which end of the target this hit, if either
                     src:c.src, ref:c.ref, widthPx:c.widthPx };
         }
       }
@@ -3169,23 +3179,75 @@
     return [best.nx, best.ny];
   };
 
+  // Dedupes rawPts exactly like RW._pipeDedupe (same 1e-6 mask-px rule against
+  // the previously-kept point), while tracking which ORIGINAL index each kept
+  // point came from — so a link recorded on a point dedupe later drops (a
+  // double-click artifact) still lands on the kept point it collapsed into.
+  // `links` is the same flat, deduped array RW._pipeGroups already consumes;
+  // linkStart/linkEnd/linkMid are new, additive info for the chain fast path.
+  RW._pipeResolveLinks = function(rawPts, pending, netLen){
+    const {W,H} = RW;
+    const out = { ptsN: [], links: [], linkStart: null, linkEnd: null, linkMid: false };
+    if (!Array.isArray(rawPts) || !rawPts.length) return out;
+    pending = Array.isArray(pending) ? pending : [];
+
+    const ptsN = [rawPts[0]];
+    const keep = [0];
+    for (let i=1;i<rawPts.length;i++){
+      const [px,py] = ptsN[ptsN.length-1], [x,y] = rawPts[i];
+      if (Math.hypot((x-px)*W, (y-py)*H) > 1e-6){ ptsN.push(rawPts[i]); keep.push(i); }
+    }
+    out.ptsN = ptsN;
+
+    const bucket = new Array(rawPts.length).fill(0);
+    for (let i=0, b=0; i<rawPts.length; i++){
+      if (b+1 < keep.length && i >= keep[b+1]) b++;
+      bucket[i] = b;
+    }
+    const lastB = ptsN.length - 1;
+
+    const norm = function(l){
+      if (Number.isInteger(l)) return {ref:l, targetEnd:null}; // legacy bare integer
+      if (l && Number.isInteger(l.ref)){
+        const te = (l.targetEnd === 'start' || l.targetEnd === 'end') ? l.targetEnd : null;
+        return {ref:l.ref, targetEnd:te};
+      }
+      return null;
+    };
+    // an end slot prefers a link that names a target end over a mid-span one
+    const pick = function(cur, l){ if (!cur) return l; if (cur.targetEnd) return cur; return l.targetEnd ? l : cur; };
+
+    const seen = new Set();
+    for (let i=0;i<pending.length;i++){
+      const l = norm(pending[i]);
+      if (!l || l.ref < 0 || l.ref >= netLen) continue;
+      if (!seen.has(l.ref)){ seen.add(l.ref); out.links.push(l.ref); }
+      if (i >= rawPts.length) continue;
+      const b = bucket[i];
+      if (b === 0)          out.linkStart = pick(out.linkStart, l);
+      else if (b === lastB) out.linkEnd   = pick(out.linkEnd,   l);
+      else                  out.linkMid   = true;
+    }
+    return out;
+  };
+
   /* ---------- finishing a path: push into the network, ready for the next ---------- */
   RW._pipeFinishPath = function(){
     if (RW._pipePts.length < 2) return false;
-    const ptsN = RW._pipeDedupe(RW._pipePts);
+    const info = RW._pipeResolveLinks(RW._pipePts, RW._pipePendingLinks, RW._pipeNetwork.length);
+    const ptsN = info.ptsN;
     const ribbon = RW._pipeRibbon(ptsN, RW._pipeWidth);
     if (!ribbon || ribbon.length < 4){
       RW._commitStatus('need two distinct points — keep clicking, or Escape to clear');
       return false;
     }
-    const links = [];
-    const seen = new Set();
-    for (const l of RW._pipePendingLinks){
-      if (Number.isInteger(l) && l >= 0 && l < RW._pipeNetwork.length && !seen.has(l)){
-        seen.add(l); links.push(l);
-      }
-    }
-    RW._pipeNetwork.push({ ptsN: ptsN, widthPx: RW._pipeWidth, ribbon: ribbon, links: links });
+    RW._pipeNetwork.push({
+      ptsN: ptsN, widthPx: RW._pipeWidth, ribbon: ribbon,
+      links: info.links,         // unchanged contract for RW._pipeGroups
+      linkStart: info.linkStart, // {ref,targetEnd}|null — this segment's OWN first point
+      linkEnd: info.linkEnd,     // {ref,targetEnd}|null — this segment's OWN last point
+      linkMid: info.linkMid      // true if an interior point also carried a link
+    });
     RW._pipePts = [];
     RW._pipePendingLinks = [];
     RW._pipeSnapHit = null;
@@ -3291,8 +3353,15 @@
       return {error:'segments do not actually touch after rasterizing', meta:{reached:reached, total:total}};
     }
 
+    // eps must scale WITH the raster's own resolution, not stay flat: it's a
+    // local-raster-px tolerance, and higher scale means each raster px is a
+    // smaller real-world (mask-px) distance — a flat eps quietly becomes too
+    // tight to absorb the raster's own pixel staircase once scale climbs
+    // toward RW._pipeMergeRes for a small, tightly-bounded merge, leaving
+    // hundreds of leftover staircase vertices in the committed polygon.
+    const eps = (RW._pipeMergeEpsMaskPx != null ? RW._pipeMergeEpsMaskPx : 1.0) * scale;
     const poly = RW._maskToPolygon(mask, {
-      W: localW, H: localH, seed: {x:seedX, y:seedY}, smoothPasses: 1, eps: 0.8
+      W: localW, H: localH, seed: {x:seedX, y:seedY}, smoothPasses: 1, eps: eps
     });
     if (!poly || poly.length < 3) return {error:'trace failed', meta:{}};
 
@@ -3301,6 +3370,140 @@
       y: +(((p.y*localH - pad)/scale + minY)/H).toFixed(6)
     }));
     return { poly: out, meta: { scale:scale, localW:localW, localH:localH, pixels: total } };
+  };
+
+  // Pure vector fast path for a connected group that is a SIMPLE end-to-end
+  // chain (no mid-span tees, no 3+-way end junction, uniform width) — builds
+  // one ribbon via RW._pipeRibbon directly, no rasterizing at all. Returns
+  // {poly, meta} or {error, meta}, mirroring RW._pipeMergeGroup's contract.
+  // `indices[k]` is the RW._pipeNetwork index of `members[k]`.
+  //
+  // The walk below picks its start node by DEGREE (a free end-slot), not by
+  // draw order or array index, so a segment drawn last but sitting in the
+  // MIDDLE of the final path (e.g. draw A, then B off A's end, then go back
+  // and draw C off A's other end) still walks correctly — the start is
+  // whichever segment happens to have a free slot, and each segment's own
+  // point array is reversed whenever it's entered through its `end` slot
+  // rather than its `start` slot. A segment linked at both its own ends
+  // (bridging two others) falls out of the same loop with no extra code.
+  RW._pipeChainMerge = function(members, indices){
+    const meta = {method:'chain', count: Array.isArray(members) ? members.length : 0};
+    if (!Array.isArray(members) || !Array.isArray(indices)
+        || members.length !== indices.length || !members.length)
+      return {error:'bad group', meta:meta};
+
+    const pos = new Map();
+    for (let k=0;k<indices.length;k++){
+      if (!Number.isInteger(indices[k]) || pos.has(indices[k])) return {error:'bad group indices', meta:meta};
+      pos.set(indices[k], k);
+    }
+
+    const w0 = members[0] && members[0].widthPx;
+    if (!(typeof w0 === 'number' && w0 > 0)) return {error:'bad width', meta:meta};
+    const wKey = w0.toFixed(2);
+    for (const s of members){
+      if (!s || !Array.isArray(s.ptsN) || s.ptsN.length < 2) return {error:'bad member', meta:meta};
+      if (!(typeof s.widthPx === 'number' && s.widthPx > 0) || s.widthPx.toFixed(2) !== wKey)
+        return {error:'mixed widths', meta:meta};
+    }
+    meta.widthPx = w0;
+
+    // Each segment end is a slot usable at most once; a chain edge only ever
+    // connects one segment's own start/end to ANOTHER segment's true start/end.
+    const slot  = members.map(()=>({start:-1, end:-1}));
+    const edges = [];
+    const norm = l => (l && Number.isInteger(l.ref)
+                       && (l.targetEnd === 'start' || l.targetEnd === 'end')) ? l : null;
+
+    for (let k=0;k<members.length;k++){
+      const s = members[k];
+      if (s.linkMid) return {error:'link at an interior vertex', meta:meta};
+      const own = [['start', norm(s.linkStart)], ['end', norm(s.linkEnd)]];
+
+      // every plain union-find link must be explained by an end-to-end link,
+      // or the group is held together by something concatenation can't represent
+      const endRefs = new Set();
+      for (const pair of own) if (pair[1]) endRefs.add(pair[1].ref);
+      for (const l of (s.links || [])){
+        if (!Number.isInteger(l) || l === indices[k]) continue;
+        if (!pos.has(l))     return {error:'link outside the group', meta:meta};
+        if (!endRefs.has(l)) return {error:'mid-span or interior link', meta:meta};
+      }
+
+      for (const pair of own){
+        const mySlot = pair[0], L = pair[1];
+        if (!L) continue;
+        if (!pos.has(L.ref)) return {error:'link outside the group', meta:meta};
+        const j = pos.get(L.ref);
+        if (j === k) return {error:'self link', meta:meta};
+        if (slot[k][mySlot] !== -1 || slot[j][L.targetEnd] !== -1)
+          return {error:'3+ segments meet at one end', meta:meta};
+        const id = edges.length;
+        slot[k][mySlot] = id; slot[j][L.targetEnd] = id;
+        edges.push({a:{k:k, slot:mySlot}, b:{k:j, slot:L.targetEnd}});
+      }
+    }
+    meta.edges = edges.length;
+    // every node degree <=2 by slot occupancy, so V-1 edges + no revisit == simple path
+    if (edges.length !== members.length - 1) return {error:'not a simple path (cycle or split)', meta:meta};
+
+    let startK = -1;
+    for (let k=0;k<members.length;k++){
+      if ((slot[k].start === -1 ? 0:1) + (slot[k].end === -1 ? 0:1) <= 1){ startK = k; break; }
+    }
+    if (startK < 0) return {error:'no free end (cycle)', meta:meta};
+
+    const {W,H} = RW;
+    const order = [], reversed = [], seen = new Uint8Array(members.length);
+    const combined = [];
+    let cur = startK, maxJoint = 0;
+    let enter = (slot[startK].start === -1) ? 'start' : 'end';
+    for (;;){
+      if (seen[cur]) return {error:'revisited a segment', meta:meta};
+      seen[cur] = 1;
+      const rev = (enter === 'end');
+      const pts = rev ? members[cur].ptsN.slice().reverse() : members[cur].ptsN;
+      order.push(indices[cur]); reversed.push(rev);
+      let from = 0;
+      if (combined.length){
+        const t = combined[combined.length-1], p = pts[0];
+        const gap = Math.hypot((p[0]-t[0])*W, (p[1]-t[1])*H);
+        if (gap > maxJoint) maxJoint = gap;
+        if (gap > Math.max(1, w0)) return {error:'joint geometry does not match the recorded link', meta:meta};
+        if (gap <= 1e-6) from = 1; // drop the shared joint point
+      }
+      for (let i=from;i<pts.length;i++) combined.push(pts[i]);
+      const exit = (enter === 'start') ? 'end' : 'start';
+      const id = slot[cur][exit];
+      if (id === -1) break;
+      const e = edges[id];
+      const other = (e.a.k === cur && e.a.slot === exit) ? e.b : e.a;
+      enter = other.slot; cur = other.k;
+    }
+    if (order.length !== members.length) return {error:'chain does not cover the group', meta:meta};
+    meta.segmentOrder = order; meta.reversed = reversed; meta.jointGapPx = maxJoint; meta.points = combined.length;
+
+    const problem = RW._pipeSanityCheck(combined, w0);
+    if (problem) return {error:problem, meta:meta};
+    const poly = RW._pipeRibbon(combined, w0); // the SAME builder a lone pipe uses
+    if (!poly || poly.length < 4) return {error:'ribbon build failed', meta:meta};
+    meta.polyPoints = poly.length;
+    return {poly:poly, meta:meta};
+  };
+
+  // Single dispatch used by BOTH _renderPipeTrace and commitPipe, so Trace can
+  // never disagree with Commit. Vector chain first (deterministic, no
+  // rasterizing, re-snappable result); raster union otherwise.
+  RW._pipeMergeConnected = function(members, indices){
+    const chain = RW._pipeChainMerge(members, indices);
+    if (chain && chain.poly) return chain;
+    const raster = RW._pipeMergeGroup(members);
+    const meta = Object.assign({}, (raster && raster.meta) || {}, {
+      method: (raster && raster.poly) ? 'raster' : 'none',
+      chainError: chain && chain.error
+    });
+    if (raster && raster.poly) return {poly: raster.poly, meta: meta};
+    return {error: (raster && raster.error) || 'merge failed', meta: meta};
   };
 
   /* ---------- click / drag / finish state machine ---------- */
@@ -3350,18 +3553,14 @@
     }
     let [nx,ny] = RW._toNorm(e.clientX, e.clientY);
     if (!e.shiftKey){
-      const rawX = nx*RW.W, rawY = ny*RW.H;
-      let winner = null, winnerD = Infinity, winnerInside = false;
       const p = RW._tryPipeSnap(nx, ny);
-      if (RW._pipeSnapHit){ winner = p; winnerD = RW._pipeSnapHit.dist; winnerInside = RW._pipeSnapHit.inside; }
-      if (RW._trySnap){
-        const s = RW._trySnap(nx, ny); // called unconditionally: keeps _lastSnapHit honest
-        if (RW._lastSnapHit){
-          const d = Math.hypot(RW._lastSnapHit.x - rawX, RW._lastSnapHit.y - rawY);
-          if (!winner || (!winnerInside && d < winnerD)){ winner = s; RW._pipeSnapHit = null; }
-        }
-      }
-      if (winner){ nx = winner[0]; ny = winner[1]; }
+      // Pipe mode snaps to PIPES ONLY — this session's _pipeNetwork segments and
+      // already-committed pipe annotations (_tryPipeSnap's full candidate set).
+      // _trySnap still runs, unconditionally, but purely so RW._lastSnapHit stays
+      // fresh for Poly2's own preview marker after a tool switch — its result is
+      // never used to choose where the pipe point lands.
+      if (RW._trySnap) RW._trySnap(nx, ny);
+      if (RW._pipeSnapHit){ nx = p[0]; ny = p[1]; }
     } else {
       RW._pipeSnapHit = null;
     }
@@ -3369,7 +3568,7 @@
     if (!e.shiftKey && RW._pipeSnapHit && RW._pipeSnapHit.src === 'network'
         && Number.isInteger(RW._pipeSnapHit.ref)
         && RW._pipeSnapHit.ref >= 0 && RW._pipeSnapHit.ref < RW._pipeNetwork.length){
-      link = RW._pipeSnapHit.ref;
+      link = { ref: RW._pipeSnapHit.ref, targetEnd: RW._pipeSnapHit.targetEnd || null };
     }
     RW._pipePts.push([nx,ny]);
     RW._pipePendingLinks.push(link);
@@ -3437,6 +3636,32 @@
   function linePx(ptsN){
     return ptsN.map(([nx,ny]) => { const [px,py]=RW._toPx(nx,ny); return px+','+py; }).join(' ');
   }
+  // Live width-measure dimension line: main line + perpendicular end ticks
+  // (any drag angle) + a labeled backdrop centered on the offset midpoint.
+  // Coordinates must already be container-relative (RW._toPx output), like
+  // every other element this preview draws.
+  function dimensionLineSvg(x1,y1,x2,y2,label){
+    const dx = x2-x1, dy = y2-y1;
+    const len = Math.hypot(dx,dy) || 1;
+    const ux = dx/len, uy = dy/len;
+    let px = -uy, py = ux; // unit normal
+    if (py > 0){ px = -px; py = -py; } // keep the label above the line regardless of drag direction
+    const TICK=7, OFF=15, FS=12, CHW=7, PADX=8, BH=18;
+    let s = '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2
+      + '" stroke="#ff8c00" stroke-width="2" stroke-dasharray="4,3"/>';
+    s += '<line x1="'+(x1-px*TICK)+'" y1="'+(y1-py*TICK)+'" x2="'+(x1+px*TICK)+'" y2="'+(y1+py*TICK)
+      + '" stroke="#ff8c00" stroke-width="2"/>';
+    s += '<line x1="'+(x2-px*TICK)+'" y1="'+(y2-py*TICK)+'" x2="'+(x2+px*TICK)+'" y2="'+(y2+py*TICK)
+      + '" stroke="#ff8c00" stroke-width="2"/>';
+    const bw = label.length*CHW + PADX*2;
+    const lx = (x1+x2)/2 + px*OFF, ly = (y1+y2)/2 + py*OFF;
+    s += '<rect x="'+(lx-bw/2)+'" y="'+(ly-BH/2)+'" width="'+bw+'" height="'+BH
+      + '" rx="4" ry="4" fill="rgba(20,20,20,0.85)"/>';
+    s += '<text x="'+lx+'" y="'+ly+'" fill="#ffffff" font-size="'+FS
+      + '" font-family="sans-serif" text-anchor="middle" dominant-baseline="central">' + label + '</text>';
+    return s;
+  }
+  RW._pipeDimensionLineSvg = dimensionLineSvg; // exposed for direct Node-testability, same convention as RW._pipeRibbon
   function pipeMarkerSvg(hit){
     const [px,py] = RW._toPx(hit.nx, hit.ny);
     let s = '<circle cx="'+px+'" cy="'+py+'" r="7" fill="none" stroke="#ffffff" stroke-width="2.5"'
@@ -3466,10 +3691,13 @@
     }
 
     if (dragging && dragCurClient && downPos){
-      parts.push('<line x1="'+downPos.x+'" y1="'+downPos.y+'" x2="'+dragCurClient.x+'" y2="'+dragCurClient.y
-        + '" stroke="#ff8c00" stroke-width="2" stroke-dasharray="4,3"/>');
+      RW._pipeSnapHit = null; // clear a stale marker from before the drag started
       const [ax,ay] = RW._toNorm(downPos.x, downPos.y), [bx,by] = RW._toNorm(dragCurClient.x, dragCurClient.y);
       const liveW = Math.hypot((bx-ax)*RW.W, (by-ay)*RW.H);
+      // Container-relative, matching every other element in this SVG — raw
+      // clientX/clientY would be offset by #pdf-container's own left/top.
+      const [x1,y1] = RW._toPx(ax,ay), [x2,y2] = RW._toPx(bx,by);
+      parts.push(dimensionLineSvg(x1,y1,x2,y2, RW._fmtWidth(liveW) + ' px'));
       status = 'width: ' + RW._fmtWidth(liveW) + 'px (release to set)';
     } else {
       const pts = RW._pipePts.slice();
@@ -3520,7 +3748,7 @@
     for (const g of groups){
       let mergedOk = false;
       if (g.length > 1){
-        const res = RW._pipeMergeGroup(g.map(i => RW._pipeNetwork[i]));
+        const res = RW._pipeMergeConnected(g.map(i => RW._pipeNetwork[i]), g);
         if (res.poly){
           inner += '<polygon points="'+polyPx(res.poly)+'" fill="rgba(255,140,0,0.28)" stroke="#ff8c00" stroke-width="2"/>';
           totalPts += res.poly.length; merged++; mergedOk = true;
@@ -3563,11 +3791,19 @@
         const members = g.map(i => segs[i]);
         let mergedOk = false;
         if (members.length > 1){
-          const res = RW._pipeMergeGroup(members);
+          const res = RW._pipeMergeConnected(members, g);
           if (res.poly){
-            const widths = Array.from(new Set(members.map(s => +s.widthPx.toFixed(2)))).sort((a,b)=>a-b);
-            const notes = 'pipe run: ' + members.length + ' segments merged, widths '
-              + widths.join(', ') + ' px — branched outline, centerline not recoverable';
+            let notes;
+            if (res.meta && res.meta.method === 'chain'){
+              // Same analyticPipeRibbon a lone pipe uses, so this stays a
+              // first-class, re-snappable pipe — ordinary prefix, not 'pipe run:'.
+              notes = 'pipe width: ' + res.meta.widthPx.toFixed(2) + ' px — '
+                + members.length + ' segments joined';
+            } else {
+              const widths = Array.from(new Set(members.map(s => +s.widthPx.toFixed(2)))).sort((a,b)=>a-b);
+              notes = 'pipe run: ' + members.length + ' segments merged, widths '
+                + widths.join(', ') + ' px — branched outline, centerline not recoverable';
+            }
             created.push(RW._createPendingAnnotation(res.poly, notes));
             totalPts += res.poly.length;
             done += members.length; merged++; mergedOk = true;
