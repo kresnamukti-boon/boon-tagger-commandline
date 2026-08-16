@@ -1375,6 +1375,30 @@
     return at(hi);
   };
 
+  // Even-odd scanline fill of a [x,y]-tuple polygon (local raster px) into a
+  // mask. dst (optional) lets multiple polygons union into one shared mask —
+  // each call only ever sets pixels, never clears. Shared by rw_elbow.js and
+  // rw_wallspan.js.
+  RW._rasterizePolyLocal = function(localPts, w, h, dst){
+    const mask = dst || new Uint8Array(w*h);
+    let minY=Infinity, maxY=-Infinity;
+    for (const [,y] of localPts){ if (y<minY) minY=y; if (y>maxY) maxY=y; }
+    minY = Math.max(0, Math.floor(minY)); maxY = Math.min(h-1, Math.ceil(maxY));
+    for (let y=minY; y<=maxY; y++){
+      const xs=[];
+      for (let i=0,j=localPts.length-1; i<localPts.length; j=i++){
+        const [xi,yi]=localPts[i], [xj,yj]=localPts[j];
+        if ((yi>y)!==(yj>y)) xs.push(xi + (y-yi)/(yj-yi)*(xj-xi));
+      }
+      xs.sort((a,b)=>a-b);
+      for (let k=0;k+1<xs.length;k+=2){
+        const xa=Math.max(0,Math.round(xs[k])), xb=Math.min(w-1,Math.round(xs[k+1]));
+        for (let x=xa;x<=xb;x++) mask[y*w+x]=1;
+      }
+    }
+    return mask;
+  };
+
   RW._maskToPolygon = function(uni, opts){
     opts = opts || {};
     const W = opts.W != null ? opts.W : RW.W;
@@ -3194,34 +3218,6 @@
     return groups;
   };
 
-  // Even-odd scanline fill into a local mask, mirrored from rw_elbow.js's
-  // rasterizePolyLocal, with an optional dst mask so multiple polygons union
-  // (each pass only sets pixels, never clears).
-  function rasterizePolyLocal(localPts, w, h, dst){
-    const mask = dst || new Uint8Array(w*h);
-    const n = localPts.length;
-    if (n < 3) return mask;
-    let minY = Infinity, maxY = -Infinity;
-    for (const p of localPts){ if (p.y<minY) minY=p.y; if (p.y>maxY) maxY=p.y; }
-    const y0 = Math.max(0, Math.floor(minY)), y1 = Math.min(h-1, Math.ceil(maxY));
-    for (let y=y0; y<=y1; y++){
-      const yc = y + 0.5;
-      const xs = [];
-      for (let i=0;i<n;i++){
-        const a = localPts[i], b = localPts[(i+1)%n];
-        if ((a.y <= yc) === (b.y <= yc)) continue;
-        const t = (yc - a.y) / (b.y - a.y);
-        xs.push(a.x + t*(b.x - a.x));
-      }
-      xs.sort((a,b)=>a-b);
-      for (let i=0;i+1<xs.length;i+=2){
-        const xa = Math.max(0, Math.round(xs[i])), xb = Math.min(w-1, Math.round(xs[i+1])-1);
-        for (let x=xa; x<=xb; x++) mask[y*w+x] = 1;
-      }
-    }
-    return mask;
-  }
-
   // 8-connected flood-fill from (x0,y0); returns the reached-pixel count.
   function flood8(mask, w, h, x0, y0){
     const seen = new Uint8Array(w*h);
@@ -3277,11 +3273,11 @@
     const mask = new Uint8Array(localW*localH);
 
     function toLocal(nx, ny){
-      return { x: (nx*W - minX)*scale + pad, y: (ny*H - minY)*scale + pad };
+      return [ (nx*W - minX)*scale + pad, (ny*H - minY)*scale + pad ];
     }
     for (const seg of segs){
       const localPts = seg.ribbon.map(p => toLocal(p.x, p.y));
-      rasterizePolyLocal(localPts, localW, localH, mask);
+      RW._rasterizePolyLocal(localPts, localW, localH, mask);
     }
 
     let seedIdx = -1, total = 0;
@@ -4042,27 +4038,6 @@
     return { minArea: Math.max(1, Math.round(2.5 * width * width)) };
   };
 
-  // Even-odd scanline fill of a polygon (local raster px) into a fresh mask.
-  function rasterizePolyLocal(localPts, w, h){
-    const mask = new Uint8Array(w*h);
-    let minY=Infinity, maxY=-Infinity;
-    for (const [,y] of localPts){ if (y<minY) minY=y; if (y>maxY) maxY=y; }
-    minY = Math.max(0, Math.floor(minY)); maxY = Math.min(h-1, Math.ceil(maxY));
-    for (let y=minY; y<=maxY; y++){
-      const xs=[];
-      for (let i=0,j=localPts.length-1; i<localPts.length; j=i++){
-        const [xi,yi]=localPts[i], [xj,yj]=localPts[j];
-        if ((yi>y)!==(yj>y)) xs.push(xi + (y-yi)/(yj-yi)*(xj-xi));
-      }
-      xs.sort((a,b)=>a-b);
-      for (let k=0;k+1<xs.length;k+=2){
-        const xa=Math.max(0,Math.round(xs[k])), xb=Math.min(w-1,Math.round(xs[k+1]));
-        for (let x=xa;x<=xb;x++) mask[y*w+x]=1;
-      }
-    }
-    return mask;
-  }
-
   /* ---------- raster acquisition: two sources, tried in order ---------- */
 
   // Eyedropper: sample #pdf-canvas's pixel color at a normalized page point.
@@ -4178,7 +4153,7 @@
     // Clip to the region polygon if active, otherwise the box interior.
     let clipMask;
     if (opts.regionLocalPts){
-      clipMask = rasterizePolyLocal(opts.regionLocalPts, localW, localH);
+      clipMask = RW._rasterizePolyLocal(opts.regionLocalPts, localW, localH);
     } else {
       clipMask = new Uint8Array(localW*localH);
       const { pad } = raster;
