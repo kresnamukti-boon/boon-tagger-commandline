@@ -5,6 +5,11 @@ Client-side workflow enhancers for the Constructions Tagger annotation platform
 annotation page — no server, no build step, nothing persists until you click the app's own
 **Save**. Everything lives in the page until reload/navigation, then must be re-injected.
 
+Two loader builds: the everyday **`console_loader.js`** (built by `build_loader.sh`), and an
+opt-in **`console_loader_ocr.js`** (built by `build_loader_ocr.sh`) that additionally bundles
+`rw_ocr.js` — see "OCR-assisted reference naming" below. The everyday loader never includes it,
+so annotators who don't need it stay on a smaller, fully offline script.
+
 ## Files & load order
 
 Each module is a versioned IIFE gated on the previous module's version flag, so this order is
@@ -43,10 +48,13 @@ load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in ord
 13. **rw_elbow.js** — **Elbow (L)** / **Commit Elbow** for annotating elbow pipe fittings: drag a
     box (or click-click-click + double-click a tighter polygon region) around the fitting and it
     traces the real drawn linework inside it (see below).
+14. **rw_ocr.js** — *OCR loader variant only, not in `console_loader.js`.* Adds an OCR button to
+    the app's own reference-naming dialog (see "OCR-assisted reference naming" below).
 
 **To rebuild** after editing any `rw_*.js` source module:
 ```bash
 bash build_loader.sh          # console_loader.js
+bash build_loader_ocr.sh      # console_loader_ocr.js (OCR variant)
 ```
 
 ## Injection
@@ -58,6 +66,9 @@ bash build_loader.sh          # console_loader.js
 
 Paste again after each page navigation — nothing persists server-side until you manually click
 **Save** in the app.
+
+Working in reference mode (`?mode=reference`) and want OCR-assisted naming? Paste
+`console_loader_ocr.js` instead of `console_loader.js` — same steps otherwise.
 
 ## Mask action modes (Rect / Poly2 / Brush)
 
@@ -220,6 +231,27 @@ special handling.
   committed box/region/trace, then exits the tool.
 - History (rejected approaches, an in-pipe predecessor, a removed `fuse`/`hug`/`shrink` pipeline):
   see `CLAUDE.md`.
+
+### OCR-assisted reference naming (`rw_ocr.js`, OCR loader variant only)
+
+In the app's own reference mode (`?mode=reference`), reads the printed text inside a drawn
+reference box and pre-fills the naming dialog's Name field — in-browser via Tesseract.js
+(CDN-loaded on first use, nothing else leaves the browser), never auto-submitted.
+
+- Ships only in `console_loader_ocr.js` — never bundled into the everyday `console_loader.js`.
+- An **OCR** button appears next to the Name field once you draw a *new* reference box (not when
+  editing an existing reference's name). Click it to recognize text in the active box and fill
+  the Name field with the longest recognized line; the field always stays fully editable.
+- **OCR Box** hides the dialog so you can drag a second, tighter box directly on the drawing —
+  useful when the reference box itself has to be bigger than just the text. The dialog reopens
+  automatically once you finish the drag; **Escape** cancels the drag without losing a box you'd
+  already captured. This custom box sticks across repeat OCR clicks until you click **Clear
+  Box**, redraw it, or draw a brand-new reference box (which retires it automatically).
+- First OCR click on a page downloads Tesseract.js from a CDN — cached for the rest of the page
+  session after that. If the page's CSP blocks it, the status line says so and names the
+  console override (`RW._ocrTesseractSrc`) to repoint it.
+- Never submits automatically — always review or edit the suggested name before clicking the
+  app's own Save.
 
 ### Panel layout
 
