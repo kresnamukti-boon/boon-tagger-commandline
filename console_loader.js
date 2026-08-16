@@ -2969,7 +2969,8 @@
   RW.pipeMode      = false;
   RW._pipePts      = [];     // confirmed path points, normalized [nx,ny] page-space
   RW._pipeWidth    = Math.max(3, Math.round(6 * (RW.W/2592))); // mask px
-  RW._pipeNetwork  = [];      // finished-but-unstaged segments this session: {ptsN, widthPx, ribbon, links}
+  RW._pipeAnchor   = 'center'; // 'center'|'edgeA'|'edgeB' — which rail the click represents, frozen per-segment at finish time
+  RW._pipeNetwork  = [];      // finished-but-unstaged segments this session: {ptsN, widthPx, anchor, ribbon, links}
   RW._pipePendingLinks = [];  // parallel to RW._pipePts: a RW._pipeNetwork index or null per placed point
   RW._pipeSnapHit  = null;     // side-channel result of the last _tryPipeSnap call
   RW._pipeSnapEnabled = true;
@@ -2977,6 +2978,7 @@
   RW._pipeMergeRes    = 4;      // local raster px per mask px, for merging connected segments
   RW._pipeMergeBudget = 12_000_000; // local raster px cap
   RW._pipeMergeEpsMaskPx = 1.0; // DP tolerance target, in MASK px (not raster px) — scaled by `scale` at use, so it stays a constant real-world tolerance regardless of merge resolution
+  RW._pipeDragHandle = null;  // {segIdx, end:'start'|'end'} while dragging a free network-segment endpoint, else null
   let downPos = null;         // client {x,y} at mousedown
   let dragging = false;
   let dragCurClient = null;   // live end point of an in-progress width-measure drag
@@ -2999,8 +3001,16 @@
   // (left.concat(right.reverse())) always has even length 2k, with
   // midpoint(ribbon[i], ribbon[2k-1-i]) === the original centerline vertex i
   // for every i — this is what RW._pipeCenterlineFromRibbon below relies on.
+  //
+  // offL/offR (mask-px, offL+offR === widthPx) let each rail sit at a
+  // different distance from the clicked path instead of splitting it evenly
+  // — offR=0 means the click IS the right rail (an edge-anchor), etc. This
+  // does NOT break centerline recovery: midpoint(left[i],right[i]) is always
+  // the ribbon's true geometric center regardless of offL/offR, verified
+  // directly (including at a miter joint) against RW._pipeCenterlineFromRibbon.
   const MITER_LIMIT = 4;
-  function analyticPipeRibbon(ptsN, widthPx){
+  function analyticPipeRibbon(ptsN, widthPx, offL, offR){
+    if (offL == null || offR == null){ offL = widthPx/2; offR = widthPx/2; }
     const {W,H} = RW;
     const pts = ptsN.map(([nx,ny]) => [nx*W, ny*H]);
     const clean = [pts[0]];
@@ -3010,7 +3020,6 @@
     }
     if (clean.length < 2) return null;
     const n = clean.length;
-    const half = widthPx/2;
 
     const perp = [];
     for (let i=0;i<n-1;i++){
@@ -3020,8 +3029,8 @@
     }
 
     const left = [], right = [];
-    left.push([clean[0][0]+perp[0][0]*half, clean[0][1]+perp[0][1]*half]);
-    right.push([clean[0][0]-perp[0][0]*half, clean[0][1]-perp[0][1]*half]);
+    left.push([clean[0][0]+perp[0][0]*offL, clean[0][1]+perp[0][1]*offL]);
+    right.push([clean[0][0]-perp[0][0]*offR, clean[0][1]-perp[0][1]*offR]);
 
     for (let i=1;i<n-1;i++){
       const p1 = perp[i-1], p2 = perp[i];
@@ -3038,16 +3047,16 @@
         else { mx = ax*scale; my = ay*scale; }
       }
       if (bevel){
-        left.push([vx+p1[0]*half, vy+p1[1]*half], [vx+p2[0]*half, vy+p2[1]*half]);
-        right.push([vx-p1[0]*half, vy-p1[1]*half], [vx-p2[0]*half, vy-p2[1]*half]);
+        left.push([vx+p1[0]*offL, vy+p1[1]*offL], [vx+p2[0]*offL, vy+p2[1]*offL]);
+        right.push([vx-p1[0]*offR, vy-p1[1]*offR], [vx-p2[0]*offR, vy-p2[1]*offR]);
       } else {
-        left.push([vx+mx*half, vy+my*half]);
-        right.push([vx-mx*half, vy-my*half]);
+        left.push([vx+mx*offL, vy+my*offL]);
+        right.push([vx-mx*offR, vy-my*offR]);
       }
     }
 
-    left.push([clean[n-1][0]+perp[n-2][0]*half, clean[n-1][1]+perp[n-2][1]*half]);
-    right.push([clean[n-1][0]-perp[n-2][0]*half, clean[n-1][1]-perp[n-2][1]*half]);
+    left.push([clean[n-1][0]+perp[n-2][0]*offL, clean[n-1][1]+perp[n-2][1]*offL]);
+    right.push([clean[n-1][0]-perp[n-2][0]*offR, clean[n-1][1]-perp[n-2][1]*offR]);
 
     const loop = left.concat(right.reverse());
     return loop.map(([x,y]) => ({x:+(x/W).toFixed(6), y:+(y/H).toFixed(6)}));
@@ -3065,11 +3074,24 @@
     return clean;
   };
 
-  RW._pipeRibbon = function(ptsN, widthPx){
+  // anchor: 'center' (default, splits width evenly — today's exact
+  // behavior) | 'edgeA' (click = the right rail, full width to the left) |
+  // 'edgeB' (click = the left rail, full width to the right). Lets a click
+  // trace one visible edge of a thick drawn line instead of its (often
+  // unmarked) centerline; RW._pipeCenterlineFromRibbon still recovers the
+  // true center from the result with no changes of its own.
+  RW._pipeAnchorOffsets = function(widthPx, anchor){
+    if (anchor === 'edgeA') return [widthPx, 0];
+    if (anchor === 'edgeB') return [0, widthPx];
+    return [widthPx/2, widthPx/2];
+  };
+
+  RW._pipeRibbon = function(ptsN, widthPx, anchor){
     if (!ptsN || ptsN.length < 2 || !(widthPx > 0)) return null;
     const clean = RW._pipeDedupe(ptsN);
     if (clean.length < 2) return null;
-    return analyticPipeRibbon(clean, widthPx);
+    const [offL, offR] = RW._pipeAnchorOffsets(widthPx, anchor);
+    return analyticPipeRibbon(clean, widthPx, offL, offR);
   };
 
   // Recovers the original centerline from a ribbon polygon built by
@@ -3105,27 +3127,54 @@
     return Math.max(4, RW.W/200);
   };
 
-  // Every centerline the current point may connect to: this session's
-  // finished-but-unstaged segments, plus every already-committed pipe-tagged
-  // annotation (identified by the 'pipe width: ' notes prefix — the only
-  // existing marker, same 4-gate discipline every annotation reader in this
-  // codebase already uses). Excludes the in-progress RW._pipePts.
+  // Extracts a pipe's three meaningful snap curves from its ribbon — the
+  // true centerline and its two edges (rails) — each in the same forward
+  // vertex order, so t=0/t=1 on any of the three consistently means "this
+  // pipe's real start/end" regardless of which curve a click actually hit.
+  // Independent of how the pipe was originally anchored: even a
+  // center-anchored pipe has two real edges, and an edge-anchored pipe's
+  // true center is still recoverable exactly (see RW._pipeCenterlineFromRibbon).
+  // Returns null if the ribbon is invalid.
+  RW._pipeRailsFromRibbon = function(ribbon){
+    if (!Array.isArray(ribbon) || ribbon.length < 4 || (ribbon.length % 2)) return null;
+    const k = ribbon.length / 2;
+    const toPts = arr => arr.map(p => [p.x, p.y]);
+    const center = RW._pipeCenterlineFromRibbon(ribbon);
+    return { center: center, left: toPts(ribbon.slice(0, k)), right: toPts(ribbon.slice(k).reverse()) };
+  };
+
+  // Every curve the current point may connect to: for each of this
+  // session's finished-but-unstaged segments and every already-committed
+  // pipe-tagged annotation (identified by the 'pipe width: ' notes prefix —
+  // the only existing marker, same 4-gate discipline every annotation
+  // reader in this codebase already uses), offers its centerline AND both
+  // edges as separate candidates — a click always snaps to whichever of the
+  // three is actually closest, regardless of what anchor the target pipe was
+  // originally drawn with (previously, an uncommitted segment only offered
+  // its raw clicked curve — its centerline for a center anchor, but an EDGE
+  // for an edge anchor — while a committed one always recovered the true
+  // center; that inconsistency is what this fixes). Excludes RW._pipePts.
   RW._pipeSnapCandidates = function(){
     const out = [];
+    const pushRails = (ribbon, widthPx, src, ref) => {
+      const rails = RW._pipeRailsFromRibbon(ribbon);
+      if (!rails) return;
+      if (rails.center && rails.center.length >= 2) out.push({ptsN:rails.center, widthPx:widthPx, src:src, ref:ref, rail:'center'});
+      if (rails.left && rails.left.length >= 2) out.push({ptsN:rails.left, widthPx:widthPx, src:src, ref:ref, rail:'left'});
+      if (rails.right && rails.right.length >= 2) out.push({ptsN:rails.right, widthPx:widthPx, src:src, ref:ref, rail:'right'});
+    };
     for (let i=0;i<RW._pipeNetwork.length;i++){
       const s = RW._pipeNetwork[i];
-      if (s && s.ptsN && s.ptsN.length >= 2) out.push({ptsN:s.ptsN, widthPx:s.widthPx, src:'network', ref:i});
+      if (s && Array.isArray(s.ribbon)) pushRails(s.ribbon, s.widthPx, 'network', i);
     }
     if (typeof annotationState === 'undefined' || !annotationState || !annotationState.annotations) return out;
     for (const a of annotationState.annotations){
       if (a._hidden || a.is_void) continue;
       const pts = a.coordinates; if (!Array.isArray(pts) || pts.length < 3) continue;
       if (typeof a.notes !== 'string' || a.notes.indexOf('pipe width: ') !== 0) continue;
-      const cl = RW._pipeCenterlineFromRibbon(pts);
-      if (!cl) continue;
       const m = /^pipe width:\s*([0-9.]+)/.exec(a.notes);
       const w = m ? parseFloat(m[1]) : NaN;
-      out.push({ptsN:cl, widthPx:(isFinite(w) && w>0) ? w : 0, src:'annotation', ref:a.id});
+      pushRails(pts, (isFinite(w) && w>0) ? w : 0, 'annotation', a.id);
     }
     return out;
   };
@@ -3236,13 +3285,13 @@
     if (RW._pipePts.length < 2) return false;
     const info = RW._pipeResolveLinks(RW._pipePts, RW._pipePendingLinks, RW._pipeNetwork.length);
     const ptsN = info.ptsN;
-    const ribbon = RW._pipeRibbon(ptsN, RW._pipeWidth);
+    const ribbon = RW._pipeRibbon(ptsN, RW._pipeWidth, RW._pipeAnchor);
     if (!ribbon || ribbon.length < 4){
       RW._commitStatus('need two distinct points — keep clicking, or Escape to clear');
       return false;
     }
     RW._pipeNetwork.push({
-      ptsN: ptsN, widthPx: RW._pipeWidth, ribbon: ribbon,
+      ptsN: ptsN, widthPx: RW._pipeWidth, anchor: RW._pipeAnchor, ribbon: ribbon,
       links: info.links,         // unchanged contract for RW._pipeGroups
       linkStart: info.linkStart, // {ref,targetEnd}|null — this segment's OWN first point
       linkEnd: info.linkEnd,     // {ref,targetEnd}|null — this segment's OWN last point
@@ -3307,16 +3356,90 @@
     return count;
   }
 
+  RW._pipeGapSinFloor = 0.3;  // bounds the crossing extension for a near-parallel tee
+  RW._pipeGapMarginPx = 2;    // extra mask-px past the crossing point, absorbs DP/raster rounding
+
+  // Nearest-segment local direction (unit vector, mask-px) of ptsN to (mx,my).
+  // Pure/testable; null if ptsN has no usable segment.
+  RW._pipeNearestDir = function(ptsN, mx, my){
+    let best = null, bestD = Infinity;
+    for (let i=0;i<ptsN.length-1;i++){
+      const ax=ptsN[i][0]*RW.W, ay=ptsN[i][1]*RW.H;
+      const bx=ptsN[i+1][0]*RW.W, by=ptsN[i+1][1]*RW.H;
+      const dx=bx-ax, dy=by-ay, len=Math.hypot(dx,dy);
+      if (len < 1e-9) continue;
+      let t = ((mx-ax)*dx+(my-ay)*dy)/(len*len);
+      if (t<0) t=0; else if (t>1) t=1;
+      const fx=ax+t*dx, fy=ay+t*dy;
+      const d = Math.hypot(fx-mx, fy-my);
+      if (d < bestD){ bestD=d; best=[dx/len, dy/len]; }
+    }
+    return best;
+  };
+
+  // A segment's own ribbon has a flat cap at each end, perpendicular to ITS
+  // OWN direction — fine for a free end, but wrong for a mid-span tee: the
+  // cap generally doesn't line up with the TARGET's local direction, so the
+  // raster union leaves a wedge-shaped gap between the two shapes right at
+  // the join (worse the closer the join sits to the target's own edge rail
+  // rather than its centerline — snapping onto an edge is the extreme case).
+  // Extends the linked end far enough along the segment's own direction to
+  // cross the target's full width even at a shallow approach angle
+  // (bounded by RW._pipeGapSinFloor so a near-parallel tee doesn't runaway),
+  // then rebuilds a ribbon from that extended point for rasterizing ONLY —
+  // seg.ptsN/seg.ribbon themselves are never mutated. Falls back to the
+  // segment's own unmodified ribbon whenever the target can't be resolved,
+  // or the link isn't a genuine mid-span tee (targetEnd !== null).
+  RW._pipeExtendRibbonForMerge = function(seg){
+    const ribbon = seg.ribbon;
+    if (!Array.isArray(seg.ptsN) || seg.ptsN.length < 2) return ribbon;
+    const ends = [];
+    if (seg.linkStart && seg.linkStart.targetEnd === null) ends.push('start');
+    if (seg.linkEnd && seg.linkEnd.targetEnd === null) ends.push('end');
+    if (!ends.length) return ribbon;
+
+    const pts = seg.ptsN.map(p => p.slice());
+    let changed = false;
+    for (const end of ends){
+      const link = end === 'start' ? seg.linkStart : seg.linkEnd;
+      const target = RW._pipeNetwork[link.ref];
+      if (!target || !Array.isArray(target.ptsN) || target.ptsN.length < 2) continue;
+      const idx = end === 'start' ? 0 : pts.length - 1;
+      const nbrIdx = end === 'start' ? 1 : pts.length - 2;
+      if (nbrIdx < 0 || nbrIdx >= pts.length || nbrIdx === idx) continue;
+      const joinX = pts[idx][0]*RW.W, joinY = pts[idx][1]*RW.H;
+      const nbrX = pts[nbrIdx][0]*RW.W, nbrY = pts[nbrIdx][1]*RW.H;
+      const ownDx = joinX-nbrX, ownDy = joinY-nbrY, ownLen = Math.hypot(ownDx,ownDy);
+      if (ownLen < 1e-6) continue;
+      const ownDir = [ownDx/ownLen, ownDy/ownLen];
+      const tgtDir = RW._pipeNearestDir(target.ptsN, joinX, joinY);
+      if (!tgtDir) continue;
+      const sinTheta = Math.abs(ownDir[0]*tgtDir[1] - ownDir[1]*tgtDir[0]);
+      const targetHalf = (target.widthPx||0)/2;
+      const crossDist = targetHalf / Math.max(sinTheta, RW._pipeGapSinFloor);
+      const ext = crossDist + RW._pipeGapMarginPx;
+      pts[idx] = [(joinX + ownDir[0]*ext)/RW.W, (joinY + ownDir[1]*ext)/RW.H];
+      changed = true;
+    }
+    if (!changed) return ribbon;
+    const extended = RW._pipeRibbon(pts, seg.widthPx, seg.anchor);
+    return extended || ribbon;
+  };
+
   // Raster-union + re-trace a connected group of RW._pipeNetwork segments into
   // one combined polygon. Returns {poly, meta} or {error, meta}.
   RW._pipeMergeGroup = function(segs){
     const {W,H} = RW;
     let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
     let maxHalf = 0;
+    const ribbons = [];
     for (const seg of segs){
       if (!seg || !Array.isArray(seg.ribbon)) return {error:'missing ribbon', meta:{}};
+      const ribbon = RW._pipeExtendRibbonForMerge(seg);
+      if (!Array.isArray(ribbon)) return {error:'missing ribbon', meta:{}};
+      ribbons.push(ribbon);
       maxHalf = Math.max(maxHalf, (seg.widthPx||0)/2);
-      for (const p of seg.ribbon){
+      for (const p of ribbon){
         const x = p.x*W, y = p.y*H;
         if (!isFinite(x) || !isFinite(y)) return {error:'non-finite point', meta:{}};
         if (x<minX) minX=x; if (x>maxX) maxX=x;
@@ -3339,8 +3462,8 @@
     function toLocal(nx, ny){
       return [ (nx*W - minX)*scale + pad, (ny*H - minY)*scale + pad ];
     }
-    for (const seg of segs){
-      const localPts = seg.ribbon.map(p => toLocal(p.x, p.y));
+    for (const ribbon of ribbons){
+      const localPts = ribbon.map(p => toLocal(p.x, p.y));
       RW._rasterizePolyLocal(localPts, localW, localH, mask);
     }
 
@@ -3401,12 +3524,19 @@
     const w0 = members[0] && members[0].widthPx;
     if (!(typeof w0 === 'number' && w0 > 0)) return {error:'bad width', meta:meta};
     const wKey = w0.toFixed(2);
+    const anchor0 = (members[0] && members[0].anchor) || 'center';
     for (const s of members){
       if (!s || !Array.isArray(s.ptsN) || s.ptsN.length < 2) return {error:'bad member', meta:meta};
       if (!(typeof s.widthPx === 'number' && s.widthPx > 0) || s.widthPx.toFixed(2) !== wKey)
         return {error:'mixed widths', meta:meta};
+      // Concatenating segments whose raw ptsN mean different things (one's
+      // clicks are a centerline, another's are an edge) into one combined
+      // path and building it with a single anchor would be geometrically
+      // wrong — the whole group must agree, same shape of gate as width.
+      if (((s.anchor) || 'center') !== anchor0) return {error:'mixed anchors', meta:meta};
     }
     meta.widthPx = w0;
+    meta.anchor = anchor0;
 
     // Each segment end is a slot usable at most once; a chain edge only ever
     // connects one segment's own start/end to ANOTHER segment's true start/end.
@@ -3485,7 +3615,7 @@
 
     const problem = RW._pipeSanityCheck(combined, w0);
     if (problem) return {error:problem, meta:meta};
-    const poly = RW._pipeRibbon(combined, w0); // the SAME builder a lone pipe uses
+    const poly = RW._pipeRibbon(combined, w0, anchor0); // the SAME builder a lone pipe uses
     if (!poly || poly.length < 4) return {error:'ribbon build failed', meta:meta};
     meta.polyPoints = poly.length;
     return {poly:poly, meta:meta};
@@ -3506,11 +3636,57 @@
     return {error: (raster && raster.error) || 'merge failed', meta: meta};
   };
 
+  // True if RW._pipeNetwork[segIdx]'s given end ('start'|'end') has no
+  // connection at all — neither did this segment link outward from that end,
+  // nor does any OTHER segment's linkStart/linkEnd point at this specific
+  // segment+end. A link is recorded only on the LATER-drawn segment, so both
+  // directions must be checked — the earlier segment has no reciprocal field.
+  RW._pipeEndpointIsFree = function(segIdx, end){
+    const seg = RW._pipeNetwork[segIdx];
+    if (!seg) return false;
+    const own = end === 'start' ? seg.linkStart : seg.linkEnd;
+    if (own) return false;
+    for (let i=0;i<RW._pipeNetwork.length;i++){
+      if (i === segIdx) continue;
+      const other = RW._pipeNetwork[i];
+      if (!other) continue;
+      if ((other.linkStart && other.linkStart.ref === segIdx && other.linkStart.targetEnd === end)
+          || (other.linkEnd && other.linkEnd.ref === segIdx && other.linkEnd.targetEnd === end))
+        return false;
+    }
+    return true;
+  };
+
+  // Hit-tests a free network-segment endpoint against a client point.
+  // Container-relative px, mirrors rw_elbow.js's hitTestElbowHandle exactly.
+  function hitTestPipeHandle(clientX, clientY){
+    const cr = document.getElementById('pdf-container').getBoundingClientRect();
+    const mx = clientX - cr.x, my = clientY - cr.y;
+    const HIT = 10;
+    for (let i=0;i<RW._pipeNetwork.length;i++){
+      const seg = RW._pipeNetwork[i];
+      if (!seg || !Array.isArray(seg.ptsN) || seg.ptsN.length < 2) continue;
+      const ends = [['start', seg.ptsN[0]], ['end', seg.ptsN[seg.ptsN.length-1]]];
+      for (const [end, pt] of ends){
+        if (!RW._pipeEndpointIsFree(i, end)) continue;
+        const [px,py] = RW._toPx(pt[0], pt[1]);
+        if (Math.hypot(px-mx, py-my) <= HIT) return { segIdx:i, end:end };
+      }
+    }
+    return null;
+  }
+
   /* ---------- click / drag / finish state machine ---------- */
+  let pipeHandleCandidate = null; // hit-test result at mousedown, not yet armed as a real drag
   ac.addEventListener('mousedown', function(e){
     if (!RW.pipeMode) return;
     e.stopPropagation(); e.preventDefault();
     shiftHeld = e.shiftKey;
+    // Deliberately NOT armed yet: a plain click here must still fall through
+    // to the existing click-to-place/snap-onto-this-same-tip behavior
+    // unchanged. Only an actual drag (>5px, checked in mousemove) commits to
+    // reshaping this endpoint instead of starting a new branch there.
+    pipeHandleCandidate = hitTestPipeHandle(e.clientX, e.clientY);
     downPos = {x:e.clientX, y:e.clientY};
     dragging = false;
     dragCurClient = null;
@@ -3520,9 +3696,21 @@
     if (!RW.pipeMode) return;
     e.stopPropagation();
     shiftHeld = e.shiftKey;
+    if (RW._pipeDragHandle){
+      applyPipeDragPoint(e.clientX, e.clientY);
+      RW._renderPipePreview(e.clientX, e.clientY);
+      return;
+    }
     if (downPos){
       const d = Math.hypot(e.clientX-downPos.x, e.clientY-downPos.y);
       if (d > 5){
+        if (pipeHandleCandidate){
+          RW._pipeDragHandle = pipeHandleCandidate;
+          pipeHandleCandidate = null;
+          applyPipeDragPoint(e.clientX, e.clientY); // apply THIS frame's position too, no one-frame lag
+          RW._renderPipePreview(e.clientX, e.clientY);
+          return;
+        }
         dragging = true;
         dragCurClient = {x:e.clientX, y:e.clientY};
         RW._renderPipePreview(e.clientX, e.clientY);
@@ -3532,10 +3720,35 @@
     RW._renderPipePreview(e.clientX, e.clientY);
   }, true);
 
+  // Moves the currently-armed drag handle's endpoint to (clientX,clientY),
+  // rebuilding that segment's ribbon. Refuses (leaves the point untouched)
+  // if the result would collapse the segment onto its own neighbor point.
+  function applyPipeDragPoint(clientX, clientY){
+    const { segIdx, end } = RW._pipeDragHandle;
+    const seg = RW._pipeNetwork[segIdx];
+    if (!seg) return;
+    const n = RW._toNorm(clientX, clientY);
+    const idx = end === 'start' ? 0 : seg.ptsN.length - 1;
+    const neighborIdx = end === 'start' ? 1 : seg.ptsN.length - 2;
+    const neighbor = seg.ptsN[neighborIdx];
+    const distPx = Math.hypot((n[0]-neighbor[0])*RW.W, (n[1]-neighbor[1])*RW.H);
+    if (distPx > 1){ // refuse to collapse the segment onto its neighbor point
+      seg.ptsN[idx] = n;
+      seg.ribbon = RW._pipeRibbon(seg.ptsN, seg.widthPx, seg.anchor);
+    }
+  }
+
   ac.addEventListener('mouseup', function(e){
     if (!RW.pipeMode) return;
     e.stopPropagation(); e.preventDefault();
     shiftHeld = e.shiftKey;
+    pipeHandleCandidate = null;
+    if (RW._pipeDragHandle){
+      RW._pipeDragHandle = null;
+      downPos = null;
+      RW._renderPipePreview(e.clientX, e.clientY);
+      return;
+    }
     const d = downPos; downPos = null;
     if (!d) return;
     const dist = Math.hypot(e.clientX-d.x, e.clientY-d.y);
@@ -3683,11 +3896,22 @@
     const parts = [];
     let status = null;
 
-    for (const seg of RW._pipeNetwork){
+    for (let i=0;i<RW._pipeNetwork.length;i++){
+      const seg = RW._pipeNetwork[i];
       parts.push('<polygon points="'+ polyPx(seg.ribbon) +'" fill="rgba(255,140,0,0.16)" '
         + 'stroke="#ff8c00" stroke-width="1" stroke-opacity="0.85"/>');
       parts.push('<polyline points="'+ linePx(seg.ptsN) +'" fill="none" stroke="#ff8c00" '
         + 'stroke-width="1" stroke-opacity="0.45" stroke-dasharray="2,4"/>');
+      // A handle only at genuinely free (unconnected) endpoints — communicates
+      // which ends are draggable, mirroring rw_elbow.js's own handle style.
+      if (Array.isArray(seg.ptsN) && seg.ptsN.length >= 2){
+        const ends = [['start', seg.ptsN[0]], ['end', seg.ptsN[seg.ptsN.length-1]]];
+        for (const [end, pt] of ends){
+          if (!RW._pipeEndpointIsFree(i, end)) continue;
+          const [px,py] = RW._toPx(pt[0], pt[1]);
+          parts.push('<circle cx="'+px+'" cy="'+py+'" r="5" fill="#fff" stroke="#ff8c00" stroke-width="2"/>');
+        }
+      }
     }
 
     if (dragging && dragCurClient && downPos){
@@ -3713,7 +3937,7 @@
           parts.push('<circle cx="'+px+'" cy="'+py+'" r="4" fill="#ff8c00"/>');
         }
       } else {
-        const ribbon = RW._pipeRibbon(pts, RW._pipeWidth);
+        const ribbon = RW._pipeRibbon(pts, RW._pipeWidth, RW._pipeAnchor);
         if (ribbon){
           parts.push('<polygon points="'+polyPx(ribbon)+'" fill="rgba(255,140,0,0.22)" stroke="#ff8c00" stroke-width="1.5"/>');
           parts.push('<polyline points="'+linePx(pts)+'" fill="none" stroke="#ff8c00" stroke-width="1" stroke-dasharray="3,3"/>');
@@ -3813,7 +4037,7 @@
         if (!mergedOk){
           for (const seg of members){
             const problem = RW._pipeSanityCheck(seg.ptsN, seg.widthPx);
-            const ribbon = problem ? null : (seg.ribbon || RW._pipeRibbon(seg.ptsN, seg.widthPx));
+            const ribbon = problem ? null : (seg.ribbon || RW._pipeRibbon(seg.ptsN, seg.widthPx, seg.anchor));
             if (!ribbon || ribbon.length < 4){
               failed++;
               RW._commitStatus('staged '+done+'/'+total+' (failed: '+failed+')');
@@ -3856,6 +4080,7 @@
     RW._pipePendingLinks = [];
     RW._pipeNetwork = [];
     RW._pipeSnapHit = null;
+    RW._pipeDragHandle = null;
     const old = document.getElementById('rw-pipe-preview'); if (old) old.remove();
     if (!opts || !opts.keepStatus){
       RW._commitStatus(lost ? ('discarded ' + lost + ' unstaged pipe segment' + (lost===1?'':'s')) : '');
@@ -3946,6 +4171,27 @@
       RW._renderPipePreview(null, null);
     };
     group.appendChild(widthInp);
+
+    const anchorBtn = document.createElement('button');
+    anchorBtn.id = 'rw-pipe-anchor';
+    anchorBtn.style.cssText = 'font-size:11px;padding:2px 6px;';
+    RW._syncPipeAnchorBtn = function(){
+      const label = RW._pipeAnchor === 'edgeA' ? 'Edge A' : RW._pipeAnchor === 'edgeB' ? 'Edge B' : 'Center';
+      anchorBtn.innerText = 'Anchor: ' + label;
+      anchorBtn.title = 'What your click represents: Center splits the width evenly to each side '
+        + '(today\'s default). Edge A/Edge B put the click on one rail instead, with the full width '
+        + 'to the other side — useful for tracing along one visible edge of a thick line instead of '
+        + 'its (often unmarked) centerline. Which side is "A" vs "B" depends on your click direction, '
+        + 'not absolute screen position. Applies to the path you\'re drawing now; each finished '
+        + 'segment keeps the anchor it had when finished.';
+    };
+    anchorBtn.onclick = function(){
+      RW._pipeAnchor = RW._pipeAnchor === 'center' ? 'edgeA' : RW._pipeAnchor === 'edgeA' ? 'edgeB' : 'center';
+      RW._syncPipeAnchorBtn();
+      RW._renderPipePreview(null, null);
+    };
+    RW._syncPipeAnchorBtn();
+    group.appendChild(anchorBtn);
 
     bar.appendChild(group);
   }
