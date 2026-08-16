@@ -138,20 +138,31 @@ For piping-centerline drawings. Deliberately does **not** trace the drawing's ac
 early versions did, but pipes are routinely interrupted by text labels crossing them, leader
 lines, and fitting symbols, and no amount of pixel-analysis tuning fully survives that. Instead:
 
-- **Click** points along the pipe's visible centerline — first click is the start, each next
-  click is a bend — the same way the existing Poly2 tool places vertices. Snapping here is
-  **pipe-only**: a click snaps to another pipe (this session's or already committed), never to
-  generic wall/region geometry — Shift bypasses it for one click.
+- **Click** points along the pipe's visible centerline (or one edge — see **Anchor** below) — first
+  click is the start, each next click is a bend — the same way the existing Poly2 tool places
+  vertices. Snapping here is **pipe-only**: a click snaps to another pipe (this session's or
+  already committed), never to generic wall/region geometry — Shift bypasses it for one click.
+- **Anchor** (panel button, cycles Center → Edge A → Edge B → Center): what your click represents.
+  Center (default) splits the width evenly to each side, same as always. Edge A/Edge B put the
+  click on one rail instead, with the full width to the other side — useful for tracing along one
+  visible edge of a thick drawn line instead of its centerline, which often isn't marked at all.
+  Which side is "A" vs "B" depends on your click direction, not a fixed screen side. Applies to the
+  path you're drawing now; each finished segment keeps the anchor it had when finished, and a chain
+  of connected segments must all share the same anchor to merge as one vector path (mirroring the
+  existing same-width requirement) — a mismatch just falls back to the raster merge instead.
 - **Double-click** finishes the path — and immediately starts the next one, so you can keep
   drawing. `Backspace` drops the last point of the path you're currently drawing. `Escape` steps
   back one stage at a time: clears the in-progress path, then discards any finished-but-uncommitted
   segments, then exits Pipe mode.
 - **Branching/connecting**: click a point on or near an already-finished pipe (this session's, or
-  one already committed on the page) and it snaps onto that pipe's true centerline — a white/
-  magenta ring marks the hit, with a cross for an end-to-end connection or a dot for a mid-span
-  tee. This works even before you've clicked Commit Pipe. This pipe-to-pipe snap is the *only*
-  snap in Pipe mode (see above) — it's what makes branching reliable without also picking up an
-  unrelated wall or region edge nearby.
+  one already committed on the page) and it snaps onto that pipe — a white/magenta ring marks the
+  hit, with a cross for an end-to-end connection or a dot for a mid-span tee. Every pipe offers its
+  centerline **and both of its edges** as separate snap targets, regardless of what anchor it was
+  originally drawn with, so a click lands on whichever of the three is actually closest — click
+  near an edge to branch off that edge, or near the middle to branch off the centerline. This works
+  even before you've clicked Commit Pipe. This pipe-to-pipe snap is the *only* snap in Pipe mode
+  (see above) — it's what makes branching reliable without also picking up an unrelated wall or
+  region edge nearby.
 - **Commit Pipe stages every finished segment from the session in one batch** — draw a main pipe
   plus any branches, then one click stages them (button label shows the resulting annotation
   count, e.g. `Commit 3 Pipes`). Each segment keeps the width it had when you finished it, so a
@@ -171,7 +182,10 @@ lines, and fitting symbols, and no amount of pixel-analysis tuning fully survive
   - Any **mid-span tee** (a branch attaching to the side of another pipe, not its tip) merges via
     a raster-union-and-retrace instead. Its notes record the segment/width breakdown (`pipe run:
     3 segments merged, widths 10.00, 12.00 px — branched outline, centerline not recoverable`) and
-    it can't be used as a snap target again in a future session.
+    it can't be used as a snap target again in a future session. A tee attaching at an angle has
+    its connecting end automatically extended a bit before rasterizing, so the two shapes actually
+    overlap at the joint instead of leaving a small wedge-shaped gap — this happens on its own, no
+    button or setting to turn it on.
 
   If a fitting's real linework is two separate strokes that don't actually connect after merging,
   the tool falls back to committing each segment separately rather than guessing.
@@ -205,6 +219,11 @@ lines, and fitting symbols, and no amount of pixel-analysis tuning fully survive
   number — a genuinely sub-1px measurement no longer looks like the drag failed.
 - No undo for a committed pipe specifically (only pre-commit: Escape/Backspace both work) — to
   remove a staged pipe, select it in the app and press Delete before you Save.
+- **Editable length, pre-commit**: a small white/orange handle appears at any *free* (unconnected)
+  end of a finished-but-uncommitted segment — drag it to extend or shorten that segment, live. A
+  *joint* between two connected segments has no handle and can't be dragged; only a segment's own
+  loose end is adjustable this way. A plain click on that same spot still behaves exactly as
+  before (starts a new branch there) — only an actual drag reshapes the existing segment.
 
 ### Elbow fitting (`rw_elbow.js`)
 
