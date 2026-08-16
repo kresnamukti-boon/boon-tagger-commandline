@@ -47,7 +47,6 @@ load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in ord
 **To rebuild** after editing any `rw_*.js` source module:
 ```bash
 bash build_loader.sh          # console_loader.js
-bash build_userscript.sh      # region-workbench.user.js (Tampermonkey build, not in active use)
 ```
 
 ## Injection
