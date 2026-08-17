@@ -1,11 +1,14 @@
 // RW v2.8 — collapsible panel + master killswitch.
-// MUST be loaded FIRST (before rw_install). Wraps annotation-canvas's
+// NATIVE-TOOLS-ONLY BRANCH: trimmed to drop workbench-teardown on disable
+// (rw_install.js/rw_masktools.js/rw_brushpoly.js are gone on this branch) —
+// see CLAUDE.md's "A dedicated branch" section.
+// MUST be loaded FIRST (before rw_core). Wraps annotation-canvas's
 // addEventListener so every handler registered by later modules auto-checks
 // RW.enabled.
 (function boot(){
   'use strict';
 
-  // __RW doesn't exist yet (rw_install creates it). Gate lives on a separate
+  // __RW doesn't exist yet (rw_core creates it). Gate lives on a separate
   // object until retrofit().
   if (!window.__RWgate) window.__RWgate = { enabled: true };
   const gate = window.__RWgate;
@@ -44,6 +47,7 @@
     if (!RW) return;
     const panel = document.getElementById('rw-panel');
     if (!panel) return;
+    if (document.getElementById('rw-collapse')) return; // already retrofitted (e.g. re-pasted loader)
 
     RW.enabled = gate.enabled;
     RW.v28 = true;
@@ -61,11 +65,11 @@
     caret.id = 'rw-collapse';
     caret.style.cssText = 'font-size:11px;flex:none;';
     caret.innerHTML = '&#9660;';
-    caret.title = 'Collapse Region Workbench';
+    caret.title = 'Collapse Command Line';
     caret.onclick = (e)=>{ e.stopPropagation(); RW.setPanelExpanded(!RW.panelExpanded); };
 
     const title = document.createElement('b');
-    title.innerText = 'Region Workbench';
+    title.innerText = 'Command Line';
     title.style.cssText = 'font-size:12px;flex:1;';
 
     const enableBtn = document.createElement('button');
@@ -99,12 +103,12 @@
         p.style.maxHeight = '50%';
         if (b) b.style.display = '';
         c.innerHTML = '&#9660;';
-        c.title = 'Collapse Region Workbench';
+        c.title = 'Collapse Command Line';
       } else {
         p.style.maxHeight = '32px';
         if (b) b.style.display = 'none';
         c.innerHTML = '&#9654;';
-        c.title = 'Expand Region Workbench';
+        c.title = 'Expand Command Line';
       }
     };
 
@@ -116,21 +120,9 @@
         btn.innerText = 'RW: ' + (RW.enabled ? 'ON' : 'OFF');
         btn.style.background = RW.enabled ? 'rgba(100,220,100,0.25)' : 'rgba(220,100,100,0.30)';
       }
-      const overlay = document.getElementById('rw-overlay');
-      if (overlay){
-        if (RW.overlayHidden) overlay.style.display = 'none';
-        else overlay.style.opacity = RW.enabled ? '0.55' : '0.12';
-      }
       if (!RW.enabled){
-        RW.maskMode = null; RW.maskMode2 = null; RW.setPick(false);
-        RW._polyPtsN = []; RW.__rectStartN = null; RW.__rectCurN = null;
         const av = document.getElementById('annotation-canvas');
         if (av) av.style.cursor = '';
-        ['rw-polyline','rw-rectline','rw-brushline','rw-commitpreview'].forEach(id=>{
-          const el = document.getElementById(id); if(el) el.remove();
-        });
-        if (RW._syncRectBtn) RW._syncRectBtn();
-        if (RW._syncToolButtons) RW._syncToolButtons();
       }
     };
 
@@ -138,9 +130,9 @@
     RW.setPanelExpanded(true);
   }
 
-  // The panel is built by rw_install (v2). Schedule retrofit after all modules run.
+  // The panel is built by rw_core.js. Schedule retrofit after all modules run.
   setTimeout(retrofit, 100);
-  // Backup: if setTimeout fires before rw_install, poll
+  // Backup: if setTimeout fires before rw_core, poll
   let tries = 0;
   const poll = setInterval(() => {
     tries++;

@@ -6,41 +6,51 @@
 //
 // Full design history: CLAUDE.md.
 //
-// Load LAST (after rw_elbow.js, needs v32).
+// Load LAST (after rw_core.js, needs vcore).
 (function(){
   const RW = window.__RW;
-  if (!RW || !RW.v32) return 'need v3.2 (rw_elbow.js) first';
+  if (!RW || !RW.vcore) return 'need rw_core.js first';
   if (RW.vcmd) return 'command line already installed';
   RW.vcmd = true;
 
   /* ---------- command table ---------- */
-  // NATIVE-TOOLS-ONLY BRANCH: this table intentionally has no workbench
-  // entries (pick/cut/rect/poly2/.../cycle) — only the host app's own native
-  // tools are reachable from this command line. See CLAUDE.md.
-  //
-  // Each entry is either `btn` (click this id to arm/run it) or `run` (call
-  // directly — for one-shot actions with no dedicated button). `ctl` lists
-  // ids to relocate into the popup; omitted for pure one-shot actions.
-  // `armed` is omitted for tools with no real on/off transition (their popup
-  // just stays open until manually closed). None of that machinery is
-  // exercised by the table below (every entry is `run`-only) but is left
-  // intact — see CLAUDE.md for why.
+  // NATIVE-TOOLS-ONLY BRANCH: no workbench entries — only the host app's own
+  // native tools are reachable from this command line. Every entry is
+  // `run`-only (a one-shot action, no dedicated button); `armed`/`disarm`
+  // support in RW.runCommand below is kept even though nothing here uses it
+  // yet — it's what a future native-tool armed() predicate needs (see the
+  // diagnostic readout below, which is the first step toward that).
 
   // Dispatches a synthetic keydown on `document` for the host app's own
-  // listeners to consume — same idiom already used to make the app relinquish
-  // its own tool (rw_install.js/rw_wallspan.js/rw_elbow.js's synthetic
-  // Escape), generalized to an arbitrary key. Marked `__rwSynthetic` so the
-  // global auto-capture listener below (registered on the same target) never
+  // listeners to consume — same idiom already used elsewhere in this
+  // codebase to make the app relinquish its own tool (a synthetic Escape),
+  // generalized to an arbitrary key. Marked `__rwSynthetic` so the global
+  // auto-capture listener below (registered on the same target) never
   // swallows its own dispatch before the app's real listener sees it.
+  //
+  // Live-diagnostic readout: reports the dispatched key plus
+  // annotationState.currentTool before/after via RW._commitStatus. This is
+  // the open question this branch exists to answer — whether native
+  // dispatch actually reaches the app's own tool-switching listener, and
+  // what the real currentTool strings are (only 'bounding_box' is confirmed
+  // anywhere in this codebase so far).
   RW._cmdDispatchAppKey = function(key){
+    const as = (typeof annotationState !== 'undefined') ? annotationState : null;
+    const before = as ? as.currentTool : undefined;
     const evt = new KeyboardEvent('keydown', {key:key, bubbles:true, cancelable:true});
     evt.__rwSynthetic = true;
     document.dispatchEvent(evt);
+    const after = as ? as.currentTool : undefined;
+    RW._commitStatus && RW._commitStatus(
+      'dispatched "' + key + '" — currentTool: ' + before + ' -> ' + after
+    );
   };
 
   // Draw-mode tool letters dispatch `d` (draw mode) first — defensive, since
   // the app's own keymap documents these as "Tools (draw mode)"; harmless if
-  // they already work from any mode.
+  // they already work from any mode. Not yet live-confirmed whether the `d`
+  // prefix is actually necessary — the diagnostic above is meant to help
+  // settle that on the next live test.
   function nativeDrawTool(key){
     return function(){ RW._cmdDispatchAppKey('d'); RW._cmdDispatchAppKey(key); };
   }
@@ -53,8 +63,8 @@
   RW._cmdTable = [
     // No workbench-command aliases to avoid colliding with anymore, so every
     // native tool gets its own real app-keymap letter (wand=k, pan=a,
-    // select=s, polygon=r) — unlike the full command line, where those four
-    // were reserved for cut/addmode/snap/rect.
+    // select=s, polygon=r) — on the full command-line branch those four were
+    // reserved for workbench cut/addmode/snap/rect.
     { name:'linear',   kind:NATIVE, aliases:['q'],  run: nativeDrawTool('q') },
     { name:'bbox',     kind:NATIVE, aliases:['w'],  run: nativeDrawTool('w') },
     { name:'count',    kind:NATIVE, aliases:['e'],  run: nativeDrawTool('e') },
@@ -65,6 +75,12 @@
     { name:'wand',     kind:NATIVE, aliases:['k'],  run: nativeDrawTool('k') },
     { name:'wrap',     kind:NATIVE, aliases:['x'],  run: nativeDrawTool('x') },
     { name:'void',     kind:NATIVE, aliases:['v'],  run: nativeDrawTool('v') },
+    // Confirmed live via opencli (not in the app-keymap reference doc when
+    // this table was first written): a new native tool, data-tool="ribbon",
+    // key P — click points along a path's centerline, drag to measure a
+    // fixed width, builds a constant-width polygon. Mirrors this project's
+    // own deleted Pipe tool (rw_wallspan.js, master-only) almost exactly.
+    { name:'ribbon',   kind:NATIVE, aliases:['p'],  run: nativeDrawTool('p') },
     { name:'tag1',     kind:NATIVE, aliases:['1'],  run: nativeDrawTool('1') },
     { name:'tag2',     kind:NATIVE, aliases:['2'],  run: nativeDrawTool('2') },
     { name:'tag3',     kind:NATIVE, aliases:['3'],  run: nativeDrawTool('3') },
@@ -130,31 +146,22 @@
     return ranked.map(function(r){ return {tag:r.tag, idx:r.idx}; });
   };
 
-  // Tags at list-index 0-9 are assumed to map to the app's own 1/2/.../9/0
-  // hotkeys in list order — unconfirmed, but if right, dispatching the digit
-  // goes through the app's real tag-selection code (same proven-safe idiom
-  // as the native-tool dispatch above).
+  // Every tag selection goes through direct assignment regardless of
+  // position — a digit-hotkey dispatch path was tried and live-tested WRONG
+  // (a real job showed digit 1 selecting a different tag than the one shown
+  // at list-index 0) and was removed; see CLAUDE.md's command-line round 9.
   RW._cmdSelectTag = function(tag, idx){
-    if (idx != null && idx < 10){
-      const digit = String((idx + 1) % 10);
-      RW._cmdDispatchAppKey(digit);
-      RW._commitStatus && RW._commitStatus('tag: ' + tag.name + ' (via digit ' + digit + ')');
-    } else {
-      RW._cmdSelectTagUnsafe(tag);
-    }
+    RW._cmdSelectTagUnsafe(tag);
   };
 
-  // UNVERIFIED — the one genuinely risky part of tag search. No known safe
-  // mechanism reaches a tag beyond the first 10 without live inspection of
-  // the app's own setter/reactive-state mechanism, so this directly assigns
-  // annotationState's current tag. If the app needs its own setter/dispatch
-  // to notice the change, this can silently desync the app's displayed tag
-  // from what's actually used on commit. Kept isolated and never called for
-  // an index <10 specifically so it's easy to find and replace once the
-  // real mechanism is confirmed live.
+  // Directly assigns annotationState's current tag to the exact object
+  // matched by name. Not fully confirmed live: if the app needs its own
+  // setter/dispatch to notice the change rather than a plain property
+  // write, this can silently desync the app's displayed tag from what's
+  // actually used on commit.
   RW._cmdSelectTagUnsafe = function(tag){
     if (typeof annotationState !== 'undefined') annotationState.currentTag = tag;
-    RW._commitStatus && RW._commitStatus('tag: ' + tag.name + ' (direct assignment — unverified, confirm it actually applied)');
+    RW._commitStatus && RW._commitStatus('tag: ' + tag.name + ' (direct assignment — confirm it actually applied)');
   };
 
   /* ---------- matching ---------- */
@@ -185,152 +192,10 @@
     return null;
   }
 
-  /* ---------- popup: borrow real controls, never duplicate ---------- */
-  let popupEl=null, popupTitleEl=null, popupBodyEl=null;
-
-  function tidyOldParent(oldParent){
-    // If the control's old parent is now left empty (or a .rw-sec wrapper is
-    // now left with only its label), hide it — mirrors rw_panelsections.js's
-    // own empty-section rule — and return how to undo that on restore.
-    if (!oldParent) return null;
-    if (oldParent.classList && oldParent.classList.contains && oldParent.classList.contains('rw-sec')){
-      if (!oldParent.children || oldParent.children.length <= 1){
-        const prev = oldParent.style.display;
-        oldParent.style.display = 'none';
-        return {el: oldParent, prevDisplay: prev};
-      }
-      return null;
-    }
-    if (oldParent.id && oldParent.id.indexOf('rw-sec-') === 0 && (!oldParent.children || oldParent.children.length === 0)){
-      const wrap = oldParent.parentNode;
-      if (wrap){
-        const prev = wrap.style.display;
-        wrap.style.display = 'none';
-        return {el: wrap, prevDisplay: prev};
-      }
-    }
-    return null;
-  }
-
-  function ensurePopupDom(){
-    if (popupEl) return;
-    popupEl = document.createElement('div');
-    popupEl.id = 'rw-cmd-popup';
-    popupEl.style.cssText = 'position:fixed;display:none;z-index:99990;background:#222;color:#eee;'
-      + 'border:1px solid #666;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:100px;';
-    popupEl.addEventListener('mousedown', function(e){ e.stopPropagation(); });
-
-    const header = document.createElement('div');
-    header.id = 'rw-cmd-popup-bar';
-    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;'
-      + 'padding:4px 6px;cursor:move;border-bottom:1px solid rgba(255,255,255,0.15);'
-      + 'font-size:11px;font-weight:bold;user-select:none;';
-    popupTitleEl = document.createElement('span');
-    header.appendChild(popupTitleEl);
-    const closeBtn = document.createElement('button');
-    closeBtn.innerText = '×';
-    closeBtn.title = 'Close (keeps the tool armed)';
-    closeBtn.style.cssText = 'font-size:13px;line-height:1;padding:0 4px;background:none;border:none;color:inherit;cursor:pointer;';
-    closeBtn.onclick = closePopup;
-    header.appendChild(closeBtn);
-    popupEl.appendChild(header);
-
-    popupBodyEl = document.createElement('div');
-    popupBodyEl.id = 'rw-cmd-popup-body';
-    popupBodyEl.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px;';
-    popupEl.appendChild(popupBodyEl);
-
-    document.body.appendChild(popupEl);
-    makeDraggable(header, popupEl);
-  }
-
-  function makeDraggable(handle, target){
-    let dragging=false, offX=0, offY=0;
-    handle.addEventListener('mousedown', function(e){
-      dragging = true;
-      const r = target.getBoundingClientRect();
-      offX = e.clientX - r.left; offY = e.clientY - r.top;
-      e.preventDefault();
-    });
-    document.addEventListener('mousemove', function(e){
-      if (!dragging) return;
-      target.style.left = Math.max(0, e.clientX - offX) + 'px';
-      target.style.top = Math.max(0, e.clientY - offY) + 'px';
-    });
-    document.addEventListener('mouseup', function(){ dragging = false; });
-  }
-
-  function positionPopupDefault(){
-    if (!inputEl) return;
-    const r = inputEl.getBoundingClientRect();
-    const w = popupEl.offsetWidth || 200;
-    let left = r.left - w - 12;
-    if (left < 8) left = r.right + 12;
-    popupEl.style.left = Math.max(8, left) + 'px';
-    popupEl.style.top = Math.max(8, r.top) + 'px';
-  }
-
-  RW._cmdPopupState = null;
-
-  function openPopup(entry){
-    closePopup();
-    if (!entry.ctl || !entry.ctl.length) return;
-    ensurePopupDom();
-    popupTitleEl.innerText = entry.name;
-    const moved = [];
-    entry.ctl.forEach(function(id){
-      const node = document.getElementById(id);
-      if (!node || !node.parentNode) return;
-      const parent = node.parentNode;
-      const nextSibling = node.nextSibling;
-      const prevInlineDisplay = node.style.display;
-      if (prevInlineDisplay === 'none') node.style.display = '';
-      popupBodyEl.appendChild(node);
-      const hiddenWrap = tidyOldParent(parent);
-      moved.push({node:node, parent:parent, nextSibling:nextSibling, prevInlineDisplay:prevInlineDisplay, hiddenWrap:hiddenWrap});
-    });
-    if (!moved.length){
-      const msg = document.createElement('div');
-      msg.style.cssText = 'font-size:11px;opacity:0.7;max-width:180px;';
-      msg.innerText = 'controls unavailable right now — tool is armed; use the panel.';
-      popupBodyEl.appendChild(msg);
-    }
-    popupEl.style.display = 'block';
-    positionPopupDefault();
-
-    const state = { entry:entry, moved:moved, pollId:null, sawArmed: entry.armed ? !!entry.armed() : false };
-    state.pollId = setInterval(function(){
-      if (!RW.enabled){ closePopup(); return; }
-      if (!entry.armed) return;
-      const now = !!entry.armed();
-      if (now) state.sawArmed = true;
-      if (state.sawArmed && !now) closePopup();
-    }, 250);
-    RW._cmdPopupState = state;
-  }
-
-  function closePopup(){
-    const st = RW._cmdPopupState;
-    if (!st) return;
-    if (st.pollId) clearInterval(st.pollId);
-    for (let i = st.moved.length - 1; i >= 0; i--){
-      const m = st.moved[i];
-      m.parent.insertBefore(m.node, m.nextSibling);
-      m.node.style.display = m.prevInlineDisplay;
-      if (m.hiddenWrap) m.hiddenWrap.el.style.display = m.hiddenWrap.prevDisplay;
-    }
-    if (popupEl) popupEl.style.display = 'none';
-    RW._cmdPopupState = null;
-  }
-
-  RW._cmdOpenPopup = openPopup;
-  RW._cmdClosePopup = closePopup;
-
   /* ---------- run a command ---------- */
-  // Re-running an already-armed tool's command toggles it off (mirrors how
-  // the original single-key shortcuts worked). Most tools' own buttons
-  // already toggle on click; `disarm` on a table entry overrides that for
-  // the two that don't (cut, walls — see the table above).
+  // Every entry today is `run`-only (switching the app's own tool isn't an
+  // on/off concept the way arming a workbench tool was) — `armed`/`disarm`
+  // support is kept for a future native armed() pass, not exercised yet.
   RW.runCommand = function(name){
     const entry = findEntry(name);
     if (!entry){ RW._commitStatus && RW._commitStatus('unknown command: ' + name); return false; }
@@ -343,11 +208,9 @@
     const wasArmed = entry.armed ? !!entry.armed() : false;
     if (wasArmed){
       if (entry.disarm) entry.disarm(); else btn.click();
-      closePopup();
       return true;
     }
     btn.click();
-    if (entry.ctl && entry.ctl.length) openPopup(entry);
     return true;
   };
 
@@ -374,7 +237,7 @@
 
   // Text color only (never the row background, which the keyboard-highlight
   // already uses) so kind stays legible regardless of which row is selected.
-  const KIND_COLOR = { workbench: '#7ec8e3', native: '#a8e6a3' };
+  const KIND_COLOR = { native: '#a8e6a3' };
   const TAG_COLOR = '#e0c3fc';
 
   function renderMenuRows(){
@@ -386,7 +249,7 @@
       row.className = 'rw-cmd-item';
       let label, color;
       if (menuMode === 'tag'){
-        label = item.tag.name + (item.idx < 10 ? ' (' + ((item.idx + 1) % 10) + ')' : '');
+        label = item.tag.name; // no hotkey-number hint — that mapping was removed as confirmed wrong
         color = TAG_COLOR;
       } else {
         label = item.name + ((item.aliases && item.aliases.length) ? (' (' + item.aliases.join(',') + ')') : '');
@@ -445,10 +308,14 @@
       }
       return;
     }
-    if (e.key === 'Enter' || (e.key === ' ' && menuMode === 'command')){
-      // Space is AutoCAD's classic alternative to Enter for running a
-      // command — scoped to command mode only, since a tag name (unlike a
-      // command name) can legitimately contain a space to keep typing.
+    if (e.key === 'Enter' || e.key === ' '){
+      // Space is AutoCAD's classic alternative to Enter for confirming
+      // whatever's highlighted — commands and tags alike. Always consumed
+      // (never falls through to a literal space). Accepted trade-off: once
+      // any tag matches (menuHighlight >= 0), Space confirms the top-ranked
+      // one immediately — so two tags sharing a first word (e.g. "Room
+      // A"/"Room B") can't be disambiguated by typing a space; use the
+      // arrow keys or keep typing without one.
       e.preventDefault(); e.stopPropagation();
       let item = null;
       if (menuHighlight >= 0 && menuItems[menuHighlight]) item = menuItems[menuHighlight];
@@ -470,9 +337,10 @@
 
   function mountCommandBar(){
     if (document.getElementById('rw-cmd-row')) return;
-    const sections = document.getElementById('rw-sections');
+    // No #rw-sections on this branch (rw_panelsections.js is gone) — anchor
+    // on #rw-list, created by rw_core.js.
     const list = document.getElementById('rw-list');
-    const host = sections ? sections.parentNode : (list && list.parentNode);
+    const host = list && list.parentNode;
     if (!host) return;
     barEl = document.createElement('div');
     barEl.id = 'rw-cmd-row';
@@ -486,10 +354,10 @@
     inputEl.type = 'text';
     inputEl.autocomplete = 'off';
     inputEl.spellcheck = false;
-    inputEl.placeholder = 'command… (pipe, elbow, rect…) or #tag — just start typing';
+    inputEl.placeholder = 'native tool (linear, bbox, pan…) or #tag — just start typing';
     inputEl.style.cssText = 'flex:1;font-size:11px;padding:2px 4px;';
     barEl.appendChild(inputEl);
-    host.insertBefore(barEl, sections || list);
+    host.insertBefore(barEl, list);
 
     inputEl.addEventListener('input', onInput);
     inputEl.addEventListener('keydown', onInputKeydown);
@@ -523,6 +391,6 @@
     onInput();
   }, true);
 
-  return 'vcmd up: command line — just start typing a tool name (or # for a tag), '
+  return 'vcmd up: command line (native tools only) — just start typing a tool name (or # for a tag), '
     + RW._cmdTable.length + ' commands, ' + (RW._cmdTagList ? RW._cmdTagList.length + ' tags' : 'no tags detected');
 })()

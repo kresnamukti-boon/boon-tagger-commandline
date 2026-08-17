@@ -1,64 +1,33 @@
-# Boon Tagger Tools
+# Boon Tagger Tools — Command Line (native-tools-only)
 
-Client-side workflow enhancers for the Constructions Tagger annotation platform
+Client-side workflow enhancer for the Constructions Tagger annotation platform
 (constructions-tagger-web.onrender.com). Pasted into the DevTools console of the live
 annotation page — no server, no build step, nothing persists until you click the app's own
 **Save**. Everything lives in the page until reload/navigation, then must be re-injected.
 
-Two loader builds: the everyday **`console_loader.js`** (built by `build_loader.sh`), and an
-opt-in **`console_loader_ocr.js`** (built by `build_loader_ocr.sh`) that additionally bundles
-`rw_ocr.js` — see "OCR-assisted reference naming" below. The everyday loader never includes it,
-so annotators who don't need it stay on a smaller, fully offline script.
+**This branch is a stripped-down development sandbox for the AutoCAD-style command line only.**
+The full Region Workbench (region segmentation, mask tools, undo, Commit, Pipe, Elbow, OCR, …)
+lives on `master` — this branch deletes all of it so the command line's native-app-tool dispatch
+and tag search can be iterated on without dragging in ~240KB of unrelated tooling on every paste.
+If you need any deleted module back, `git checkout master -- <file>` recovers it (or check out
+`master` itself for the full build).
 
 ## Files & load order
 
-Each module is a versioned IIFE gated on the previous module's version flag, so this order is
-load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in order.
+Each module is a versioned IIFE gated on the previous module's version flag. `console_loader.js`
+(built by `build_loader.sh`) concatenates all three, in order:
 
-1. **rw_panelux.js** — loads first, before anything else exists. Collapsible panel UI, and the
-   **RW: ON/OFF** master killswitch that gates every handler the later modules register.
-2. **rw_install.js** — core region engine. Flood-fills the drawing canvas into wall/background,
-   labels enclosed areas as candidate regions, region list panel, **Pick** mode, **Merge**/**Cut**.
-3. **rw_masktools.js** — unified **Rect** mask tool (block/open/add, see below), the global area
-   floor input + **Relabel** button, the **Walls** diagnostic overlay, live area hint while
-   dragging.
-4. **rw_stable.js** — pan/zoom-stable preview rendering; no user-facing controls of its own.
-5. **rw_undo.js** — snapshot undo stack (backtick) shared by every mask edit, plus poly vertex
-   undo (Backspace).
-6. **rw_commit.js** — **Commit** button: traces selected region contours, smooths them, and
-   stages them as real pending annotations through the app's own `annotationState`/`editHistory`.
-   The only module that writes annotation state.
-7. **rw_healinterior.js** — **Heal Interior?** / **Apply Heal** / **Edit Heal (Brush)** for
-   cleaning text/hatch noise out of a selected region before committing it (see below).
-8. **rw_brushpoly.js** — **Poly2** (freeform vertex) and **Brush** (freehand stroke) mask tools;
-   owns the **Add ⊕** toggle.
-9. **rw_snap.js** — Poly2 vertex snapping to line endpoints/junctions and region outlines (see
-   below); **Snap On/Off** panel toggle.
-10. **rw_textdetect.js** — **Text? (density)** whole-page detection-only overlay (see below).
-    Currently hidden in the panel along with **Relabel** and **Add ⊕** (not removed — see
-    "Hidden controls" below).
-11. **rw_wallspan.js** — **Pipe** / **Trace** / **Commit Pipe** for annotating piping
-    centerlines as a fixed-width path (see below) — deliberately doesn't trace pixels, since the
-    rest of the toolset only handles enclosed areas and pixel-tracing a pipe's actual linework
-    turned out to be too fragile against text/fittings crossing the line.
-12. **rw_panelsections.js** — reorganizes the panel into labelled sections (REGIONS / MASK TOOLS /
-    HEAL / PIPE / FITTINGS / VIEW) by relocating every earlier module's controls by id; purely
-    cosmetic, no tool behavior changes. Must load after every module above (so their controls
-    already exist to move) and before **rw_elbow.js** (so it can mount into the FITTINGS section).
-13. **rw_elbow.js** — **Elbow** / **Commit Elbow** for annotating elbow pipe fittings: drag a
-    box (or click-click-click + double-click a tighter polygon region) around the fitting and it
-    traces the real drawn linework inside it (see below).
-14. **rw_cmdline.js** — the always-visible command-line input (see "Keymap (workbench)" below).
-    **On this branch (`feature/native-tools-only`), it only dispatches the host app's own native
-    tools** — no workbench command is in its table. Replaces the tool-arming single-key shortcuts
-    (which are gone regardless of branch).
-15. **rw_ocr.js** — *OCR loader variant only, not in `console_loader.js`.* Adds an OCR button to
-    the app's own reference-naming dialog (see "OCR-assisted reference naming" below).
+1. **rw_panelux.js** — loads first. Collapsible panel UI, and the **RW: ON/OFF** master
+   killswitch that gates every handler the later modules register (including the command line's
+   own global keystroke capture).
+2. **rw_core.js** — minimal bootstrap replacing `rw_install.js`'s scaffolding on this branch:
+   creates `window.__RW`, a bare `#rw-panel`/`#rw-list` for the command line to mount into, and
+   `RW._commitStatus` for its status-line messages. No region/mask/annotation engine at all.
+3. **rw_cmdline.js** — the command line itself (see "Command line" below).
 
-**To rebuild** after editing any `rw_*.js` source module:
+**To rebuild** after editing a source module:
 ```bash
-bash build_loader.sh          # console_loader.js
-bash build_loader_ocr.sh      # console_loader_ocr.js (OCR variant)
+bash build_loader.sh
 ```
 
 ## Injection
@@ -66,307 +35,95 @@ bash build_loader_ocr.sh      # console_loader_ocr.js (OCR variant)
 1. Navigate to the Constructions Tagger annotation page.
 2. Press **F12** → **Console** tab.
 3. Paste the entire contents of `console_loader.js`, press **Enter**.
-4. The workbench installs automatically once the page canvas is ready (up to ~30s).
+4. The command line installs automatically once the page canvas is ready (up to ~30s).
 
-Paste again after each page navigation — nothing persists server-side until you manually click
-**Save** in the app.
+Paste again after each page navigation.
 
-Working in reference mode (`?mode=reference`) and want OCR-assisted naming? Paste
-`console_loader_ocr.js` instead of `console_loader.js` — same steps otherwise.
-
-## Mask action modes (Rect / Poly2 / Brush)
-
-Every mask tool shares one 3-state action, shown as a symbol on its button (`−`/`+`/`⊕`):
-
-| State | Effect |
-|---|---|
-| **block** (default) | paint wall — add a split inside an existing enclosed area |
-| **open** | erase wall — heal a false split |
-| **add** | carve a brand-new region out of empty whitespace |
-
-The `addmode` command toggles block↔add for whichever tool is armed; the `cycle` command steps
-through all three states (block → open → add → block).
-
-## Keymap (workbench)
-
-**This branch (`feature/native-tools-only`) is a trimmed variant**: the command line
-(`rw_cmdline.js`) only knows the host app's own native tools — no workbench command (Pick, Cut,
-Rect, Poly2, Brush, Heal, Pipe, Elbow, Walls, Snap, Text, Add-mode, Relabel, mask-action Cycle)
-is typeable here. Those tools still exist and work exactly as before — every earlier round
-already removed their single-key shortcuts — **so on this branch the only way to arm a workbench
-tool is clicking its panel button directly.** Use the `feature/command-line-tool-activator`
-branch instead if you want both workbench and native tools reachable from the command line.
+## Command line
 
 **Just start typing a native tool's name from anywhere**, no click or focus step needed (like
 AutoCAD's command line): the first character you type auto-focuses the always-visible input at
 the top of the panel and seeds it, an autocomplete dropdown suggests matches as you keep typing
-(light green), and Enter or **Space** (AutoCAD's own classic shortcut for running a command — a
-unique match also just works) dispatches it to the app. Space is only a shortcut for commands —
-while searching a tag (`#name`) it types a literal space instead, so a multi-word tag name still
-works; use Enter to confirm a tag. Utility keys that act on an already-armed *workbench* tool are
-unchanged (unaffected by this branch's trim):
-
-| Key | Action |
-|---|---|
-| Shift (hold, placing a Poly2 vertex) | bypass vertex snap for that click |
-| `` ` `` (backtick) | undo last mask edit (block/open/poly/brush/cut/merge/heal) |
-| `Escape` | cancel current workbench mode / clear in-progress poly vertices, or blur the command input |
-| `Tab` (hold, Brush/Heal Brush armed) | scroll to resize the brush radius |
+(light green), and **Enter or Space** dispatches it to the app — both act identically, AutoCAD's
+own classic convention, and both work the same way whether you're confirming a command or a
+searched tag (see below).
 
 **Because typing is captured from anywhere, it takes over the host app's own single-key
 shortcuts while you're mid-command** — to press an app shortcut key directly again, blur the
 command input first (Escape, or click the canvas). **To turn the command line off entirely**,
 use the panel's own **RW: ON/OFF** killswitch — it stops the global typing-capture along with
-every other workbench listener.
+every other listener this branch registers.
 
-**Native app tool vocabulary** (dispatched to the host app itself, not this workbench — see "App
-built-in keymap" below for what each one does): draw-mode tools `linear` (`q`), `bbox` (`w`),
-`count` (`e`), `polygon` (`r`), `polyline` (`t`), `circle` (`y`), `cloud` (`u`), `wand` (`k`),
-`wrap` (`x`), `void` (`v`), `tag1`-`tag9`/`tag0` (digits); mode switches `pan` (`a`), `select`
-(`s`), `draw` (`d`), `label` (`f`), `crop` (`g`), `mirror` (`m`). Every native tool keeps its real
-app-keymap letter here — the full command line reserves `k`/`a`/`s`/`r` for workbench commands
-that don't exist on this branch, so `wand`/`pan`/`select`/`polygon` get them back. Draw-mode tool
-commands dispatch a defensive `d`
-(enter draw mode) immediately before their own letter, since the app's keymap documents them as
-draw-mode-only tools — **not live-verified whether that's actually required**.
+**Native app tool vocabulary** (dispatched to the host app itself — see "App built-in keymap"
+below for what each one does): draw-mode tools `linear` (`q`), `bbox` (`w`), `count` (`e`),
+`polygon` (`r`), `polyline` (`t`), `circle` (`y`), `cloud` (`u`), `wand` (`k`), `wrap` (`x`),
+`void` (`v`), `ribbon` (`p`), `tag1`-`tag9`/`tag0` (digits); mode switches `pan` (`a`), `select` (`s`), `draw`
+(`d`), `label` (`f`), `crop` (`g`), `mirror` (`m`). Every native tool keeps its real app-keymap
+letter as its alias — with no workbench commands left on this branch to collide with, nothing is
+reserved. **`tag1`…`tag0` dispatch the app's own digit keys directly — they do not mean "the Nth
+tag in the detected list."** That distinction matters: a real job showed the app's digit hotkeys
+do **not** map to `#`-search tag-list order (see tag search below) — `tag1`…`tag0` are a
+completely separate mechanism from selecting a searched tag.
+
+Draw-mode tool commands dispatch a defensive `d` (enter draw mode) immediately before their own
+letter, since the app's keymap documents them as draw-mode-only tools — **not live-verified
+whether that's actually required.** Every dispatch reports a live diagnostic to the status line:
+the key sent, plus `annotationState.currentTool` before and after — read it after running a
+native command to see whether the dispatch actually landed, and to learn the app's real
+`currentTool` strings (only `'bounding_box'` was previously confirmed anywhere in this codebase).
 
 **Tag search: type `#` followed by a tag name** (e.g. `#conference`) to search the app's full tag
 list, shown in the same dropdown color-coded in purple. The tag list is auto-detected from
-`annotationState` when the workbench loads — if detection fails, `#` search reports that in the
-status line rather than silently doing nothing. Selecting one of the first 10 tags dispatches the
-app's own 1-9/0 hotkey (assumed to match the tag's position in the detected list); selecting a
-tag beyond that falls back to directly assigning `annotationState.currentTag` — **not
-live-verified**, this is the one part of tag search that might not actually stick in the app's
-own UI, since it bypasses whatever setter the app may expect. Watch the status line after
-selecting: it always says which of the two mechanisms fired.
+`annotationState` when the command line loads — if detection fails, `#` search reports that in
+the status line rather than silently doing nothing. **Selecting a tag always directly assigns
+`annotationState.currentTag`**, regardless of its position in the list — an earlier version
+dispatched the app's own 1-9/0 hotkey for the first 10 tags, assuming hotkey order matched the
+detected list's order; a real job proved that assumption **wrong** (digit 1 selected a
+completely different tag than the one shown at list-index 0), so that path was removed entirely.
+Direct assignment is not fully confirmed live either — if the app needs its own setter/dispatch
+to notice the change, this can silently desync the app's displayed tag from what's actually used
+on commit. Watch the status line: it always says "confirm it actually applied."
 
-### Heal Interior (`rw_healinterior.js`)
+**Utility keys:**
 
-Scoped to the current Pick-mode **selection**, not the whole page — cleans up text/hatch/
-dimension-mark noise inside a region before you commit it:
+| Key | Action |
+|---|---|
+| `Escape` | clear the command input, or close the autocomplete dropdown if it's open |
+| `ArrowUp`/`ArrowDown` | move the autocomplete highlight |
+| `Tab` | fill the input with the highlighted match without running it |
 
-- **Heal Interior?** previews which wall pixels in the selection are safe to erase without
-  merging into a neighboring region or an existing annotation.
-- **Apply Heal** commits the preview (undo-tracked, like other mask edits).
-- **Edit Heal (Brush)** manually corrects the preview: drag to mark more area as noise,
-  Shift+drag to protect/un-mark an area the detector got wrong. Tab+scroll resizes the brush.
-- `hole≤` tunes how big a neighboring non-included area can be before it's protected as a real
-  feature rather than treated as negligible noise.
-- `barrier≥` protects a thick boundary line from being partially eaten through its middle —
-  **set it to roughly the line's full pixel thickness, not half.** Protection only expands
-  inward from the line's outer face (the side facing a different region/exterior/annotation),
-  never from the side facing the selected region's own interior.
-
-### Poly2 vertex snapping (`rw_snap.js`)
-
-Poly2 vertices snap to line endpoints/junctions detected on the drawing, and to any point along
-an already-included region's outline (so a vertex can slide along a boundary's length, not just
-its corners). Hold Shift to bypass for one click; **Snap On/Off** toggles both globally.
-
-### Text? (density) (`rw_textdetect.js`)
-
-Whole-page, detection-only overlay highlighting areas where line-endpoint/junction candidates
-cluster more densely than real linework does (text glyphs are small and stroke-heavy). Never
-edits the mask — a manual-review aid only. `cell`/`min` inputs tune sensitivity live.
-
-### Pipe annotation (`rw_wallspan.js`)
-
-For piping-centerline drawings. Deliberately does **not** trace the drawing's actual pixels —
-early versions did, but pipes are routinely interrupted by text labels crossing them, leader
-lines, and fitting symbols, and no amount of pixel-analysis tuning fully survives that. Instead:
-
-- **Click** points along the pipe's visible centerline (or one edge — see **Anchor** below) — first
-  click is the start, each next click is a bend — the same way the existing Poly2 tool places
-  vertices. Snapping here is **pipe-only**: a click snaps to another pipe (this session's or
-  already committed), never to generic wall/region geometry — Shift bypasses it for one click.
-- **Anchor** (panel button, cycles Center → Edge A → Edge B → Center): what your click represents.
-  Center (default) splits the width evenly to each side, same as always. Edge A/Edge B put the
-  click on one rail instead, with the full width to the other side — useful for tracing along one
-  visible edge of a thick drawn line instead of its centerline, which often isn't marked at all.
-  Which side is "A" vs "B" depends on your click direction, not a fixed screen side. Applies to the
-  path you're drawing now; each finished segment keeps the anchor it had when finished, and a chain
-  of connected segments must all share the same anchor to merge as one vector path (mirroring the
-  existing same-width requirement) — a mismatch just falls back to the raster merge instead.
-- **Double-click** finishes the path — and immediately starts the next one, so you can keep
-  drawing. `Backspace` drops the last point of the path you're currently drawing. `Escape` steps
-  back one stage at a time: clears the in-progress path, then discards any finished-but-uncommitted
-  segments, then exits Pipe mode.
-- **Branching/connecting**: click a point on or near an already-finished pipe (this session's, or
-  one already committed on the page) and it snaps onto that pipe — a white/magenta ring marks the
-  hit, with a cross for an end-to-end connection or a dot for a mid-span tee. Every pipe offers its
-  centerline **and both of its edges** as separate snap targets, regardless of what anchor it was
-  originally drawn with, so a click lands on whichever of the three is actually closest — click
-  near an edge to branch off that edge, or near the middle to branch off the centerline. This works
-  even before you've clicked Commit Pipe. This pipe-to-pipe snap is the *only* snap in Pipe mode
-  (see above) — it's what makes branching reliable without also picking up an unrelated wall or
-  region edge nearby.
-- **Commit Pipe stages every finished segment from the session in one batch** — draw a main pipe
-  plus any branches, then one click stages them (button label shows the resulting annotation
-  count, e.g. `Commit 3 Pipes`). Each segment keeps the width it had when you finished it, so a
-  branch can be a different diameter — there's no way to re-measure a segment's width after
-  finishing it; discard it (Escape) and redraw if it's wrong.
-- **Segments connected by snapping merge into one combined polygon** instead of staying separate
-  shapes — draw a main pipe, then a branch that snaps onto it (mid-span tee or end-to-end), and
-  Commit Pipe (and Trace) produce a single polygon covering the true outline of both. This only
-  applies to this session's unstaged segments; connecting to a pipe already committed from an
-  earlier action still snaps precisely but never rewrites that existing annotation. How the merge
-  is built depends on the shape of the connection:
-  - A **simple end-to-end chain** (every connection is tip-to-tip, no branch tee-ing onto another
-    segment's side) merges as a single continuous vector path — no rasterizing at all. Its notes
-    stay the ordinary `pipe width: 15.00 px — 3 segments joined` form, so — unlike a raster
-    merge — it's still a fully valid snap target in a future session, branchable exactly like a
-    plain unmerged pipe.
-  - Any **mid-span tee** (a branch attaching to the side of another pipe, not its tip) merges via
-    a raster-union-and-retrace instead. Its notes record the segment/width breakdown (`pipe run:
-    3 segments merged, widths 10.00, 12.00 px — branched outline, centerline not recoverable`) and
-    it can't be used as a snap target again in a future session. A tee attaching at an angle has
-    its connecting end automatically extended a bit before rasterizing, so the two shapes actually
-    overlap at the joint instead of leaving a small wedge-shaped gap — this happens on its own, no
-    button or setting to turn it on.
-
-  If a fitting's real linework is two separate strokes that don't actually connect after merging,
-  the tool falls back to committing each segment separately rather than guessing.
-- **Drag** anywhere (a real drag, not a click) measures the **width**: just the on-screen
-  distance you drag, converted to a fixed value — drag across the pipe's drawn thickness once
-  to set it, or type a value directly into the `width` panel input. It stays set across
-  multiple pipes until you drag again or edit it, and this is a plain distance measurement, not
-  anything read off the drawing's pixels. While dragging, a live **dimension line** follows the
-  cursor — perpendicular end ticks plus a labeled width readout — so the measured value is
-  visible right on the drawing, not just in the panel status line. It's a live-only preview:
-  nothing is committed or persists once you release.
-- The tool then builds a constant-width ribbon along your clicked path — crossing a text label
-  or a fitting symbol never changes its direction or width, since nothing about it depends on
-  what's actually drawn in between the points you clicked.
-- **Trace** previews the exact polygon(s) that Commit Pipe would stage — connected segments show
-  as one merged outline — reusing the same commit pipeline every other tool uses (no new
-  annotation type).
-- Every bend along the path gets the same simple mitered/beveled corner, regardless of whether
-  it's a slight direction change or a real elbow fitting — elbow fittings get their own
-  **dedicated tool** instead (`L`, see "Elbow fitting" below), not a special vertex flag here. An
-  earlier version of this tool had a middle-click-to-flag-an-elbow feature built in; it's been
-  moved out, not deleted — see "Elbow fitting" below and `CLAUDE.md` for why.
-- The measured width is recorded in the pipe's own **notes** field (e.g. `pipe width: 15.00 px`)
-  — visible by selecting the annotation and checking its data panel. (An earlier version staged
-  a second small "dimension line" tick **annotation** alongside the ribbon for this at commit
-  time; live testing found it didn't read as a dimension line at all — just an unlabeled,
-  disconnected box — so it was dropped. The dimension line described above is different in kind:
-  a live-only overlay shown while you drag, never a committed shape. See `CLAUDE.md` for the full
-  account of both.)
-- The `width` panel input shows real decimal precision (e.g. `0.63`), not rounded to a whole
-  number — a genuinely sub-1px measurement no longer looks like the drag failed.
-- No undo for a committed pipe specifically (only pre-commit: Escape/Backspace both work) — to
-  remove a staged pipe, select it in the app and press Delete before you Save.
-- **Editable length, pre-commit**: a small white/orange handle appears at any *free* (unconnected)
-  end of a finished-but-uncommitted segment — drag it to extend or shorten that segment, live. A
-  *joint* between two connected segments has no handle and can't be dragged; only a segment's own
-  loose end is adjustable this way. A plain click on that same spot still behaves exactly as
-  before (starts a new branch there) — only an actual drag reshapes the existing segment.
-
-### Elbow fitting (`rw_elbow.js`)
-
-A dedicated tool for annotating elbow pipe fittings — separate from the Pipe tool above, so a
-plain bend in a pipe's path stays a plain mitered corner, and only an elbow you actually box gets
-special handling.
-
-- Click the **Elbow** panel button to arm the tool (on this branch — the full command line's
-  `elbow`/`el`/`l` also works there), then either **drag a box**
-  around the elbow fitting (a real drag,
-  not a click — same 5px threshold every other drag tool uses), or **click a series of points and
-  double-click to close** a tighter polygon region — useful when a rectangle would inevitably
-  sweep in unrelated nearby linework.
-- The tool reads the **actual drawn linework pixels** inside that box/region (not a shape inferred
-  from where you dragged) at a higher resolution than the page's own mask (`res`), traces the
-  **exact** pixel-grid boundary, then collapses any staircased diagonal or curved run into clean
-  straight chords (Douglas-Peucker) — a real 90° corner stays sharp while only the staircase around
-  it collapses. The traced shape is always clamped to stay **inside** the box/region.
-- If the box/region contains more than one disconnected piece of linework, only the piece with the
-  **most pixels** is traced and committed — not a merged/bridged union. If your fitting's real
-  linework is genuinely two separate strokes (e.g. a double-line pipe wall), use a tighter color
-  pick/tolerance so both strokes read as one connected piece, or draw a polygon region that
-  excludes the piece you don't want.
-- **`pts`** sets a target vertex count for the traced output polygon (`0` = auto).
-- **Pick Color** / **Clear Color**: by default, detection uses a flat "how dark is this pixel"
-  threshold. Click **Pick Color**, then click the fitting's actual ink, and detection switches to
-  matching THAT color instead (within **`tol`**) — replaces the darkness test entirely, the
-  **primary** control over what counts as ink. **Clear Color** goes back to the darkness threshold.
-  (Only works against a live canvas — falls back to the darkness threshold if detection has to use
-  the page's own coarser mask.)
-- **`min px`**: minimum pixel-count for a piece to be a candidate at all — raise it to ignore a
-  stray speck near the fitting; if every piece in the box/region is below this floor, detection
-  refuses. **`width`**: enter the fitting's approximate line thickness (mask px) to seed `min px`
-  from it. Defaults: `tol` 100, `min px` 1, `res` 100, `pts` 24, `width` 2.
-- Once a box/region is drawn, **drag any corner (box) or vertex (region)** to reshape it — the
-  outline and handles update immediately as you drag, and the traced highlight re-detects live
-  (debounced) without needing to redraw from scratch.
-- **`sub ann`** (on by default) excludes already-committed annotations from the detection.
-- **Px?** cycles a debug overlay: source (thresholded, before piece-selection) → selected (the
-  piece that gets traced/committed) → off.
-- **Commit Elbow** stages the traced polygon; the active tunables are recorded in its notes.
-- `Escape` backs out one step at a time: cancels an in-progress region first, then clears a
-  committed box/region/trace, then exits the tool.
-- History (rejected approaches, an in-pipe predecessor, a removed `fuse`/`hug`/`shrink` pipeline):
-  see `CLAUDE.md`.
-
-### OCR-assisted reference naming (`rw_ocr.js`, OCR loader variant only)
-
-In the app's own reference mode (`?mode=reference`), reads the printed text inside a drawn
-reference box and pre-fills the naming dialog's Name field — in-browser via Tesseract.js
-(CDN-loaded on first use, nothing else leaves the browser), never auto-submitted.
-
-- Ships only in `console_loader_ocr.js` — never bundled into the everyday `console_loader.js`.
-- An **OCR** button appears next to the Name field once you draw a *new* reference box (not when
-  editing an existing reference's name). Click it to recognize text in the active box and fill
-  the Name field with the longest recognized line; the field always stays fully editable.
-- **OCR Box** hides the dialog so you can drag a second, tighter box directly on the drawing —
-  useful when the reference box itself has to be bigger than just the text. The dialog reopens
-  automatically once you finish the drag; **Escape** cancels the drag without losing a box you'd
-  already captured. This custom box sticks across repeat OCR clicks until you click **Clear
-  Box**, redraw it, or draw a brand-new reference box (which retires it automatically).
-- First OCR click on a page downloads Tesseract.js from a CDN — cached for the rest of the page
-  session after that. If the page's CSP blocks it, the status line says so and names the
-  console override (`RW._ocrTesseractSrc`) to repoint it.
-- Never submits automatically — always review or edit the suggested name before clicking the
-  app's own Save.
-
-### Panel layout
-
-The panel is organized into labelled sections — **REGIONS**, **MASK TOOLS**, **HEAL**, **PIPE**,
-**FITTINGS**, **VIEW** — instead of one long unlabeled row of buttons. This is purely visual
-(`rw_panelsections.js` relocates every other module's existing controls by id after they load);
-no tool's behavior changes because of it.
-
-### Hidden controls
-
-**Relabel**, **Add ⊕**, and **Text? (density)** are currently hidden in the panel (not removed —
-the underlying features still work; on the full command-line branch they're also reachable via
-its `relabel`/`addmode`/`text` entries, not available on this native-tools-only branch) since
-they weren't useful for current annotation work. Ask if you want any of these visible again.
+The only annotation-state write anywhere in this build is `annotationState.currentTag` (tag
+selection, above) — nothing here stages annotations, drawings, or edits of any kind.
 
 ## App built-in keymap (reference, extracted from their JS)
 
+**This is the single most load-bearing reference on this branch** — every native command in
+`RW._cmdTable` is a 1:1 mapping onto these letters. Extracted from the app's own JS; **it drifts
+— confirmed live** (see below), so re-verify against a real page (`document.querySelectorAll
+('[data-tool]')`, and `annotationState.reservedKeys` for the full reserved-letter list) before
+trusting this table blindly.
+
+```
 Modes: A pan, S select, D draw, F label, G crop, M mirror
 Tools (draw mode): Q linear, W bounding box, E count, R polygon, T polyline, Y circle, U revision cloud
-K magic wand (tolerance/detail sliders), X wrap, V void mode, 1-9/0 tag select+draw, Space temp pan
+K magic wand (tolerance/detail sliders), X wrap (shrink-wrap), V void mode, P ribbon
+(constant-width path — click centerline points, drag to measure width; added to the app after
+this table was first written, confirmed live), 1-9/0 tag select+draw, Space temp pan
 Ctrl/Cmd +/-/0 zoom, Ctrl+scroll zoom
 Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo
 Delete/Backspace delete selected, Ctrl+C/V copy/paste, Ctrl+Shift+V mirror paste
 Double-click finishes polygon/polyline
 Arrows nudge selection 1px, Shift+arrows 10px
+```
 
-**Historical note:** the workbench used to bind Cut mode to **K** and the wall overlay to **O**
-directly, and briefly had to route around the resulting collision with the app's own **K = Magic
-Wand** shortcut (the workbench's capture-phase, `stopPropagation()`-calling listener fully
-shadowed it). Tools are now armed via the command line instead of single letter keys, so that
-*specific* collision is gone — but the command line's own global auto-capture (see "Keymap
-(workbench)" above) means the app's native single-key shortcuts are unreachable directly while
-you're mid-command anyway; blur the command input (Escape, or click the canvas) to use one
-directly. The app's shortcuts are only "unaffected" in the sense that nothing in the workbench
-permanently disables them the way the old K/W collisions did.
+**A structural note on shadowing**: any workbench listener registered in the capture phase with
+`stopPropagation()` fully shadows the app's own same-key shortcut — this is how the command
+line's global auto-capture works (it must consume a keystroke before the app's own listener sees
+it, or dispatch it there itself via a marked synthetic event). Blurring the command input is the
+only way to reach an app shortcut directly while this build is loaded.
 
 ## Boundaries
 
-- Nothing auto-draws or auto-submits annotations. All output is staged through
-  the app's own event handlers as unsaved edits; Save is always manual.
+- Nothing auto-draws or auto-submits annotations.
 - The activity tracker (`/analytics/api/events/`) is read-only observed, never spoofed.
-- This is a bridge tool, not a replacement for engineering review — it stages candidate work
-  inside the app's existing Save/EditHistory flow, nothing more.
+- This is a bridge tool, not a replacement for engineering review.

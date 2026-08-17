@@ -5,9 +5,9 @@
 // (keydown/click/input) rather than only calling exposed functions directly.
 //
 // This branch's RW._cmdTable has no workbench entries (no `btn`/`ctl`/
-// `armed`/`disarm`, no popup borrow/restore) — every entry is a `run`-only
-// dispatch to the host app. Tests specific to the full command line's
-// workbench-arming/popup machinery were removed accordingly; see CLAUDE.md.
+// popup borrow/restore) — every entry is a `run`-only dispatch to the host
+// app. Tests specific to the full command line's workbench-arming/popup
+// machinery were removed accordingly; see CLAUDE.md.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -127,31 +127,27 @@ function makeStubWindow(){
 
   const win = { document: documentStub };
   win.__RW = {
-    v32: true,
+    vcore: true,
     enabled: true,
     _commitStatus(msg){ this._lastStatus = msg; }
   };
 
-  // Only #rw-sections/#rw-list are needed now — mountCommandBar's anchor.
-  // No workbench buttons/sections to build: every table entry on this
-  // branch is `run`-only (no `btn`/`ctl`), so the popup/borrow machinery is
-  // never exercised by any real command.
-  const sections = makeElement('div', byId);
-  sections.id = 'rw-sections';
-  byId['rw-sections'] = sections;
+  // Only #rw-list is needed now — mountCommandBar's anchor (rw_core.js
+  // creates it; rw_panelsections.js and its #rw-sections are gone on this
+  // branch). No workbench buttons/sections to build: every table entry is
+  // `run`-only.
   const list = makeElement('div', byId);
   list.id = 'rw-list';
   byId['rw-list'] = list;
   const panelBody = makeElement('div', byId);
-  panelBody.appendChild(sections);
   panelBody.appendChild(list);
 
-  return { win, doc: documentStub, byId, sections, list };
+  return { win, doc: documentStub, byId, list };
 }
 
 // Node has no KeyboardEvent global; rw_cmdline.js's real dispatch code (the
-// same `new KeyboardEvent('keydown', {...})` idiom rw_install.js/etc. already
-// use to make the app relinquish its own tool) needs one to run for real.
+// same `new KeyboardEvent('keydown', {...})` idiom used elsewhere in this
+// codebase to make the app relinquish its own tool) needs one to run for real.
 function FakeKeyboardEvent(type, init){
   Object.assign(this, init || {});
   this.type = type;
@@ -225,14 +221,36 @@ function loadModule(win, annotationState){
   const okRun = RW.runCommand('mirror');
   ok(okRun === true, 'runCommand returns true for a real command');
   ok(JSON.stringify(keys) === JSON.stringify(['m']), 'runCommand("mirror") dispatches m');
-  ok(RW._cmdPopupState === null || RW._cmdPopupState === undefined, 'no popup ever opens for a run-only entry');
 
   RW.runCommand('unknown-tool-xyz');
   ok(RW._lastStatus.indexOf('unknown command') !== -1, 'unknown command reports status, does not throw');
 }
 
+/* ---------- 5. RW.runCommand still supports armed/disarm for a future native armed() pass ---------- */
+// Nothing in RW._cmdTable uses btn/armed/disarm today (see test 2), but the
+// plumbing in RW.runCommand is kept deliberately — this is what a future
+// native armed() predicate needs once the real annotationState.currentTool
+// strings are confirmed live. Exercised directly against a synthetic entry
+// so a regression here is caught even though no real table entry hits it yet.
+{
+  const { win, byId } = makeStubWindow();
+  loadModule(win);
+  const RW = win.__RW;
+  const btn = makeElement('button', byId);
+  btn.id = 'test-btn';
+  let armedState = false;
+  btn.onclick = () => { armedState = true; };
+  RW._cmdTable.push({ name:'synthtest', kind:'native', aliases:[], btn:'test-btn',
+    armed: () => armedState, disarm: () => { armedState = false; } });
+
+  ok(RW.runCommand('synthtest') === true, 'runCommand arms a btn-based entry by clicking it');
+  ok(btn._clicked === 1 && armedState === true, 'clicking the button armed it');
+  ok(RW.runCommand('synthtest') === true, 'running it again while armed calls disarm(), not a second click');
+  ok(btn._clicked === 1 && armedState === false, 'disarm() fired instead of a second click');
+}
+
 (async () => {
-  /* ---------- 5. RW._cmdDispatchAppKey uses the same event shape as the existing Escape idiom ---------- */
+  /* ---------- 6. RW._cmdDispatchAppKey uses the same event shape as the existing Escape idiom ---------- */
   {
     const { win } = makeStubWindow();
     loadModule(win);
@@ -246,7 +264,7 @@ function loadModule(win, annotationState){
        'event shape matches the existing synthetic-Escape idiom (keydown, bubbles, cancelable)');
   }
 
-  /* ---------- 6. native draw tools dispatch "d" (draw mode) before their own letter ---------- */
+  /* ---------- 7. native draw tools dispatch "d" (draw mode) before their own letter ---------- */
   {
     const { win } = makeStubWindow();
     loadModule(win);
@@ -257,7 +275,18 @@ function loadModule(win, annotationState){
     ok(JSON.stringify(keys) === JSON.stringify(['d','q']), 'linear dispatches d then q');
   }
 
-  /* ---------- 7. native mode switches dispatch only their own letter, no "d" prefix ---------- */
+  /* ---------- 7b. ribbon (new native tool, confirmed live via opencli) dispatches d then p ---------- */
+  {
+    const { win } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('ribbon');
+    ok(JSON.stringify(keys) === JSON.stringify(['d','p']), 'ribbon dispatches d then p');
+  }
+
+  /* ---------- 8. native mode switches dispatch only their own letter, no "d" prefix ---------- */
   {
     const { win } = makeStubWindow();
     loadModule(win);
@@ -268,7 +297,33 @@ function loadModule(win, annotationState){
     ok(JSON.stringify(keys) === JSON.stringify(['m']), 'mirror dispatches only m, not a d prefix');
   }
 
-  /* ---------- 8. global auto-capture: typing anywhere seeds and focuses the command input ---------- */
+  /* ---------- 9. live-diagnostic readout: reports the dispatched key and currentTool before/after ---------- */
+  {
+    const { win } = makeStubWindow();
+    const as = { currentTool: 'select' };
+    loadModule(win, as);
+    const RW = win.__RW;
+    // Real dispatch (not stubbed) — nothing in this harness changes
+    // currentTool, so before/after are equal; the point of this test is
+    // that both are read and reported, not that they differ.
+    RW._cmdDispatchAppKey('q');
+    ok(RW._lastStatus.indexOf('dispatched "q"') !== -1, 'status names the dispatched key');
+    ok(RW._lastStatus.indexOf('select') !== -1 && RW._lastStatus.indexOf('->') !== -1,
+       'status reports currentTool before -> after');
+  }
+
+  /* ---------- 10. the diagnostic readout degrades to "undefined", not a throw, with no annotationState ---------- */
+  {
+    const { win } = makeStubWindow();
+    loadModule(win); // no annotationState passed
+    const RW = win.__RW;
+    let threw = false;
+    try { RW._cmdDispatchAppKey('q'); } catch (e) { threw = true; }
+    ok(!threw, 'dispatching with no annotationState does not throw');
+    ok(RW._lastStatus.indexOf('undefined') !== -1, 'status reports undefined -> undefined rather than silently omitting it');
+  }
+
+  /* ---------- 11. global auto-capture: typing anywhere seeds and focuses the command input ---------- */
   {
     const { win, byId, doc } = makeStubWindow();
     loadModule(win);
@@ -280,7 +335,7 @@ function loadModule(win, annotationState){
     ok(inp._focused === true, 'the command input is auto-focused');
   }
 
-  /* ---------- 9. global auto-capture leaves a real, already-focused input alone ---------- */
+  /* ---------- 12. global auto-capture leaves a real, already-focused input alone ---------- */
   {
     const { win, byId, doc } = makeStubWindow();
     loadModule(win);
@@ -292,7 +347,7 @@ function loadModule(win, annotationState){
        'the command input is not seeded by keystrokes aimed at another input');
   }
 
-  /* ---------- 10. the bug fix: our own synthetic dispatch is never eaten by the auto-capture listener ---------- */
+  /* ---------- 13. the bug fix: our own synthetic dispatch is never eaten by the auto-capture listener ---------- */
   {
     const { win, byId } = makeStubWindow();
     loadModule(win);
@@ -310,7 +365,7 @@ function loadModule(win, annotationState){
        'a genuine keystroke (not marked __rwSynthetic) is still auto-captured as before');
   }
 
-  /* ---------- 11. the dropdown colors native entries with the native color ---------- */
+  /* ---------- 14. the dropdown colors native entries with the native color ---------- */
   {
     const { win, byId } = makeStubWindow();
     loadModule(win);
@@ -322,7 +377,7 @@ function loadModule(win, annotationState){
     ok(wrapRow && wrapRow.style.cssText.indexOf('#a8e6a3') !== -1, 'a native match is colored with the native color');
   }
 
-  /* ---------- 12. tag auto-detection: finds the right field among decoys via currentTag membership ---------- */
+  /* ---------- 15. tag auto-detection: finds the right field among decoys via currentTag membership ---------- */
   {
     const { win } = makeStubWindow();
     const as = {
@@ -337,7 +392,7 @@ function loadModule(win, annotationState){
     ok(RW._cmdTagList.length === 3, 'detected list has the right length');
   }
 
-  /* ---------- 13. tag auto-detection: reports null when nothing validates ---------- */
+  /* ---------- 16. tag auto-detection: reports null when nothing validates ---------- */
   {
     const { win } = makeStubWindow();
     const as = {
@@ -350,7 +405,7 @@ function loadModule(win, annotationState){
     ok(RW._lastStatus.indexOf('could not auto-detect') !== -1, 'failure is reported via status, not silent');
   }
 
-  /* ---------- 14. "#" switches the dropdown to tag search; a plain query still matches commands ---------- */
+  /* ---------- 17. "#" switches the dropdown to tag search; a plain query still matches commands ---------- */
   {
     const { win, byId } = makeStubWindow();
     const as = { currentTag: null, tags: [{id:1,name:'Alpha Room'},{id:2,name:'Beta Room'}] };
@@ -370,7 +425,11 @@ function loadModule(win, annotationState){
     ok(cmdRows.some(r => r.innerText.indexOf('linear') === 0), 'a plain (non-#) query still searches commands');
   }
 
-  /* ---------- 15. selecting a tag at index <10 dispatches the matching digit, not a direct assignment ---------- */
+  /* ---------- 18. tag selection always uses direct assignment, regardless of position ---------- */
+  // The digit-hotkey path (assuming list-index maps to the app's 1-9/0 keys)
+  // was live-tested and found wrong — a real job showed digit 1 selecting a
+  // different tag than the one at index 0 — and was removed entirely
+  // (CLAUDE.md's command-line round 9).
   {
     const { win } = makeStubWindow();
     const as = { currentTag: null, tags: [{id:1,name:'Alpha'},{id:2,name:'Beta'},{id:3,name:'Gamma'}] };
@@ -378,12 +437,12 @@ function loadModule(win, annotationState){
     const RW = win.__RW;
     const keys = [];
     RW._cmdDispatchAppKey = function(k){ keys.push(k); };
-    RW._cmdSelectTag(as.tags[2], 2); // 3rd tag, index 2 -> digit '3'
-    ok(JSON.stringify(keys) === JSON.stringify(['3']), 'index 2 dispatches digit "3"');
-    ok(as.currentTag === null, 'the safe digit path never touches annotationState.currentTag directly');
+    RW._cmdSelectTag(as.tags[2], 2); // 3rd tag, index 2 — well within the old "digit" range
+    ok(keys.length === 0, 'index 2 never dispatches a digit — the digit path no longer exists');
+    ok(as.currentTag === as.tags[2], 'index 2 goes straight to direct assignment of the exact matched tag');
   }
 
-  /* ---------- 16. selecting a tag at index >=10 goes through the unsafe direct-assignment path only ---------- */
+  /* ---------- 19. selecting a tag at index >=10 also uses direct assignment (no position-based branch left) ---------- */
   {
     const { win } = makeStubWindow();
     const manyTags = [];
@@ -393,13 +452,14 @@ function loadModule(win, annotationState){
     const RW = win.__RW;
     const keys = [];
     RW._cmdDispatchAppKey = function(k){ keys.push(k); };
-    RW._cmdSelectTag(manyTags[11], 11); // index 11, beyond the first 10
+    RW._cmdSelectTag(manyTags[11], 11); // index 11, beyond the old first-10 range
     ok(keys.length === 0, 'index 11 never goes through the digit-dispatch path');
-    ok(as.currentTag === manyTags[11], 'index 11 falls back to direct assignment of annotationState.currentTag');
-    ok(RW._lastStatus.indexOf('unverified') !== -1, 'the unsafe path\'s status explicitly says so, not just "tag selected"');
+    ok(as.currentTag === manyTags[11], 'index 11 uses direct assignment of annotationState.currentTag');
+    ok(RW._lastStatus.indexOf('confirm it actually applied') !== -1,
+       'the status still flags this as not fully confirmed');
   }
 
-  /* ---------- 17. Space acts as Enter in command mode ---------- */
+  /* ---------- 20. Space acts as Enter in command mode ---------- */
   {
     const { win, byId } = makeStubWindow();
     loadModule(win);
@@ -415,21 +475,34 @@ function loadModule(win, annotationState){
     ok(defaultPrevented, 'Space is consumed (preventDefault) when it triggers a command');
   }
 
-  /* ---------- 18. Space is a literal character in tag-search mode, never triggers selection ---------- */
+  /* ---------- 21. Space also confirms the highlighted tag, same as Enter ---------- */
   {
     const { win, byId } = makeStubWindow();
     const as = { currentTag: null, tags: [{id:1,name:'Alpha Room'}] };
     loadModule(win, as);
     const inp = byId['rw-cmd-input'];
     inp.value = '#alpha';
-    inp.dispatchEvent({ type: 'input' });
+    inp.dispatchEvent({ type: 'input' }); // highlights "Alpha Room" at index 0
     let defaultPrevented = false;
     inp._fire('keydown', { key: ' ', preventDefault(){ defaultPrevented = true; } });
-    ok(!defaultPrevented, 'Space in tag-search mode is left alone, so a multi-word tag name can be typed');
-    ok(as.currentTag === null, 'Space in tag mode never selects a tag as a side effect');
+    ok(defaultPrevented, 'Space is consumed once a tag is highlighted');
+    ok(as.currentTag === as.tags[0], 'Space confirms the highlighted tag via direct assignment, same as Enter would');
   }
 
-  /* ---------- 19. the master RW: ON/OFF killswitch also stops global auto-capture ---------- */
+  /* ---------- 21b. accepted trade-off: Space can't disambiguate two tags sharing a first word ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Room A'},{id:2,name:'Room B'}] };
+    loadModule(win, as);
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#room'; // both match; "Room A" ranks first and is highlighted
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: ' ', preventDefault(){} });
+    ok(as.currentTag === as.tags[0],
+       'Space immediately confirms the top-ranked match ("Room A") rather than typing a space to narrow further — the accepted trade-off');
+  }
+
+  /* ---------- 22. the master RW: ON/OFF killswitch also stops global auto-capture ---------- */
   {
     const { win, byId, doc } = makeStubWindow();
     loadModule(win);
