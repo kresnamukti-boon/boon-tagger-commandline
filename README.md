@@ -1,16 +1,16 @@
-# Boon Tagger Tools — Command Line (native-tools-only)
+# Boon Tagger Tools — Command Line
 
 Client-side workflow enhancer for the Constructions Tagger annotation platform
 (constructions-tagger-web.onrender.com). Pasted into the DevTools console of the live
 annotation page — no server, no build step, nothing persists until you click the app's own
 **Save**. Everything lives in the page until reload/navigation, then must be re-injected.
 
-**This branch is a stripped-down development sandbox for the AutoCAD-style command line only.**
-The full Region Workbench (region segmentation, mask tools, undo, Commit, Pipe, Elbow, OCR, …)
-lives on `master` — this branch deletes all of it so the command line's native-app-tool dispatch
-and tag search can be iterated on without dragging in ~240KB of unrelated tooling on every paste.
-If you need any deleted module back, `git checkout master -- <file>` recovers it (or check out
-`master` itself for the full build).
+**This repo contains only the AutoCAD-style command line** — a minimal build for iterating on
+native-app-tool dispatch and tag search without dragging in unrelated tooling on every paste. The
+full Region Workbench (region segmentation, mask tools, undo, Commit, Pipe, Elbow, OCR, and its
+own copy of a workbench-aware command line with restored single-key shortcuts) lives in the
+sibling repo `boon-tagger-mask` (also under `~/Projects/boon-projects/`). This repo was extracted
+from that project's history — see `CLAUDE.md` for the full evolution.
 
 ## Files & load order
 
