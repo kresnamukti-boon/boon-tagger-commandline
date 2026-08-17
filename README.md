@@ -20,7 +20,7 @@ load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in ord
 2. **rw_install.js** — core region engine. Flood-fills the drawing canvas into wall/background,
    labels enclosed areas as candidate regions, region list panel, **Pick** mode, **Merge**/**Cut**.
 3. **rw_masktools.js** — unified **Rect** mask tool (block/open/add, see below), the global area
-   floor input + **Relabel** button, the **Walls (O)** diagnostic overlay, live area hint while
+   floor input + **Relabel** button, the **Walls** diagnostic overlay, live area hint while
    dragging.
 4. **rw_stable.js** — pan/zoom-stable preview rendering; no user-facing controls of its own.
 5. **rw_undo.js** — snapshot undo stack (backtick) shared by every mask edit, plus poly vertex
@@ -31,13 +31,13 @@ load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in ord
 7. **rw_healinterior.js** — **Heal Interior?** / **Apply Heal** / **Edit Heal (Brush)** for
    cleaning text/hatch noise out of a selected region before committing it (see below).
 8. **rw_brushpoly.js** — **Poly2** (freeform vertex) and **Brush** (freehand stroke) mask tools;
-   owns the **Add ⊕ (A)** toggle.
+   owns the **Add ⊕** toggle.
 9. **rw_snap.js** — Poly2 vertex snapping to line endpoints/junctions and region outlines (see
    below); **Snap On/Off** panel toggle.
 10. **rw_textdetect.js** — **Text? (density)** whole-page detection-only overlay (see below).
     Currently hidden in the panel along with **Relabel** and **Add ⊕** (not removed — see
     "Hidden controls" below).
-11. **rw_wallspan.js** — **Pipe (C)** / **Trace** / **Commit Pipe** for annotating piping
+11. **rw_wallspan.js** — **Pipe** / **Trace** / **Commit Pipe** for annotating piping
     centerlines as a fixed-width path (see below) — deliberately doesn't trace pixels, since the
     rest of the toolset only handles enclosed areas and pixel-tracing a pipe's actual linework
     turned out to be too fragile against text/fittings crossing the line.
@@ -45,10 +45,14 @@ load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in ord
     HEAL / PIPE / FITTINGS / VIEW) by relocating every earlier module's controls by id; purely
     cosmetic, no tool behavior changes. Must load after every module above (so their controls
     already exist to move) and before **rw_elbow.js** (so it can mount into the FITTINGS section).
-13. **rw_elbow.js** — **Elbow (L)** / **Commit Elbow** for annotating elbow pipe fittings: drag a
+13. **rw_elbow.js** — **Elbow** / **Commit Elbow** for annotating elbow pipe fittings: drag a
     box (or click-click-click + double-click a tighter polygon region) around the fitting and it
     traces the real drawn linework inside it (see below).
-14. **rw_ocr.js** — *OCR loader variant only, not in `console_loader.js`.* Adds an OCR button to
+14. **rw_cmdline.js** — the always-visible command-line input (see "Keymap (workbench)" below):
+    type a tool's name/alias, autocomplete suggests matches, running one clicks that tool's real
+    panel button and opens a floating popup with its controls, borrowed from the panel and
+    returned on close/disarm. Replaces the tool-arming single-key shortcuts.
+15. **rw_ocr.js** — *OCR loader variant only, not in `console_loader.js`.* Adds an OCR button to
     the app's own reference-naming dialog (see "OCR-assisted reference naming" below).
 
 **To rebuild** after editing any `rw_*.js` source module:
@@ -74,34 +78,56 @@ Working in reference mode (`?mode=reference`) and want OCR-assisted naming? Past
 
 Every mask tool shares one 3-state action, shown as a symbol on its button (`−`/`+`/`⊕`):
 
-| State | Effect | Key |
-|---|---|---|
-| **block** (default) | paint wall — add a split inside an existing enclosed area | — |
-| **open** | erase wall — heal a false split | — |
-| **add** | carve a brand-new region out of empty whitespace | `A` toggles block↔add |
+| State | Effect |
+|---|---|
+| **block** (default) | paint wall — add a split inside an existing enclosed area |
+| **open** | erase wall — heal a false split |
+| **add** | carve a brand-new region out of empty whitespace |
 
-`Shift+B` / `Shift+N` / `Shift+J` cycle all three states (block → open → add → block) for
-Rect/Poly2/Brush respectively.
+The `addmode` command toggles block↔add for whichever tool is armed; the `cycle` command steps
+through all three states (block → open → add → block).
 
 ## Keymap (workbench)
 
+Every tool is armed via the command line (`rw_cmdline.js`) instead of a dedicated letter key —
+**just start typing a tool's name from anywhere**, no click or focus step needed (like AutoCAD's
+command line): the first character you type auto-focuses the always-visible input at the top of
+the panel and seeds it, an autocomplete dropdown suggests matches as you keep typing, and Enter
+(or a unique match) arms the tool and pops its own controls up in a floating window. **Running an
+already-armed tool's command again turns it off** — typing `pipe` while Pipe is armed disarms it,
+same as the original single-key shortcuts worked as toggles. Utility keys that act on an
+already-armed tool are unchanged:
+
 | Key | Action |
 |---|---|
-| `P` | toggle Pick mode (click regions on canvas to select) |
-| `K` | Cut mode (drag a line across a region to split it) — **shadows the app's own Magic Wand**, see below |
-| `B` | Rect mask mode (drag to paint/erase/add, per current action state) |
-| `N` | Poly2 mask mode (click vertices, double-click to close, Backspace removes last vertex) |
-| `J` | Brush mask mode (freehand stroke) |
-| `A` | toggle Add mode on/off for Rect/Poly2/Brush |
-| `Shift+B` / `Shift+N` / `Shift+J` | cycle block → open → add for that tool |
-| `O` | cycle the wall diagnostic overlay (red wall → cyan floodable space → off) |
 | Shift (hold, placing a Poly2 vertex) | bypass vertex snap for that click |
 | `` ` `` (backtick) | undo last mask edit (block/open/poly/brush/cut/merge/heal) |
-| `Escape` | cancel current workbench mode / clear in-progress poly vertices |
-| `C` | Pipe mode — click a path along a pipe's centerline (see Pipe annotation below) |
-| `L` | Elbow mode — drag a box, or click points + double-click to close a tighter region, around an elbow fitting (see Elbow fitting below) |
+| `Escape` | cancel current workbench mode / clear in-progress poly vertices, or blur the command input |
+| `Tab` (hold, Brush/Heal Brush armed) | scroll to resize the brush radius |
 
-Merge has no hotkey (app uses `M` for mirror) — select 2+ regions, click **Merge** in panel.
+**Because typing is captured from anywhere, it takes over the host app's own single-key
+shortcuts while you're mid-command** — to press an app shortcut key directly again, blur the
+command input first (Escape, or click the canvas).
+
+Workbench command vocabulary (name — aliases): `pick` (`p`), `cut` (`k`), `rect` (`r`,`b`),
+`poly2` (`poly`,`n`), `brush` (`j`), `heal` (`h`), `healbrush` (`hb`), `pipe` (`c`), `elbow`
+(`el`,`l`), `walls` (`wall`,`o`), `snap` (`s`), `text` (`density`), `addmode` (`add`,`a`),
+`relabel`, `cycle` (`action` — cycles the current mask action block→open→add, replacing the old
+`Shift+B/N/J`).
+
+Merge/Commit/Re-extract/Hide have no command-line entry yet — still click their panel buttons.
+
+**Native app tool vocabulary** (dispatched to the host app itself, not this workbench — see "App
+built-in keymap" below for what each one does): draw-mode tools `linear` (`q`), `bbox` (`w`),
+`count` (`e`), `polygon` (no alias — `r` already belongs to the workbench's `rect`), `polyline`
+(`t`), `circle` (`y`), `cloud` (`u`), `wand` (no alias — `k` already belongs to `cut`), `wrap`
+(`x`), `void` (`v`), `tag1`-`tag9`/`tag0` (digits); mode switches `pan` (no alias — `a` already
+belongs to `addmode`), `select` (no alias — `s` already belongs to `snap`), `draw` (`d`), `label`
+(`f`), `crop` (`g`), `mirror` (`m`). Where a native tool's own app-keymap letter collides with an
+already-shipped workbench command, the workbench command keeps the letter and the native tool is
+reachable only by typing more of its name. Draw-mode tool commands dispatch a defensive `d`
+(enter draw mode) immediately before their own letter, since the app's keymap documents them as
+draw-mode-only tools — **not live-verified whether that's actually required**.
 
 ### Heal Interior (`rw_healinterior.js`)
 
@@ -231,7 +257,8 @@ A dedicated tool for annotating elbow pipe fittings — separate from the Pipe t
 plain bend in a pipe's path stays a plain mitered corner, and only an elbow you actually box gets
 special handling.
 
-- Press **`L`** to arm the tool, then either **drag a box** around the elbow fitting (a real drag,
+- Type **`elbow`** (or `el`/`l`) into the command line to arm the tool, then either **drag a box**
+  around the elbow fitting (a real drag,
   not a click — same 5px threshold every other drag tool uses), or **click a series of points and
   double-click to close** a tighter polygon region — useful when a rectangle would inevitably
   sweep in unrelated nearby linework.
@@ -299,8 +326,9 @@ no tool's behavior changes because of it.
 ### Hidden controls
 
 **Relabel**, **Add ⊕**, and **Text? (density)** are currently hidden in the panel (not removed
-— the underlying features and their keybindings still work) since they weren't useful for
-current annotation work. Ask if you want any of these visible again.
+— the underlying features still work, and are reachable via the command line's `relabel`/
+`addmode`/`text` entries) since they weren't useful for current annotation work. Ask if you want
+any of these visible again.
 
 ## App built-in keymap (reference, extracted from their JS)
 
@@ -313,14 +341,15 @@ Delete/Backspace delete selected, Ctrl+C/V copy/paste, Ctrl+Shift+V mirror paste
 Double-click finishes polygon/polyline
 Arrows nudge selection 1px, Shift+arrows 10px
 
-**Known collision:** the workbench's own **K** (Cut mode) is bound on `document` in the
-capture phase and calls `stopPropagation()`, so it fully shadows the app's **K = Magic Wand**
-keyboard shortcut whenever the workbench is loaded and enabled. To use the app's own Magic
-Wand tool, either click its "K Wand" button directly (mouse clicks aren't affected) or toggle
-the workbench's **RW: ON/OFF** killswitch off first.
-
-The wall diagnostic overlay is bound to **O**, not **W**, specifically because the app's own
-**W = Bounding Box** tool would otherwise be fully shadowed the same way K is above.
+**Historical note:** the workbench used to bind Cut mode to **K** and the wall overlay to **O**
+directly, and briefly had to route around the resulting collision with the app's own **K = Magic
+Wand** shortcut (the workbench's capture-phase, `stopPropagation()`-calling listener fully
+shadowed it). Tools are now armed via the command line instead of single letter keys, so that
+*specific* collision is gone — but the command line's own global auto-capture (see "Keymap
+(workbench)" above) means the app's native single-key shortcuts are unreachable directly while
+you're mid-command anyway; blur the command input (Escape, or click the canvas) to use one
+directly. The app's shortcuts are only "unaffected" in the sense that nothing in the workbench
+permanently disables them the way the old K/W collisions did.
 
 ## Boundaries
 
