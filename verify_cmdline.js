@@ -1,8 +1,13 @@
-// Synthetic Node harness for rw_cmdline.js. Loads the real shipped module
-// body against a minimal DOM stub (no browser, no network) — same discipline
-// as verify_ocr.js/verify_pipe.js: exercise the real source, not a
-// reimplementation, and drive real registered listeners (keydown/click/input)
-// rather than only calling exposed functions directly.
+// Synthetic Node harness for rw_cmdline.js — NATIVE-TOOLS-ONLY BRANCH. Loads
+// the real shipped module body against a minimal DOM stub (no browser, no
+// network) — same discipline as verify_ocr.js/verify_pipe.js: exercise the
+// real source, not a reimplementation, and drive real registered listeners
+// (keydown/click/input) rather than only calling exposed functions directly.
+//
+// This branch's RW._cmdTable has no workbench entries (no `btn`/`ctl`/
+// `armed`/`disarm`, no popup borrow/restore) — every entry is a `run`-only
+// dispatch to the host app. Tests specific to the full command line's
+// workbench-arming/popup machinery were removed accordingly; see CLAUDE.md.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -124,32 +129,13 @@ function makeStubWindow(){
   win.__RW = {
     v32: true,
     enabled: true,
-    pickMode: false, cutMode: false, maskMode: null, maskMode2: null,
-    maskAction: 'block', _healPreviewOn: false, healBrushMode: false,
-    pipeMode: false, elbowMode: false, wallOverlayState: 0, _snapEnabled: false,
-    textOverlayOn: false,
-    setMaskAction(a){ this.maskAction = a; },
-    setCut(on){ this.cutMode = on; },
     _commitStatus(msg){ this._lastStatus = msg; }
   };
 
-  // register(id, el) parents `el` under a section-row-shaped container by
-  // default (rw-sec-<key>), matching how these controls really sit once
-  // rw_panelsections.js has moved them, so tidyOldParent's real logic runs.
-  function makeSectionRow(key){
-    const wrap = makeElement('div', byId);
-    wrap.classList._set.add('rw-sec');
-    const label = makeElement('div', byId);
-    label.id = 'rw-sec-label-' + key;
-    byId[label.id] = label;
-    wrap.appendChild(label);
-    const row = makeElement('div', byId);
-    row.id = 'rw-sec-' + key;
-    byId[row.id] = row;
-    wrap.appendChild(row);
-    return { wrap, row };
-  }
-
+  // Only #rw-sections/#rw-list are needed now — mountCommandBar's anchor.
+  // No workbench buttons/sections to build: every table entry on this
+  // branch is `run`-only (no `btn`/`ctl`), so the popup/borrow machinery is
+  // never exercised by any real command.
   const sections = makeElement('div', byId);
   sections.id = 'rw-sections';
   byId['rw-sections'] = sections;
@@ -160,58 +146,7 @@ function makeStubWindow(){
   panelBody.appendChild(sections);
   panelBody.appendChild(list);
 
-  const regionsRow = makeSectionRow('regions');
-  const maskRow = makeSectionRow('mask');
-  const healRow = makeSectionRow('heal');
-  const pipeRow = makeSectionRow('pipe');
-  const fittingsRow = makeSectionRow('fittings');
-  const viewRow = makeSectionRow('view');
-  [regionsRow, maskRow, healRow, pipeRow, fittingsRow, viewRow].forEach(r => sections.appendChild(r.wrap));
-
-  function addBtn(id, row, armFlag, armVal, disarmVal){
-    const b = makeElement('button', byId);
-    b.id = id;
-    b.onclick = function(){
-      const RW = win.__RW;
-      if (armFlag){ RW[armFlag] = (RW[armFlag] === armVal) ? disarmVal : armVal; }
-    };
-    byId[id] = b;
-    row.row.appendChild(b);
-    return b;
-  }
-
-  addBtn('rw-pick', regionsRow, 'pickMode', true, false);
-  addBtn('rw-cut', regionsRow, 'cutMode', true, false);
-  addBtn('rw-rect', maskRow, 'maskMode', 'rect', null);
-  addBtn('rw-poly2', maskRow, 'maskMode2', 'poly2', null);
-  addBtn('rw-brush', maskRow, 'maskMode2', 'brush', null);
-  addBtn('rw-heal-btn', healRow, '_healPreviewOn', true, false);
-  const healGroup = makeElement('span', byId); healGroup.id = 'rw-heal-group'; byId['rw-heal-group'] = healGroup;
-  healGroup.appendChild(byId['rw-heal-btn']);
-  healRow.row.appendChild(healGroup);
-  addBtn('rw-healbrush-btn', healRow, 'healBrushMode', true, false);
-  const pipeBtn = addBtn('rw-pipe', pipeRow, 'pipeMode', true, false);
-  const pipeGroup = makeElement('span', byId); pipeGroup.id = 'rw-pipe-group'; byId['rw-pipe-group'] = pipeGroup;
-  pipeGroup.appendChild(pipeBtn);
-  pipeRow.row.appendChild(pipeGroup);
-  addBtn('rw-elbow', fittingsRow, 'elbowMode', true, false);
-  addBtn('rw-walls', viewRow, 'wallOverlayState', 1, 0);
-  addBtn('rw-snap', maskRow, '_snapEnabled', true, false);
-  addBtn('rw-textdetect', viewRow, 'textOverlayOn', true, false);
-  const textGroup = makeElement('span', byId); textGroup.id = 'rw-textdetect-group'; byId['rw-textdetect-group'] = textGroup;
-  textGroup.appendChild(byId['rw-textdetect']);
-  viewRow.row.appendChild(textGroup);
-  addBtn('rw-addmode', maskRow, 'maskAction', 'add', 'block');
-
-  const relabelLabel = makeElement('span', byId); relabelLabel.id = 'rw-relabel-label'; byId[relabelLabel.id] = relabelLabel;
-  const relabelInp = makeElement('input', byId); relabelInp.id = 'rw-relabel-inp'; byId[relabelInp.id] = relabelInp;
-  const relabelBtn = makeElement('button', byId); relabelBtn.id = 'rw-relabel-btn'; byId[relabelBtn.id] = relabelBtn;
-  relabelBtn.onclick = function(){ relabelBtn._relabeled = (relabelBtn._relabeled||0) + 1; };
-  maskRow.row.appendChild(relabelLabel);
-  maskRow.row.appendChild(relabelInp);
-  maskRow.row.appendChild(relabelBtn);
-
-  return { win, doc: documentStub, byId, sections, list, rows: { regionsRow, maskRow, healRow, pipeRow, fittingsRow, viewRow } };
+  return { win, doc: documentStub, byId, sections, list };
 }
 
 // Node has no KeyboardEvent global; rw_cmdline.js's real dispatch code (the
@@ -241,13 +176,13 @@ function loadModule(win, annotationState){
   loadModule(win);
   const RW = win.__RW;
 
-  const p = RW._cmdMatch('p');
-  ok(p[0] && p[0].name === 'pick', '"p" resolves to pick first (exact alias beats prefix matches)');
-  ok(p.some(e => e.name === 'pipe'), '"p" still lists pipe as a prefix match');
-  ok(p.some(e => e.name === 'poly2'), '"p" still lists poly2 as an alias-prefix match');
+  const w = RW._cmdMatch('w');
+  ok(w[0] && w[0].name === 'bbox', '"w" resolves to bbox first (exact alias beats name-prefix matches)');
+  ok(w.some(e => e.name === 'wand'), '"w" still lists wand as a name-prefix match');
+  ok(w.some(e => e.name === 'wrap'), '"w" still lists wrap as a name-prefix match');
 
-  const exact = RW._cmdMatch('pipe');
-  ok(exact[0].name === 'pipe', 'exact name match ranks first');
+  const exact = RW._cmdMatch('linear');
+  ok(exact[0].name === 'linear', 'exact name match ranks first');
 
   const empty = RW._cmdMatch('');
   ok(empty.length === RW._cmdTable.length, 'empty query returns the whole table');
@@ -256,144 +191,48 @@ function loadModule(win, annotationState){
   ok(none.length === 0, 'no match returns an empty array');
 }
 
-/* ---------- 2. RW.runCommand: click-to-arm, re-run toggles off ---------- */
+/* ---------- 2. every entry on this branch is a native, run-only dispatch ---------- */
 {
-  const { win, byId } = makeStubWindow();
+  const { win } = makeStubWindow();
   loadModule(win);
   const RW = win.__RW;
+  const bad = RW._cmdTable.filter(e => e.kind !== 'native');
+  ok(bad.length === 0, 'every command is kind "native" on this branch (offenders: ' + bad.map(e=>e.name).join(',') + ')');
+  const noRun = RW._cmdTable.filter(e => typeof e.run !== 'function');
+  ok(noRun.length === 0, 'every command is run-only (offenders: ' + noRun.map(e=>e.name).join(',') + ')');
+  const hasBtnOrCtl = RW._cmdTable.filter(e => e.btn || e.ctl);
+  ok(hasBtnOrCtl.length === 0, 'no entry has btn/ctl on this branch (offenders: ' + hasBtnOrCtl.map(e=>e.name).join(',') + ')');
+}
 
-  RW.runCommand('pick');
-  ok(RW.pickMode === true, 'runCommand("pick") arms pick');
-  ok(byId['rw-pick']._clicked === 1, 'arming pick clicked its real button once');
+/* ---------- 3. natural aliases restored: no more workbench collisions to avoid ---------- */
+{
+  const { win } = makeStubWindow();
+  loadModule(win);
+  const RW = win.__RW;
+  ok(RW._cmdMatch('k')[0].name === 'wand', '"k" now resolves directly to wand (no workbench cut to collide with)');
+  ok(RW._cmdMatch('a')[0].name === 'pan', '"a" now resolves directly to pan');
+  ok(RW._cmdMatch('s')[0].name === 'select', '"s" now resolves directly to select');
+  ok(RW._cmdMatch('r')[0].name === 'polygon', '"r" now resolves directly to polygon');
+}
 
-  RW.runCommand('pick');
-  ok(RW.pickMode === false, 'running "pick" again while armed toggles it off');
-  ok(byId['rw-pick']._clicked === 2, 'disarming (no explicit disarm fn) clicked the button a second time');
-  ok(RW._cmdPopupState === null, 'toggling off closes the popup immediately, not waiting for the poll');
+/* ---------- 4. RW.runCommand on a run-only entry just calls run(), no button/popup involved ---------- */
+{
+  const { win } = makeStubWindow();
+  loadModule(win);
+  const RW = win.__RW;
+  const keys = [];
+  RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+  const okRun = RW.runCommand('mirror');
+  ok(okRun === true, 'runCommand returns true for a real command');
+  ok(JSON.stringify(keys) === JSON.stringify(['m']), 'runCommand("mirror") dispatches m');
+  ok(RW._cmdPopupState === null || RW._cmdPopupState === undefined, 'no popup ever opens for a run-only entry');
 
   RW.runCommand('unknown-tool-xyz');
   ok(RW._lastStatus.indexOf('unknown command') !== -1, 'unknown command reports status, does not throw');
 }
 
-/* ---------- 2b. explicit `disarm` overrides for tools whose button click isn't a toggle ---------- */
-{
-  const { win, byId } = makeStubWindow();
-  loadModule(win);
-  const RW = win.__RW;
-
-  RW.runCommand('cut');
-  ok(RW.cutMode === true, 'cut arms normally');
-  RW.runCommand('cut');
-  ok(RW.cutMode === false, 'running "cut" again disarms via its explicit disarm fn, not a second click');
-  ok(byId['rw-cut']._clicked === 1, 'the button itself was only ever clicked once (its onclick is not a toggle)');
-
-  RW.runCommand('walls');
-  ok(RW.wallOverlayState === 1, 'walls arms to state 1 on first run');
-  RW.runCommand('walls');
-  ok(RW.wallOverlayState === 0, 'running "walls" again jumps straight to state 0 (off), not state 2');
-}
-
-/* ---------- 3. one-shot `run` entries (no button, no popup) ---------- */
-{
-  const { win } = makeStubWindow();
-  loadModule(win);
-  const RW = win.__RW;
-  RW.maskAction = 'block';
-  RW.runCommand('cycle');
-  ok(RW.maskAction === 'open', '"cycle" advances block->open directly, with no button to click');
-  ok(!RW._cmdPopupState, 'a pure one-shot command never opens a popup');
-}
-
-/* ---------- 4. popup borrow/restore round trip preserves exact sibling order ---------- */
-{
-  const { win, byId, rows } = makeStubWindow();
-  loadModule(win);
-  const RW = win.__RW;
-
-  const before = rows.maskRow.row._children.map(c => c.id);
-  ok(before.indexOf('rw-relabel-label') < before.indexOf('rw-relabel-inp')
-     && before.indexOf('rw-relabel-inp') < before.indexOf('rw-relabel-btn'),
-     'sanity: relabel label/input/button start in the expected order');
-
-  RW.runCommand('relabel');
-  ok(RW._cmdPopupState !== null, 'relabel command opens a popup (it has real controls)');
-  const popupBody = byId['rw-cmd-popup-body'];
-  ok(popupBody._children.map(c=>c.id).join(',') === 'rw-relabel-label,rw-relabel-inp,rw-relabel-btn',
-     'borrowed nodes land in the popup in declared order');
-
-  RW._cmdClosePopup();
-  const after = rows.maskRow.row._children.map(c => c.id);
-  ok(JSON.stringify(after.filter(id=>id.indexOf('rw-relabel')===0))
-     === JSON.stringify(before.filter(id=>id.indexOf('rw-relabel')===0)),
-     'closing the popup restores the exact original relative order, not just presence');
-}
-
-/* ---------- 5. hidden controls (e.g. addmode) are un-hidden while borrowed, restored after ---------- */
-{
-  const { win, byId } = makeStubWindow();
-  loadModule(win);
-  const RW = win.__RW;
-  byId['rw-addmode'].style.display = 'none';
-
-  RW.runCommand('addmode');
-  ok(byId['rw-addmode'].style.display === '', 'borrowed hidden control is un-hidden while in the popup');
-
-  RW._cmdClosePopup();
-  ok(byId['rw-addmode'].style.display === 'none', 'closing the popup restores its original display:none');
-}
-
-/* ---------- 6. moving the elbow section row leaves its label-only wrapper hidden, then restores it ---------- */
-{
-  const { win, byId, rows } = makeStubWindow();
-  loadModule(win);
-  const RW = win.__RW;
-
-  RW.runCommand('elbow');
-  ok(rows.fittingsRow.wrap.style.display === 'none',
-     'the FITTINGS wrapper (now left with only its label) is hidden while its row is borrowed');
-
-  RW._cmdClosePopup();
-  ok(rows.fittingsRow.wrap.style.display === '',
-     'the FITTINGS wrapper is restored to visible once the row comes back');
-}
-
-/* ---------- 7. armed but untouched externally: popup stays open on its own poll tick ---------- */
 (async () => {
-  {
-    const { win } = makeStubWindow();
-    loadModule(win);
-    const RW = win.__RW;
-    RW.runCommand('walls');
-    ok(RW._cmdPopupState !== null, 'walls opens a popup');
-    await new Promise(r => setTimeout(r, 300));
-    ok(RW._cmdPopupState !== null, 'walls popup stays open on its own poll tick (armed stayed true)');
-  }
-
-  /* ---------- 8. armed()-transition auto-closes the popup ---------- */
-  {
-    const { win } = makeStubWindow();
-    loadModule(win);
-    const RW = win.__RW;
-    RW.runCommand('pick');
-    ok(RW._cmdPopupState !== null, 'pick opens a popup');
-    RW.pickMode = false; // simulate an external disarm (e.g. cross-disarm by another tool)
-    await new Promise(r => setTimeout(r, 300));
-    ok(RW._cmdPopupState === null, 'popup auto-closes once armed() transitions from true to false');
-  }
-
-  /* ---------- 9. RW.enabled=false closes any open popup regardless of armed() ---------- */
-  {
-    const { win } = makeStubWindow();
-    loadModule(win);
-    const RW = win.__RW;
-    RW.runCommand('walls');
-    ok(RW._cmdPopupState !== null, 'walls opens a popup');
-    RW.enabled = false;
-    await new Promise(r => setTimeout(r, 300));
-    ok(RW._cmdPopupState === null, 'the master killswitch (RW.enabled=false) closes an open popup');
-  }
-
-  /* ---------- 10. RW._cmdDispatchAppKey uses the same event shape as the existing Escape idiom ---------- */
+  /* ---------- 5. RW._cmdDispatchAppKey uses the same event shape as the existing Escape idiom ---------- */
   {
     const { win } = makeStubWindow();
     loadModule(win);
@@ -407,7 +246,7 @@ function loadModule(win, annotationState){
        'event shape matches the existing synthetic-Escape idiom (keydown, bubbles, cancelable)');
   }
 
-  /* ---------- 11. native draw tools dispatch "d" (draw mode) before their own letter ---------- */
+  /* ---------- 6. native draw tools dispatch "d" (draw mode) before their own letter ---------- */
   {
     const { win } = makeStubWindow();
     loadModule(win);
@@ -418,7 +257,7 @@ function loadModule(win, annotationState){
     ok(JSON.stringify(keys) === JSON.stringify(['d','q']), 'linear dispatches d then q');
   }
 
-  /* ---------- 12. native mode switches dispatch only their own letter, no "d" prefix ---------- */
+  /* ---------- 7. native mode switches dispatch only their own letter, no "d" prefix ---------- */
   {
     const { win } = makeStubWindow();
     loadModule(win);
@@ -429,36 +268,19 @@ function loadModule(win, annotationState){
     ok(JSON.stringify(keys) === JSON.stringify(['m']), 'mirror dispatches only m, not a d prefix');
   }
 
-  /* ---------- 13. alias-collision resolution: the workbench command keeps the shared letter ---------- */
-  {
-    const { win } = makeStubWindow();
-    loadModule(win);
-    const RW = win.__RW;
-    ok(RW._cmdMatch('k')[0].name === 'cut', '"k" resolves to cut, not the native magic wand ("wand")');
-    ok(RW._cmdMatch('a')[0].name === 'addmode', '"a" resolves to addmode, not the native pan tool ("pan")');
-    ok(RW._cmdMatch('s')[0].name === 'snap', '"s" resolves to snap, not the native select mode ("select")');
-    ok(RW._cmdMatch('r')[0].name === 'rect', '"r" resolves to rect, not the native polygon tool ("polygon")');
-    ok(RW._cmdMatch('wand').some(e => e.name === 'wand'), '"wand" is still reachable by its full name');
-    ok(RW._cmdMatch('pan').some(e => e.name === 'pan'), '"pan" is still reachable by its full name');
-    ok(RW._cmdMatch('select').some(e => e.name === 'select'), '"select" is still reachable by its full name');
-    ok(RW._cmdMatch('polygon').some(e => e.name === 'polygon'), '"polygon" is still reachable by its full name');
-    ok(!(RW._cmdTable.find(e => e.name==='polygon').aliases||[]).includes('poly'),
-       'polygon does not steal poly2\'s "poly" alias');
-  }
-
-  /* ---------- 14. global auto-capture: typing anywhere seeds and focuses the command input ---------- */
+  /* ---------- 8. global auto-capture: typing anywhere seeds and focuses the command input ---------- */
   {
     const { win, byId, doc } = makeStubWindow();
     loadModule(win);
     const bodyTarget = makeElement('div', byId); // stands in for "nothing else focused"
-    const evt = doc._fire('keydown', { target: bodyTarget, key: 'p' });
+    const evt = doc._fire('keydown', { target: bodyTarget, key: 'l' });
     ok(evt.defaultPrevented !== undefined || true, 'sanity: event dispatched without throwing');
     const inp = byId['rw-cmd-input'];
-    ok(inp && inp.value === 'p', 'typing "p" with nothing focused seeds the command input');
+    ok(inp && inp.value === 'l', 'typing "l" with nothing focused seeds the command input');
     ok(inp._focused === true, 'the command input is auto-focused');
   }
 
-  /* ---------- 15. global auto-capture leaves a real, already-focused input alone ---------- */
+  /* ---------- 9. global auto-capture leaves a real, already-focused input alone ---------- */
   {
     const { win, byId, doc } = makeStubWindow();
     loadModule(win);
@@ -470,7 +292,7 @@ function loadModule(win, annotationState){
        'the command input is not seeded by keystrokes aimed at another input');
   }
 
-  /* ---------- 16. the bug fix: our own synthetic dispatch is never eaten by the auto-capture listener ---------- */
+  /* ---------- 10. the bug fix: our own synthetic dispatch is never eaten by the auto-capture listener ---------- */
   {
     const { win, byId } = makeStubWindow();
     loadModule(win);
@@ -488,35 +310,19 @@ function loadModule(win, annotationState){
        'a genuine keystroke (not marked __rwSynthetic) is still auto-captured as before');
   }
 
-  /* ---------- 17. every table entry has a valid, explicit `kind` ---------- */
-  {
-    const { win } = makeStubWindow();
-    loadModule(win);
-    const RW = win.__RW;
-    const bad = RW._cmdTable.filter(e => e.kind !== 'workbench' && e.kind !== 'native');
-    ok(bad.length === 0, 'every command has kind "workbench" or "native" (offenders: ' + bad.map(e=>e.name).join(',') + ')');
-    ok(RW._cmdTable.find(e => e.name === 'pipe').kind === 'workbench', 'pipe is a workbench command');
-    ok(RW._cmdTable.find(e => e.name === 'linear').kind === 'native', 'linear is a native command');
-    ok(RW._cmdTable.find(e => e.name === 'cycle').kind === 'workbench',
-       'cycle (run-only, no button) is still correctly classified as workbench, not inferred wrong from having no btn');
-  }
-
-  /* ---------- 18. the dropdown color-codes workbench vs. native entries ---------- */
+  /* ---------- 11. the dropdown colors native entries with the native color ---------- */
   {
     const { win, byId } = makeStubWindow();
     loadModule(win);
-    const RW = win.__RW;
     const inp = byId['rw-cmd-input'];
-    inp.value = 'poly'; // matches both poly2 (workbench) and polyline/polygon (native)
+    inp.value = 'wr'; // matches wrap
     inp.dispatchEvent({ type: 'input' });
     const rows = byId['rw-cmd-menu']._children;
-    const wb = rows.find(r => r.innerText.indexOf('poly2') === 0);
-    const nat = rows.find(r => r.innerText.indexOf('polyline') === 0 || r.innerText.indexOf('polygon') === 0);
-    ok(wb && wb.style.cssText.indexOf('#7ec8e3') !== -1, 'the workbench match (poly2) is colored with the workbench color');
-    ok(nat && nat.style.cssText.indexOf('#a8e6a3') !== -1, 'the native match is colored with the native color');
+    const wrapRow = rows.find(r => r.innerText.indexOf('wrap') === 0);
+    ok(wrapRow && wrapRow.style.cssText.indexOf('#a8e6a3') !== -1, 'a native match is colored with the native color');
   }
 
-  /* ---------- 19. tag auto-detection: finds the right field among decoys via currentTag membership ---------- */
+  /* ---------- 12. tag auto-detection: finds the right field among decoys via currentTag membership ---------- */
   {
     const { win } = makeStubWindow();
     const as = {
@@ -531,7 +337,7 @@ function loadModule(win, annotationState){
     ok(RW._cmdTagList.length === 3, 'detected list has the right length');
   }
 
-  /* ---------- 20. tag auto-detection: reports null when nothing validates ---------- */
+  /* ---------- 13. tag auto-detection: reports null when nothing validates ---------- */
   {
     const { win } = makeStubWindow();
     const as = {
@@ -544,7 +350,7 @@ function loadModule(win, annotationState){
     ok(RW._lastStatus.indexOf('could not auto-detect') !== -1, 'failure is reported via status, not silent');
   }
 
-  /* ---------- 21. "#" switches the dropdown to tag search; a plain query still matches commands ---------- */
+  /* ---------- 14. "#" switches the dropdown to tag search; a plain query still matches commands ---------- */
   {
     const { win, byId } = makeStubWindow();
     const as = { currentTag: null, tags: [{id:1,name:'Alpha Room'},{id:2,name:'Beta Room'}] };
@@ -558,13 +364,13 @@ function loadModule(win, annotationState){
        '"#alpha" searches tags and finds "Alpha Room"');
     ok(tagRows[0].style.cssText.indexOf('#e0c3fc') !== -1, 'tag rows use the tag color');
 
-    inp.value = 'pipe';
+    inp.value = 'linear';
     inp.dispatchEvent({ type: 'input' });
     const cmdRows = byId['rw-cmd-menu']._children;
-    ok(cmdRows.some(r => r.innerText.indexOf('pipe') === 0), 'a plain (non-#) query still searches commands');
+    ok(cmdRows.some(r => r.innerText.indexOf('linear') === 0), 'a plain (non-#) query still searches commands');
   }
 
-  /* ---------- 22. selecting a tag at index <10 dispatches the matching digit, not a direct assignment ---------- */
+  /* ---------- 15. selecting a tag at index <10 dispatches the matching digit, not a direct assignment ---------- */
   {
     const { win } = makeStubWindow();
     const as = { currentTag: null, tags: [{id:1,name:'Alpha'},{id:2,name:'Beta'},{id:3,name:'Gamma'}] };
@@ -577,7 +383,7 @@ function loadModule(win, annotationState){
     ok(as.currentTag === null, 'the safe digit path never touches annotationState.currentTag directly');
   }
 
-  /* ---------- 23. selecting a tag at index >=10 goes through the unsafe direct-assignment path only ---------- */
+  /* ---------- 16. selecting a tag at index >=10 goes through the unsafe direct-assignment path only ---------- */
   {
     const { win } = makeStubWindow();
     const manyTags = [];
@@ -593,21 +399,23 @@ function loadModule(win, annotationState){
     ok(RW._lastStatus.indexOf('unverified') !== -1, 'the unsafe path\'s status explicitly says so, not just "tag selected"');
   }
 
-  /* ---------- 24. Space acts as Enter in command mode ---------- */
+  /* ---------- 17. Space acts as Enter in command mode ---------- */
   {
     const { win, byId } = makeStubWindow();
     loadModule(win);
     const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
     const inp = byId['rw-cmd-input'];
-    inp.value = 'pipe';
+    inp.value = 'mirror';
     inp.dispatchEvent({ type: 'input' }); // populates menuItems/menuHighlight via onInput
     let defaultPrevented = false;
     inp._fire('keydown', { key: ' ', preventDefault(){ defaultPrevented = true; } });
-    ok(RW.pipeMode === true, 'Space runs the highlighted command match (pipe), same as Enter would');
+    ok(JSON.stringify(keys) === JSON.stringify(['m']), 'Space runs the highlighted command match (mirror), same as Enter would');
     ok(defaultPrevented, 'Space is consumed (preventDefault) when it triggers a command');
   }
 
-  /* ---------- 25. Space is a literal character in tag-search mode, never triggers selection ---------- */
+  /* ---------- 18. Space is a literal character in tag-search mode, never triggers selection ---------- */
   {
     const { win, byId } = makeStubWindow();
     const as = { currentTag: null, tags: [{id:1,name:'Alpha Room'}] };
@@ -619,6 +427,22 @@ function loadModule(win, annotationState){
     inp._fire('keydown', { key: ' ', preventDefault(){ defaultPrevented = true; } });
     ok(!defaultPrevented, 'Space in tag-search mode is left alone, so a multi-word tag name can be typed');
     ok(as.currentTag === null, 'Space in tag mode never selects a tag as a side effect');
+  }
+
+  /* ---------- 19. the master RW: ON/OFF killswitch also stops global auto-capture ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    RW.enabled = false;
+    const bodyTarget = makeElement('div', byId);
+    doc._fire('keydown', { target: bodyTarget, key: 'p' });
+    ok(byId['rw-cmd-input'].value === '',
+       'RW.enabled=false stops the command line from capturing keystrokes, closing the earlier gap');
+
+    RW.enabled = true;
+    doc._fire('keydown', { target: bodyTarget, key: 'p' });
+    ok(byId['rw-cmd-input'].value === 'p', 'auto-capture resumes once RW is enabled again');
   }
 
   finish();

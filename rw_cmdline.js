@@ -1,8 +1,8 @@
-// RW vcmd — AutoCAD-style command line: type a tool's name/alias into an
-// always-visible input, autocomplete suggests matches, Enter arms it by
-// clicking its existing panel button (so all existing cross-disarm logic
-// fires unchanged) and opens a floating popup with that tool's own controls,
-// borrowed from the panel and returned on close/disarm.
+// RW vcmd — AutoCAD-style command line, NATIVE-TOOLS-ONLY BRANCH: type a
+// native app tool's name/alias (or a tag via #name) into an always-visible
+// input; autocomplete suggests matches; Enter/Space dispatches a synthetic
+// key the host app's own listeners consume. No workbench commands on this
+// branch — see CLAUDE.md.
 //
 // Full design history: CLAUDE.md.
 //
@@ -14,16 +14,17 @@
   RW.vcmd = true;
 
   /* ---------- command table ---------- */
+  // NATIVE-TOOLS-ONLY BRANCH: this table intentionally has no workbench
+  // entries (pick/cut/rect/poly2/.../cycle) — only the host app's own native
+  // tools are reachable from this command line. See CLAUDE.md.
+  //
   // Each entry is either `btn` (click this id to arm/run it) or `run` (call
   // directly — for one-shot actions with no dedicated button). `ctl` lists
   // ids to relocate into the popup; omitted for pure one-shot actions.
   // `armed` is omitted for tools with no real on/off transition (their popup
-  // just stays open until manually closed).
-  function cycleMaskAction(){
-    const next = RW.maskAction==='block' ? 'open' : (RW.maskAction==='open' ? 'add' : 'block');
-    RW.setMaskAction(next);
-    RW._commitStatus && RW._commitStatus('action: ' + next);
-  }
+  // just stays open until manually closed). None of that machinery is
+  // exercised by the table below (every entry is `run`-only) but is left
+  // intact — see CLAUDE.md for why.
 
   // Dispatches a synthetic keydown on `document` for the host app's own
   // listeners to consume — same idiom already used to make the app relinquish
@@ -47,40 +48,21 @@
     return function(){ RW._cmdDispatchAppKey(key); };
   }
 
-  const WORKBENCH = 'workbench', NATIVE = 'native';
+  const NATIVE = 'native';
 
   RW._cmdTable = [
-    { name:'pick',      kind:WORKBENCH, aliases:['p'],       btn:'rw-pick',        ctl:['rw-pick'],                                   armed:()=>!!RW.pickMode },
-    { name:'cut',       kind:WORKBENCH, aliases:['k'],       btn:'rw-cut',         ctl:['rw-cut'],                                    armed:()=>!!RW.cutMode, disarm:()=>RW.setCut(false) },
-    { name:'rect',      kind:WORKBENCH, aliases:['r','b'],   btn:'rw-rect',        ctl:['rw-rect'],                                   armed:()=>RW.maskMode==='rect' },
-    { name:'poly2',     kind:WORKBENCH, aliases:['poly','n'],btn:'rw-poly2',       ctl:['rw-poly2'],                                  armed:()=>RW.maskMode2==='poly2' },
-    { name:'brush',     kind:WORKBENCH, aliases:['j'],       btn:'rw-brush',       ctl:['rw-brush'],                                  armed:()=>RW.maskMode2==='brush' },
-    { name:'heal',      kind:WORKBENCH, aliases:['h'],       btn:'rw-heal-btn',    ctl:['rw-heal-group'],                             armed:()=>!!RW._healPreviewOn },
-    { name:'healbrush', kind:WORKBENCH, aliases:['hb'],      btn:'rw-healbrush-btn', ctl:['rw-healbrush-btn'],                        armed:()=>!!RW.healBrushMode },
-    { name:'pipe',      kind:WORKBENCH, aliases:['c'],       btn:'rw-pipe',        ctl:['rw-pipe-group'],                             armed:()=>!!RW.pipeMode },
-    { name:'elbow',     kind:WORKBENCH, aliases:['el','l'],  btn:'rw-elbow',       ctl:['rw-sec-fittings'],                           armed:()=>!!RW.elbowMode },
-    { name:'walls',     kind:WORKBENCH, aliases:['wall','o'],btn:'rw-walls',       ctl:['rw-walls'],                                  armed:()=>RW.wallOverlayState!==0,
-      disarm:()=>{ const ov=document.getElementById('rw-wall-overlay'); if (ov) ov.remove(); RW.wallOverlayState=0; } },
-    { name:'snap',      kind:WORKBENCH, aliases:['s'],       btn:'rw-snap',        ctl:['rw-snap'],                                   armed:()=>!!RW._snapEnabled },
-    { name:'text',      kind:WORKBENCH, aliases:['density'], btn:'rw-textdetect',  ctl:['rw-textdetect-group'],                       armed:()=>!!RW.textOverlayOn },
-    { name:'addmode',   kind:WORKBENCH, aliases:['add','a'], btn:'rw-addmode',     ctl:['rw-addmode'],                                armed:()=>RW.maskAction==='add' },
-    { name:'relabel',   kind:WORKBENCH, aliases:[],          btn:'rw-relabel-btn', ctl:['rw-relabel-label','rw-relabel-inp','rw-relabel-btn'] },
-    { name:'cycle',     kind:WORKBENCH, aliases:['action'],  run: cycleMaskAction },
-
-    // ---- native app tools (dispatched to the host app, not this workbench) ----
-    // Aliases deliberately omit any single letter already claimed above by a
-    // workbench command (k=cut, a=addmode, s=snap, r=rect) — those tools are
-    // reachable only by their fuller name; `polygon` also skips `poly`
-    // (already poly2's alias). One-shot `run` only: switching the app's own
-    // tool isn't an on/off concept the way arming a workbench tool is.
+    // No workbench-command aliases to avoid colliding with anymore, so every
+    // native tool gets its own real app-keymap letter (wand=k, pan=a,
+    // select=s, polygon=r) — unlike the full command line, where those four
+    // were reserved for cut/addmode/snap/rect.
     { name:'linear',   kind:NATIVE, aliases:['q'],  run: nativeDrawTool('q') },
     { name:'bbox',     kind:NATIVE, aliases:['w'],  run: nativeDrawTool('w') },
     { name:'count',    kind:NATIVE, aliases:['e'],  run: nativeDrawTool('e') },
-    { name:'polygon',  kind:NATIVE, aliases:[],     run: nativeDrawTool('r') },
+    { name:'polygon',  kind:NATIVE, aliases:['r'],  run: nativeDrawTool('r') },
     { name:'polyline', kind:NATIVE, aliases:['t'],  run: nativeDrawTool('t') },
     { name:'circle',   kind:NATIVE, aliases:['y'],  run: nativeDrawTool('y') },
     { name:'cloud',    kind:NATIVE, aliases:['u'],  run: nativeDrawTool('u') },
-    { name:'wand',     kind:NATIVE, aliases:[],     run: nativeDrawTool('k') },
+    { name:'wand',     kind:NATIVE, aliases:['k'],  run: nativeDrawTool('k') },
     { name:'wrap',     kind:NATIVE, aliases:['x'],  run: nativeDrawTool('x') },
     { name:'void',     kind:NATIVE, aliases:['v'],  run: nativeDrawTool('v') },
     { name:'tag1',     kind:NATIVE, aliases:['1'],  run: nativeDrawTool('1') },
@@ -94,8 +76,8 @@
     { name:'tag9',     kind:NATIVE, aliases:['9'],  run: nativeDrawTool('9') },
     { name:'tag0',     kind:NATIVE, aliases:['0'],  run: nativeDrawTool('0') },
 
-    { name:'pan',      kind:NATIVE, aliases:[],     run: nativeKey('a') },
-    { name:'select',   kind:NATIVE, aliases:[],     run: nativeKey('s') },
+    { name:'pan',      kind:NATIVE, aliases:['a'],  run: nativeKey('a') },
+    { name:'select',   kind:NATIVE, aliases:['s'],  run: nativeKey('s') },
     { name:'draw',     kind:NATIVE, aliases:['d'],  run: nativeKey('d') },
     { name:'label',    kind:NATIVE, aliases:['f'],  run: nativeKey('f') },
     { name:'crop',     kind:NATIVE, aliases:['g'],  run: nativeKey('g') },
@@ -527,6 +509,7 @@
   // (Escape, or click the canvas).
   document.addEventListener('keydown', function(e){
     if (e.__rwSynthetic) return; // our own dispatch to the app (RW._cmdDispatchAppKey) — never eat it
+    if (!RW.enabled) return; // respect the master RW: ON/OFF killswitch, same as every other tool
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
     if (e.ctrlKey||e.metaKey||e.altKey) return;

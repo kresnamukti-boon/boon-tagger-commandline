@@ -48,10 +48,10 @@ load-bearing, not cosmetic. `console_loader.js` concatenates all of them, in ord
 13. **rw_elbow.js** — **Elbow** / **Commit Elbow** for annotating elbow pipe fittings: drag a
     box (or click-click-click + double-click a tighter polygon region) around the fitting and it
     traces the real drawn linework inside it (see below).
-14. **rw_cmdline.js** — the always-visible command-line input (see "Keymap (workbench)" below):
-    type a tool's name/alias, autocomplete suggests matches, running one clicks that tool's real
-    panel button and opens a floating popup with its controls, borrowed from the panel and
-    returned on close/disarm. Replaces the tool-arming single-key shortcuts.
+14. **rw_cmdline.js** — the always-visible command-line input (see "Keymap (workbench)" below).
+    **On this branch (`feature/native-tools-only`), it only dispatches the host app's own native
+    tools** — no workbench command is in its table. Replaces the tool-arming single-key shortcuts
+    (which are gone regardless of branch).
 15. **rw_ocr.js** — *OCR loader variant only, not in `console_loader.js`.* Adds an OCR button to
     the app's own reference-naming dialog (see "OCR-assisted reference naming" below).
 
@@ -89,18 +89,22 @@ through all three states (block → open → add → block).
 
 ## Keymap (workbench)
 
-Every tool is armed via the command line (`rw_cmdline.js`) instead of a dedicated letter key —
-**just start typing a tool's name from anywhere**, no click or focus step needed (like AutoCAD's
-command line): the first character you type auto-focuses the always-visible input at the top of
-the panel and seeds it, an autocomplete dropdown suggests matches as you keep typing (color-coded
-— light blue for a workbench command, light green for a native app tool), and Enter or **Space**
-(AutoCAD's own classic shortcut for running a command — a unique match also just works) arms the
-tool and pops its own controls up in a floating window. Space is only a shortcut for commands —
+**This branch (`feature/native-tools-only`) is a trimmed variant**: the command line
+(`rw_cmdline.js`) only knows the host app's own native tools — no workbench command (Pick, Cut,
+Rect, Poly2, Brush, Heal, Pipe, Elbow, Walls, Snap, Text, Add-mode, Relabel, mask-action Cycle)
+is typeable here. Those tools still exist and work exactly as before — every earlier round
+already removed their single-key shortcuts — **so on this branch the only way to arm a workbench
+tool is clicking its panel button directly.** Use the `feature/command-line-tool-activator`
+branch instead if you want both workbench and native tools reachable from the command line.
+
+**Just start typing a native tool's name from anywhere**, no click or focus step needed (like
+AutoCAD's command line): the first character you type auto-focuses the always-visible input at
+the top of the panel and seeds it, an autocomplete dropdown suggests matches as you keep typing
+(light green), and Enter or **Space** (AutoCAD's own classic shortcut for running a command — a
+unique match also just works) dispatches it to the app. Space is only a shortcut for commands —
 while searching a tag (`#name`) it types a literal space instead, so a multi-word tag name still
-works; use Enter to confirm a tag. **Running an
-already-armed tool's command again turns it off** — typing `pipe` while Pipe is armed disarms it,
-same as the original single-key shortcuts worked as toggles. Utility keys that act on an
-already-armed tool are unchanged:
+works; use Enter to confirm a tag. Utility keys that act on an already-armed *workbench* tool are
+unchanged (unaffected by this branch's trim):
 
 | Key | Action |
 |---|---|
@@ -111,25 +115,18 @@ already-armed tool are unchanged:
 
 **Because typing is captured from anywhere, it takes over the host app's own single-key
 shortcuts while you're mid-command** — to press an app shortcut key directly again, blur the
-command input first (Escape, or click the canvas).
-
-Workbench command vocabulary (name — aliases): `pick` (`p`), `cut` (`k`), `rect` (`r`,`b`),
-`poly2` (`poly`,`n`), `brush` (`j`), `heal` (`h`), `healbrush` (`hb`), `pipe` (`c`), `elbow`
-(`el`,`l`), `walls` (`wall`,`o`), `snap` (`s`), `text` (`density`), `addmode` (`add`,`a`),
-`relabel`, `cycle` (`action` — cycles the current mask action block→open→add, replacing the old
-`Shift+B/N/J`).
-
-Merge/Commit/Re-extract/Hide have no command-line entry yet — still click their panel buttons.
+command input first (Escape, or click the canvas). **To turn the command line off entirely**,
+use the panel's own **RW: ON/OFF** killswitch — it stops the global typing-capture along with
+every other workbench listener.
 
 **Native app tool vocabulary** (dispatched to the host app itself, not this workbench — see "App
 built-in keymap" below for what each one does): draw-mode tools `linear` (`q`), `bbox` (`w`),
-`count` (`e`), `polygon` (no alias — `r` already belongs to the workbench's `rect`), `polyline`
-(`t`), `circle` (`y`), `cloud` (`u`), `wand` (no alias — `k` already belongs to `cut`), `wrap`
-(`x`), `void` (`v`), `tag1`-`tag9`/`tag0` (digits); mode switches `pan` (no alias — `a` already
-belongs to `addmode`), `select` (no alias — `s` already belongs to `snap`), `draw` (`d`), `label`
-(`f`), `crop` (`g`), `mirror` (`m`). Where a native tool's own app-keymap letter collides with an
-already-shipped workbench command, the workbench command keeps the letter and the native tool is
-reachable only by typing more of its name. Draw-mode tool commands dispatch a defensive `d`
+`count` (`e`), `polygon` (`r`), `polyline` (`t`), `circle` (`y`), `cloud` (`u`), `wand` (`k`),
+`wrap` (`x`), `void` (`v`), `tag1`-`tag9`/`tag0` (digits); mode switches `pan` (`a`), `select`
+(`s`), `draw` (`d`), `label` (`f`), `crop` (`g`), `mirror` (`m`). Every native tool keeps its real
+app-keymap letter here — the full command line reserves `k`/`a`/`s`/`r` for workbench commands
+that don't exist on this branch, so `wand`/`pan`/`select`/`polygon` get them back. Draw-mode tool
+commands dispatch a defensive `d`
 (enter draw mode) immediately before their own letter, since the app's keymap documents them as
 draw-mode-only tools — **not live-verified whether that's actually required**.
 
@@ -271,7 +268,8 @@ A dedicated tool for annotating elbow pipe fittings — separate from the Pipe t
 plain bend in a pipe's path stays a plain mitered corner, and only an elbow you actually box gets
 special handling.
 
-- Type **`elbow`** (or `el`/`l`) into the command line to arm the tool, then either **drag a box**
+- Click the **Elbow** panel button to arm the tool (on this branch — the full command line's
+  `elbow`/`el`/`l` also works there), then either **drag a box**
   around the elbow fitting (a real drag,
   not a click — same 5px threshold every other drag tool uses), or **click a series of points and
   double-click to close** a tighter polygon region — useful when a rectangle would inevitably
@@ -339,10 +337,10 @@ no tool's behavior changes because of it.
 
 ### Hidden controls
 
-**Relabel**, **Add ⊕**, and **Text? (density)** are currently hidden in the panel (not removed
-— the underlying features still work, and are reachable via the command line's `relabel`/
-`addmode`/`text` entries) since they weren't useful for current annotation work. Ask if you want
-any of these visible again.
+**Relabel**, **Add ⊕**, and **Text? (density)** are currently hidden in the panel (not removed —
+the underlying features still work; on the full command-line branch they're also reachable via
+its `relabel`/`addmode`/`text` entries, not available on this native-tools-only branch) since
+they weren't useful for current annotation work. Ask if you want any of these visible again.
 
 ## App built-in keymap (reference, extracted from their JS)
 
