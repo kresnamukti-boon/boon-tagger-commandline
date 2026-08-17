@@ -92,8 +92,12 @@ through all three states (block → open → add → block).
 Every tool is armed via the command line (`rw_cmdline.js`) instead of a dedicated letter key —
 **just start typing a tool's name from anywhere**, no click or focus step needed (like AutoCAD's
 command line): the first character you type auto-focuses the always-visible input at the top of
-the panel and seeds it, an autocomplete dropdown suggests matches as you keep typing, and Enter
-(or a unique match) arms the tool and pops its own controls up in a floating window. **Running an
+the panel and seeds it, an autocomplete dropdown suggests matches as you keep typing (color-coded
+— light blue for a workbench command, light green for a native app tool), and Enter or **Space**
+(AutoCAD's own classic shortcut for running a command — a unique match also just works) arms the
+tool and pops its own controls up in a floating window. Space is only a shortcut for commands —
+while searching a tag (`#name`) it types a literal space instead, so a multi-word tag name still
+works; use Enter to confirm a tag. **Running an
 already-armed tool's command again turns it off** — typing `pipe` while Pipe is armed disarms it,
 same as the original single-key shortcuts worked as toggles. Utility keys that act on an
 already-armed tool are unchanged:
@@ -128,6 +132,16 @@ already-shipped workbench command, the workbench command keeps the letter and th
 reachable only by typing more of its name. Draw-mode tool commands dispatch a defensive `d`
 (enter draw mode) immediately before their own letter, since the app's keymap documents them as
 draw-mode-only tools — **not live-verified whether that's actually required**.
+
+**Tag search: type `#` followed by a tag name** (e.g. `#conference`) to search the app's full tag
+list, shown in the same dropdown color-coded in purple. The tag list is auto-detected from
+`annotationState` when the workbench loads — if detection fails, `#` search reports that in the
+status line rather than silently doing nothing. Selecting one of the first 10 tags dispatches the
+app's own 1-9/0 hotkey (assumed to match the tag's position in the detected list); selecting a
+tag beyond that falls back to directly assigning `annotationState.currentTag` — **not
+live-verified**, this is the one part of tag search that might not actually stick in the app's
+own UI, since it bypasses whatever setter the app may expect. Watch the status line after
+selecting: it always says which of the two mechanisms fired.
 
 ### Heal Interior (`rw_healinterior.js`)
 

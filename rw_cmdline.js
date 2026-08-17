@@ -28,9 +28,13 @@
   // Dispatches a synthetic keydown on `document` for the host app's own
   // listeners to consume — same idiom already used to make the app relinquish
   // its own tool (rw_install.js/rw_wallspan.js/rw_elbow.js's synthetic
-  // Escape), generalized to an arbitrary key.
+  // Escape), generalized to an arbitrary key. Marked `__rwSynthetic` so the
+  // global auto-capture listener below (registered on the same target) never
+  // swallows its own dispatch before the app's real listener sees it.
   RW._cmdDispatchAppKey = function(key){
-    document.dispatchEvent(new KeyboardEvent('keydown', {key:key, bubbles:true, cancelable:true}));
+    const evt = new KeyboardEvent('keydown', {key:key, bubbles:true, cancelable:true});
+    evt.__rwSynthetic = true;
+    document.dispatchEvent(evt);
   };
 
   // Draw-mode tool letters dispatch `d` (draw mode) first — defensive, since
@@ -43,23 +47,25 @@
     return function(){ RW._cmdDispatchAppKey(key); };
   }
 
+  const WORKBENCH = 'workbench', NATIVE = 'native';
+
   RW._cmdTable = [
-    { name:'pick',      aliases:['p'],       btn:'rw-pick',        ctl:['rw-pick'],                                   armed:()=>!!RW.pickMode },
-    { name:'cut',       aliases:['k'],       btn:'rw-cut',         ctl:['rw-cut'],                                    armed:()=>!!RW.cutMode, disarm:()=>RW.setCut(false) },
-    { name:'rect',      aliases:['r','b'],   btn:'rw-rect',        ctl:['rw-rect'],                                   armed:()=>RW.maskMode==='rect' },
-    { name:'poly2',     aliases:['poly','n'],btn:'rw-poly2',       ctl:['rw-poly2'],                                  armed:()=>RW.maskMode2==='poly2' },
-    { name:'brush',     aliases:['j'],       btn:'rw-brush',       ctl:['rw-brush'],                                  armed:()=>RW.maskMode2==='brush' },
-    { name:'heal',      aliases:['h'],       btn:'rw-heal-btn',    ctl:['rw-heal-group'],                             armed:()=>!!RW._healPreviewOn },
-    { name:'healbrush', aliases:['hb'],      btn:'rw-healbrush-btn', ctl:['rw-healbrush-btn'],                        armed:()=>!!RW.healBrushMode },
-    { name:'pipe',      aliases:['c'],       btn:'rw-pipe',        ctl:['rw-pipe-group'],                             armed:()=>!!RW.pipeMode },
-    { name:'elbow',     aliases:['el','l'],  btn:'rw-elbow',       ctl:['rw-sec-fittings'],                           armed:()=>!!RW.elbowMode },
-    { name:'walls',     aliases:['wall','o'],btn:'rw-walls',       ctl:['rw-walls'],                                  armed:()=>RW.wallOverlayState!==0,
+    { name:'pick',      kind:WORKBENCH, aliases:['p'],       btn:'rw-pick',        ctl:['rw-pick'],                                   armed:()=>!!RW.pickMode },
+    { name:'cut',       kind:WORKBENCH, aliases:['k'],       btn:'rw-cut',         ctl:['rw-cut'],                                    armed:()=>!!RW.cutMode, disarm:()=>RW.setCut(false) },
+    { name:'rect',      kind:WORKBENCH, aliases:['r','b'],   btn:'rw-rect',        ctl:['rw-rect'],                                   armed:()=>RW.maskMode==='rect' },
+    { name:'poly2',     kind:WORKBENCH, aliases:['poly','n'],btn:'rw-poly2',       ctl:['rw-poly2'],                                  armed:()=>RW.maskMode2==='poly2' },
+    { name:'brush',     kind:WORKBENCH, aliases:['j'],       btn:'rw-brush',       ctl:['rw-brush'],                                  armed:()=>RW.maskMode2==='brush' },
+    { name:'heal',      kind:WORKBENCH, aliases:['h'],       btn:'rw-heal-btn',    ctl:['rw-heal-group'],                             armed:()=>!!RW._healPreviewOn },
+    { name:'healbrush', kind:WORKBENCH, aliases:['hb'],      btn:'rw-healbrush-btn', ctl:['rw-healbrush-btn'],                        armed:()=>!!RW.healBrushMode },
+    { name:'pipe',      kind:WORKBENCH, aliases:['c'],       btn:'rw-pipe',        ctl:['rw-pipe-group'],                             armed:()=>!!RW.pipeMode },
+    { name:'elbow',     kind:WORKBENCH, aliases:['el','l'],  btn:'rw-elbow',       ctl:['rw-sec-fittings'],                           armed:()=>!!RW.elbowMode },
+    { name:'walls',     kind:WORKBENCH, aliases:['wall','o'],btn:'rw-walls',       ctl:['rw-walls'],                                  armed:()=>RW.wallOverlayState!==0,
       disarm:()=>{ const ov=document.getElementById('rw-wall-overlay'); if (ov) ov.remove(); RW.wallOverlayState=0; } },
-    { name:'snap',      aliases:['s'],       btn:'rw-snap',        ctl:['rw-snap'],                                   armed:()=>!!RW._snapEnabled },
-    { name:'text',      aliases:['density'], btn:'rw-textdetect',  ctl:['rw-textdetect-group'],                       armed:()=>!!RW.textOverlayOn },
-    { name:'addmode',   aliases:['add','a'], btn:'rw-addmode',     ctl:['rw-addmode'],                                armed:()=>RW.maskAction==='add' },
-    { name:'relabel',   aliases:[],          btn:'rw-relabel-btn', ctl:['rw-relabel-label','rw-relabel-inp','rw-relabel-btn'] },
-    { name:'cycle',     aliases:['action'],  run: cycleMaskAction },
+    { name:'snap',      kind:WORKBENCH, aliases:['s'],       btn:'rw-snap',        ctl:['rw-snap'],                                   armed:()=>!!RW._snapEnabled },
+    { name:'text',      kind:WORKBENCH, aliases:['density'], btn:'rw-textdetect',  ctl:['rw-textdetect-group'],                       armed:()=>!!RW.textOverlayOn },
+    { name:'addmode',   kind:WORKBENCH, aliases:['add','a'], btn:'rw-addmode',     ctl:['rw-addmode'],                                armed:()=>RW.maskAction==='add' },
+    { name:'relabel',   kind:WORKBENCH, aliases:[],          btn:'rw-relabel-btn', ctl:['rw-relabel-label','rw-relabel-inp','rw-relabel-btn'] },
+    { name:'cycle',     kind:WORKBENCH, aliases:['action'],  run: cycleMaskAction },
 
     // ---- native app tools (dispatched to the host app, not this workbench) ----
     // Aliases deliberately omit any single letter already claimed above by a
@@ -67,34 +73,107 @@
     // reachable only by their fuller name; `polygon` also skips `poly`
     // (already poly2's alias). One-shot `run` only: switching the app's own
     // tool isn't an on/off concept the way arming a workbench tool is.
-    { name:'linear',   aliases:['q'],  run: nativeDrawTool('q') },
-    { name:'bbox',     aliases:['w'],  run: nativeDrawTool('w') },
-    { name:'count',    aliases:['e'],  run: nativeDrawTool('e') },
-    { name:'polygon',  aliases:[],     run: nativeDrawTool('r') },
-    { name:'polyline', aliases:['t'],  run: nativeDrawTool('t') },
-    { name:'circle',   aliases:['y'],  run: nativeDrawTool('y') },
-    { name:'cloud',    aliases:['u'],  run: nativeDrawTool('u') },
-    { name:'wand',     aliases:[],     run: nativeDrawTool('k') },
-    { name:'wrap',     aliases:['x'],  run: nativeDrawTool('x') },
-    { name:'void',     aliases:['v'],  run: nativeDrawTool('v') },
-    { name:'tag1',     aliases:['1'],  run: nativeDrawTool('1') },
-    { name:'tag2',     aliases:['2'],  run: nativeDrawTool('2') },
-    { name:'tag3',     aliases:['3'],  run: nativeDrawTool('3') },
-    { name:'tag4',     aliases:['4'],  run: nativeDrawTool('4') },
-    { name:'tag5',     aliases:['5'],  run: nativeDrawTool('5') },
-    { name:'tag6',     aliases:['6'],  run: nativeDrawTool('6') },
-    { name:'tag7',     aliases:['7'],  run: nativeDrawTool('7') },
-    { name:'tag8',     aliases:['8'],  run: nativeDrawTool('8') },
-    { name:'tag9',     aliases:['9'],  run: nativeDrawTool('9') },
-    { name:'tag0',     aliases:['0'],  run: nativeDrawTool('0') },
+    { name:'linear',   kind:NATIVE, aliases:['q'],  run: nativeDrawTool('q') },
+    { name:'bbox',     kind:NATIVE, aliases:['w'],  run: nativeDrawTool('w') },
+    { name:'count',    kind:NATIVE, aliases:['e'],  run: nativeDrawTool('e') },
+    { name:'polygon',  kind:NATIVE, aliases:[],     run: nativeDrawTool('r') },
+    { name:'polyline', kind:NATIVE, aliases:['t'],  run: nativeDrawTool('t') },
+    { name:'circle',   kind:NATIVE, aliases:['y'],  run: nativeDrawTool('y') },
+    { name:'cloud',    kind:NATIVE, aliases:['u'],  run: nativeDrawTool('u') },
+    { name:'wand',     kind:NATIVE, aliases:[],     run: nativeDrawTool('k') },
+    { name:'wrap',     kind:NATIVE, aliases:['x'],  run: nativeDrawTool('x') },
+    { name:'void',     kind:NATIVE, aliases:['v'],  run: nativeDrawTool('v') },
+    { name:'tag1',     kind:NATIVE, aliases:['1'],  run: nativeDrawTool('1') },
+    { name:'tag2',     kind:NATIVE, aliases:['2'],  run: nativeDrawTool('2') },
+    { name:'tag3',     kind:NATIVE, aliases:['3'],  run: nativeDrawTool('3') },
+    { name:'tag4',     kind:NATIVE, aliases:['4'],  run: nativeDrawTool('4') },
+    { name:'tag5',     kind:NATIVE, aliases:['5'],  run: nativeDrawTool('5') },
+    { name:'tag6',     kind:NATIVE, aliases:['6'],  run: nativeDrawTool('6') },
+    { name:'tag7',     kind:NATIVE, aliases:['7'],  run: nativeDrawTool('7') },
+    { name:'tag8',     kind:NATIVE, aliases:['8'],  run: nativeDrawTool('8') },
+    { name:'tag9',     kind:NATIVE, aliases:['9'],  run: nativeDrawTool('9') },
+    { name:'tag0',     kind:NATIVE, aliases:['0'],  run: nativeDrawTool('0') },
 
-    { name:'pan',      aliases:[],     run: nativeKey('a') },
-    { name:'select',   aliases:[],     run: nativeKey('s') },
-    { name:'draw',     aliases:['d'],  run: nativeKey('d') },
-    { name:'label',    aliases:['f'],  run: nativeKey('f') },
-    { name:'crop',     aliases:['g'],  run: nativeKey('g') },
-    { name:'mirror',   aliases:['m'],  run: nativeKey('m') },
+    { name:'pan',      kind:NATIVE, aliases:[],     run: nativeKey('a') },
+    { name:'select',   kind:NATIVE, aliases:[],     run: nativeKey('s') },
+    { name:'draw',     kind:NATIVE, aliases:['d'],  run: nativeKey('d') },
+    { name:'label',    kind:NATIVE, aliases:['f'],  run: nativeKey('f') },
+    { name:'crop',     kind:NATIVE, aliases:['g'],  run: nativeKey('g') },
+    { name:'mirror',   kind:NATIVE, aliases:['m'],  run: nativeKey('m') },
   ];
+
+  /* ---------- tag auto-detection (# search) ---------- */
+  // This codebase has never referenced anything beyond annotationState.currentTag
+  // (the currently-selected tag, {id,name}) before. Tries a short list of
+  // plausible field names for the FULL tag list and validates a candidate
+  // against currentTag (if one is set) so a same-shaped-but-unrelated array
+  // can't be mistaken for it. Logs which field matched, or that none did, so
+  // a wrong guess is visible immediately rather than silently no-op.
+  RW._cmdTagList = null;
+  RW._cmdTagSource = null;
+  RW._cmdDetectTags = function(){
+    const as = (typeof annotationState !== 'undefined') ? annotationState : null;
+    const cur = as && as.currentTag;
+    const candidates = ['tags', 'availableTags', 'tagList', 'allTags', 'projectTags', 'tagOptions'];
+    for (const key of candidates){
+      const val = as && as[key];
+      if (!Array.isArray(val) || !val.length) continue;
+      if (!val.every(function(t){ return t && typeof t === 'object' && 'id' in t && 'name' in t; })) continue;
+      if (cur && !val.some(function(t){ return t.id === cur.id; })) continue;
+      RW._cmdTagList = val;
+      RW._cmdTagSource = key;
+      RW._commitStatus && RW._commitStatus('detected ' + val.length + ' tags via annotationState.' + key);
+      return val;
+    }
+    RW._cmdTagList = null;
+    RW._cmdTagSource = null;
+    RW._commitStatus && RW._commitStatus('could not auto-detect the tag list — # search unavailable; check what Object.keys(annotationState) shows');
+    return null;
+  };
+
+  RW._cmdMatchTags = function(query){
+    const list = RW._cmdTagList || [];
+    const q = (query||'').trim().toLowerCase();
+    const ranked = [];
+    list.forEach(function(tag, idx){
+      const name = (tag.name||'').toLowerCase();
+      let rank = -1;
+      if (!q) rank = 2;
+      else if (name === q) rank = 0;
+      else if (name.indexOf(q) === 0) rank = 1;
+      else if (name.indexOf(q) !== -1) rank = 2;
+      if (rank !== -1) ranked.push({tag:tag, idx:idx, rank:rank});
+    });
+    ranked.sort(function(a,b){ return a.rank - b.rank; });
+    return ranked.map(function(r){ return {tag:r.tag, idx:r.idx}; });
+  };
+
+  // Tags at list-index 0-9 are assumed to map to the app's own 1/2/.../9/0
+  // hotkeys in list order — unconfirmed, but if right, dispatching the digit
+  // goes through the app's real tag-selection code (same proven-safe idiom
+  // as the native-tool dispatch above).
+  RW._cmdSelectTag = function(tag, idx){
+    if (idx != null && idx < 10){
+      const digit = String((idx + 1) % 10);
+      RW._cmdDispatchAppKey(digit);
+      RW._commitStatus && RW._commitStatus('tag: ' + tag.name + ' (via digit ' + digit + ')');
+    } else {
+      RW._cmdSelectTagUnsafe(tag);
+    }
+  };
+
+  // UNVERIFIED — the one genuinely risky part of tag search. No known safe
+  // mechanism reaches a tag beyond the first 10 without live inspection of
+  // the app's own setter/reactive-state mechanism, so this directly assigns
+  // annotationState's current tag. If the app needs its own setter/dispatch
+  // to notice the change, this can silently desync the app's displayed tag
+  // from what's actually used on commit. Kept isolated and never called for
+  // an index <10 specifically so it's easy to find and replace once the
+  // real mechanism is confirmed live.
+  RW._cmdSelectTagUnsafe = function(tag){
+    if (typeof annotationState !== 'undefined') annotationState.currentTag = tag;
+    RW._commitStatus && RW._commitStatus('tag: ' + tag.name + ' (direct assignment — unverified, confirm it actually applied)');
+  };
 
   /* ---------- matching ---------- */
   RW._cmdMatch = function(query){
@@ -291,7 +370,7 @@
   };
 
   /* ---------- command bar + autocomplete ---------- */
-  let barEl=null, inputEl=null, menuEl=null, menuItems=[], menuHighlight=-1;
+  let barEl=null, inputEl=null, menuEl=null, menuItems=[], menuHighlight=-1, menuMode='command';
 
   function ensureMenuDom(){
     if (menuEl) return;
@@ -311,26 +390,50 @@
 
   function hideMenu(){ if (menuEl) menuEl.style.display = 'none'; }
 
+  // Text color only (never the row background, which the keyboard-highlight
+  // already uses) so kind stays legible regardless of which row is selected.
+  const KIND_COLOR = { workbench: '#7ec8e3', native: '#a8e6a3' };
+  const TAG_COLOR = '#e0c3fc';
+
   function renderMenuRows(){
     if (!menuItems.length){ hideMenu(); return; }
     ensureMenuDom();
     menuEl.innerHTML = '';
-    menuItems.forEach(function(entry, i){
+    menuItems.forEach(function(item, i){
       const row = document.createElement('div');
       row.className = 'rw-cmd-item';
+      let label, color;
+      if (menuMode === 'tag'){
+        label = item.tag.name + (item.idx < 10 ? ' (' + ((item.idx + 1) % 10) + ')' : '');
+        color = TAG_COLOR;
+      } else {
+        label = item.name + ((item.aliases && item.aliases.length) ? (' (' + item.aliases.join(',') + ')') : '');
+        color = KIND_COLOR[item.kind] || '#eee';
+      }
       row.style.cssText = 'padding:3px 6px;font-size:11px;cursor:pointer;'
+        + 'color:' + color + ';'
         + (i===menuHighlight ? 'background:rgba(255,140,0,0.3);' : '');
-      row.innerText = entry.name + ((entry.aliases && entry.aliases.length) ? (' (' + entry.aliases.join(',') + ')') : '');
+      row.innerText = label;
       row.addEventListener('mousedown', function(e){ e.preventDefault(); }); // survive the input's blur
-      row.addEventListener('click', function(){ runAndClear(entry.name); });
+      row.addEventListener('click', function(){ runAndClear(item); });
       menuEl.appendChild(row);
     });
     positionMenu();
     menuEl.style.display = 'block';
   }
 
+  // Typing "#" as the first character switches the same dropdown/keyboard
+  // navigation to search RW._cmdTagList instead of RW._cmdTable.
   function onInput(){
-    menuItems = RW._cmdMatch(inputEl.value).slice(0, 8);
+    const v = inputEl.value;
+    if (v.charAt(0) === '#'){
+      if (!RW._cmdTagList) RW._cmdDetectTags();
+      menuMode = 'tag';
+      menuItems = RW._cmdMatchTags(v.slice(1)).slice(0, 8);
+    } else {
+      menuMode = 'command';
+      menuItems = RW._cmdMatch(v).slice(0, 8);
+    }
     menuHighlight = menuItems.length ? 0 : -1;
     renderMenuRows();
   }
@@ -341,8 +444,9 @@
     renderMenuRows();
   }
 
-  function runAndClear(name){
-    RW.runCommand(name);
+  function runAndClear(item){
+    if (menuMode === 'tag') RW._cmdSelectTag(item.tag, item.idx);
+    else RW.runCommand(item.name);
     inputEl.value = '';
     hideMenu();
     inputEl.blur();
@@ -353,19 +457,25 @@
     if (e.key === 'ArrowUp'){ e.preventDefault(); e.stopPropagation(); moveHighlight(-1); return; }
     if (e.key === 'Tab'){
       e.preventDefault(); e.stopPropagation();
-      if (menuHighlight >= 0 && menuItems[menuHighlight]) inputEl.value = menuItems[menuHighlight].name;
+      if (menuHighlight >= 0 && menuItems[menuHighlight]){
+        const item = menuItems[menuHighlight];
+        inputEl.value = menuMode === 'tag' ? ('#' + item.tag.name) : item.name;
+      }
       return;
     }
-    if (e.key === 'Enter'){
+    if (e.key === 'Enter' || (e.key === ' ' && menuMode === 'command')){
+      // Space is AutoCAD's classic alternative to Enter for running a
+      // command — scoped to command mode only, since a tag name (unlike a
+      // command name) can legitimately contain a space to keep typing.
       e.preventDefault(); e.stopPropagation();
-      let entry = null;
-      if (menuHighlight >= 0 && menuItems[menuHighlight]) entry = menuItems[menuHighlight];
-      else {
+      let item = null;
+      if (menuHighlight >= 0 && menuItems[menuHighlight]) item = menuItems[menuHighlight];
+      else if (menuMode === 'command'){
         const matches = RW._cmdMatch(inputEl.value);
-        if (matches.length === 1) entry = matches[0];
+        if (matches.length === 1) item = matches[0];
       }
-      if (entry) runAndClear(entry.name);
-      else { RW._commitStatus && RW._commitStatus('unknown command: ' + inputEl.value); }
+      if (item) runAndClear(item);
+      else { RW._commitStatus && RW._commitStatus('unknown ' + (menuMode==='tag'?'tag':'command') + ': ' + inputEl.value); }
       return;
     }
     if (e.key === 'Escape'){
@@ -394,7 +504,7 @@
     inputEl.type = 'text';
     inputEl.autocomplete = 'off';
     inputEl.spellcheck = false;
-    inputEl.placeholder = 'command… (pipe, elbow, rect…) — just start typing';
+    inputEl.placeholder = 'command… (pipe, elbow, rect…) or #tag — just start typing';
     inputEl.style.cssText = 'flex:1;font-size:11px;padding:2px 4px;';
     barEl.appendChild(inputEl);
     host.insertBefore(barEl, sections || list);
@@ -405,6 +515,7 @@
   }
 
   mountCommandBar();
+  RW._cmdDetectTags();
 
   // Global auto-capture: typing anywhere (nothing else focused) seeds the
   // command input and focuses it — only the FIRST character needs this;
@@ -415,6 +526,7 @@
   // native single-key shortcut directly again, blur the command input first
   // (Escape, or click the canvas).
   document.addEventListener('keydown', function(e){
+    if (e.__rwSynthetic) return; // our own dispatch to the app (RW._cmdDispatchAppKey) — never eat it
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
     if (e.ctrlKey||e.metaKey||e.altKey) return;
@@ -428,5 +540,6 @@
     onInput();
   }, true);
 
-  return 'vcmd up: command line — just start typing a tool name, ' + RW._cmdTable.length + ' commands';
+  return 'vcmd up: command line — just start typing a tool name (or # for a tag), '
+    + RW._cmdTable.length + ' commands, ' + (RW._cmdTagList ? RW._cmdTagList.length + ' tags' : 'no tags detected');
 })()

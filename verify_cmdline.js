@@ -101,7 +101,17 @@ function makeStubWindow(){
     body: body,
     getElementById(id){ return byId[id] || null; },
     createElement(tag){ return makeElement(tag, byId); },
-    dispatchEvent(){ return true; },
+    // Real enough to exercise RW._cmdDispatchAppKey against the actually-
+    // registered listeners (including our own auto-capture one), honoring
+    // stopImmediatePropagation like a real document would.
+    dispatchEvent(evt){
+      if (evt.target === undefined) evt.target = documentStub;
+      for (const fn of (docListeners[evt.type] || []).slice()){
+        fn(evt);
+        if (evt._immediateStopped) break;
+      }
+      return !evt.defaultPrevented;
+    },
     addEventListener(type, fn){ (docListeners[type] = docListeners[type] || []).push(fn); },
     _fire(type, evt){
       evt = Object.assign({ stopPropagation(){}, preventDefault(){}, stopImmediatePropagation(){} }, evt);
@@ -210,11 +220,16 @@ function makeStubWindow(){
 function FakeKeyboardEvent(type, init){
   Object.assign(this, init || {});
   this.type = type;
+  this.defaultPrevented = false;
+  this._immediateStopped = false;
 }
+FakeKeyboardEvent.prototype.preventDefault = function(){ this.defaultPrevented = true; };
+FakeKeyboardEvent.prototype.stopPropagation = function(){};
+FakeKeyboardEvent.prototype.stopImmediatePropagation = function(){ this._immediateStopped = true; };
 
-function loadModule(win){
+function loadModule(win, annotationState){
   const src = fs.readFileSync(path.join(__dirname, 'rw_cmdline.js'), 'utf8');
-  const sandboxGlobals = { window: win, document: win.document, KeyboardEvent: FakeKeyboardEvent };
+  const sandboxGlobals = { window: win, document: win.document, KeyboardEvent: FakeKeyboardEvent, annotationState: annotationState };
   const fn = new Function(...Object.keys(sandboxGlobals), src + '\n//# sourceURL=rw_cmdline.js');
   const ret = fn(...Object.values(sandboxGlobals));
   return ret;
@@ -453,6 +468,157 @@ function loadModule(win){
     ok(otherInput.value === 'hello', 'typing into a real, unrelated input is not hijacked');
     ok(!byId['rw-cmd-input'] || byId['rw-cmd-input'].value === '',
        'the command input is not seeded by keystrokes aimed at another input');
+  }
+
+  /* ---------- 16. the bug fix: our own synthetic dispatch is never eaten by the auto-capture listener ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+
+    RW._cmdDispatchAppKey('q'); // real dispatch, real registered listeners — not stubbed
+    ok(byId['rw-cmd-input'].value === '',
+       'a synthetic dispatch for a native tool does not get typed into the command input');
+
+    // A real (non-synthetic) single-character keydown must still be captured —
+    // guards against the fix being too broad and disabling auto-capture entirely.
+    const real = new FakeKeyboardEvent('keydown', { target: win.document.body, key: 'p' });
+    win.document.dispatchEvent(real);
+    ok(byId['rw-cmd-input'].value === 'p',
+       'a genuine keystroke (not marked __rwSynthetic) is still auto-captured as before');
+  }
+
+  /* ---------- 17. every table entry has a valid, explicit `kind` ---------- */
+  {
+    const { win } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const bad = RW._cmdTable.filter(e => e.kind !== 'workbench' && e.kind !== 'native');
+    ok(bad.length === 0, 'every command has kind "workbench" or "native" (offenders: ' + bad.map(e=>e.name).join(',') + ')');
+    ok(RW._cmdTable.find(e => e.name === 'pipe').kind === 'workbench', 'pipe is a workbench command');
+    ok(RW._cmdTable.find(e => e.name === 'linear').kind === 'native', 'linear is a native command');
+    ok(RW._cmdTable.find(e => e.name === 'cycle').kind === 'workbench',
+       'cycle (run-only, no button) is still correctly classified as workbench, not inferred wrong from having no btn');
+  }
+
+  /* ---------- 18. the dropdown color-codes workbench vs. native entries ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'poly'; // matches both poly2 (workbench) and polyline/polygon (native)
+    inp.dispatchEvent({ type: 'input' });
+    const rows = byId['rw-cmd-menu']._children;
+    const wb = rows.find(r => r.innerText.indexOf('poly2') === 0);
+    const nat = rows.find(r => r.innerText.indexOf('polyline') === 0 || r.innerText.indexOf('polygon') === 0);
+    ok(wb && wb.style.cssText.indexOf('#7ec8e3') !== -1, 'the workbench match (poly2) is colored with the workbench color');
+    ok(nat && nat.style.cssText.indexOf('#a8e6a3') !== -1, 'the native match is colored with the native color');
+  }
+
+  /* ---------- 19. tag auto-detection: finds the right field among decoys via currentTag membership ---------- */
+  {
+    const { win } = makeStubWindow();
+    const as = {
+      currentTag: { id: 5, name: 'Door' },
+      unrelatedArray: [{id:1,name:'Nope'}], // shaped right, but not in the candidate name list
+      tagList: [{id:9,name:'Wrong list'}],  // a candidate NAME, but doesn't contain currentTag -> must be skipped
+      tags: [{id:1,name:'Wall'},{id:5,name:'Door'},{id:12,name:'Window'}], // the real one
+    };
+    loadModule(win, as);
+    const RW = win.__RW;
+    ok(RW._cmdTagSource === 'tags', 'detection picks "tags", the candidate that actually contains currentTag');
+    ok(RW._cmdTagList.length === 3, 'detected list has the right length');
+  }
+
+  /* ---------- 20. tag auto-detection: reports null when nothing validates ---------- */
+  {
+    const { win } = makeStubWindow();
+    const as = {
+      currentTag: { id: 5, name: 'Door' },
+      tagList: [{id:9,name:'Wrong list'}], // present, shaped right, but never contains currentTag
+    };
+    loadModule(win, as);
+    const RW = win.__RW;
+    ok(RW._cmdTagList === null, 'no candidate validates against currentTag -> RW._cmdTagList stays null');
+    ok(RW._lastStatus.indexOf('could not auto-detect') !== -1, 'failure is reported via status, not silent');
+  }
+
+  /* ---------- 21. "#" switches the dropdown to tag search; a plain query still matches commands ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Alpha Room'},{id:2,name:'Beta Room'}] };
+    loadModule(win, as);
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = '#alpha';
+    inp.dispatchEvent({ type: 'input' });
+    const tagRows = byId['rw-cmd-menu']._children;
+    ok(tagRows.length === 1 && tagRows[0].innerText.indexOf('Alpha Room') === 0,
+       '"#alpha" searches tags and finds "Alpha Room"');
+    ok(tagRows[0].style.cssText.indexOf('#e0c3fc') !== -1, 'tag rows use the tag color');
+
+    inp.value = 'pipe';
+    inp.dispatchEvent({ type: 'input' });
+    const cmdRows = byId['rw-cmd-menu']._children;
+    ok(cmdRows.some(r => r.innerText.indexOf('pipe') === 0), 'a plain (non-#) query still searches commands');
+  }
+
+  /* ---------- 22. selecting a tag at index <10 dispatches the matching digit, not a direct assignment ---------- */
+  {
+    const { win } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Alpha'},{id:2,name:'Beta'},{id:3,name:'Gamma'}] };
+    loadModule(win, as);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW._cmdSelectTag(as.tags[2], 2); // 3rd tag, index 2 -> digit '3'
+    ok(JSON.stringify(keys) === JSON.stringify(['3']), 'index 2 dispatches digit "3"');
+    ok(as.currentTag === null, 'the safe digit path never touches annotationState.currentTag directly');
+  }
+
+  /* ---------- 23. selecting a tag at index >=10 goes through the unsafe direct-assignment path only ---------- */
+  {
+    const { win } = makeStubWindow();
+    const manyTags = [];
+    for (let i = 0; i < 12; i++) manyTags.push({id:i, name:'Tag'+i});
+    const as = { currentTag: null, tags: manyTags };
+    loadModule(win, as);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW._cmdSelectTag(manyTags[11], 11); // index 11, beyond the first 10
+    ok(keys.length === 0, 'index 11 never goes through the digit-dispatch path');
+    ok(as.currentTag === manyTags[11], 'index 11 falls back to direct assignment of annotationState.currentTag');
+    ok(RW._lastStatus.indexOf('unverified') !== -1, 'the unsafe path\'s status explicitly says so, not just "tag selected"');
+  }
+
+  /* ---------- 24. Space acts as Enter in command mode ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'pipe';
+    inp.dispatchEvent({ type: 'input' }); // populates menuItems/menuHighlight via onInput
+    let defaultPrevented = false;
+    inp._fire('keydown', { key: ' ', preventDefault(){ defaultPrevented = true; } });
+    ok(RW.pipeMode === true, 'Space runs the highlighted command match (pipe), same as Enter would');
+    ok(defaultPrevented, 'Space is consumed (preventDefault) when it triggers a command');
+  }
+
+  /* ---------- 25. Space is a literal character in tag-search mode, never triggers selection ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Alpha Room'}] };
+    loadModule(win, as);
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#alpha';
+    inp.dispatchEvent({ type: 'input' });
+    let defaultPrevented = false;
+    inp._fire('keydown', { key: ' ', preventDefault(){ defaultPrevented = true; } });
+    ok(!defaultPrevented, 'Space in tag-search mode is left alone, so a multi-word tag name can be typed');
+    ok(as.currentTag === null, 'Space in tag mode never selects a tag as a side effect');
   }
 
   finish();
