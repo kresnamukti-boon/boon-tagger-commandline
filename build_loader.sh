@@ -40,7 +40,7 @@ done
 
 cat >> "$OUT" <<'FOOTER'
 
-  console.log('[RW] command line ready: ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' tags' : 'no tags detected') + '. Type a tool name (or # for a tag) anywhere on the page.');
+  console.log('[RW] command line ready: ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' tags' : 'no tags detected') + '. Type a tool name (or # for a tag) anywhere on the page. select is the resting state (Escape returns here); hold the middle mouse button to pan.');
 })()
 FOOTER
 

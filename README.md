@@ -55,15 +55,16 @@ use the panel's own **RW: ON/OFF** killswitch — it stops the global typing-cap
 every other listener this branch registers.
 
 **Native app tool vocabulary** (dispatched to the host app itself — see "App built-in keymap"
-below for what each one does): draw-mode tools `linear` (`q`), `bbox` (`w`), `count` (`e`),
+below for what each one does): draw-mode tools `linear` (`q`), `rect` (`w`), `count` (`e`),
 `polygon` (`r`), `polyline` (`t`), `circle` (`y`), `cloud` (`u`), `wand` (`k`), `wrap` (`x`),
-`void` (`v`), `ribbon` (`p`), `tag1`-`tag9`/`tag0` (digits); mode switches `pan` (`a`), `select` (`s`), `draw`
+`void` (`v`), `mline` (`p`), `tag1`-`tag9`/`tag0` (digits); mode switches `pan` (`a`), `select` (`s`), `draw`
 (`d`), `label` (`f`), `crop` (`g`), `mirror` (`m`). Every native tool keeps its real app-keymap
 letter as its alias — with no workbench commands left on this branch to collide with, nothing is
-reserved. **`tag1`…`tag0` dispatch the app's own digit keys directly — they do not mean "the Nth
-tag in the detected list."** That distinction matters: a real job showed the app's digit hotkeys
-do **not** map to `#`-search tag-list order (see tag search below) — `tag1`…`tag0` are a
-completely separate mechanism from selecting a searched tag.
+reserved. `rect` and `mline` are AutoCAD-ish renames of what used to be `bbox` and `ribbon` — both
+old names still work as aliases. **`tag1`…`tag0` dispatch the app's own digit keys directly — they
+do not mean "the Nth tag in the detected list."** That distinction matters: a real job showed the
+app's digit hotkeys do **not** map to `#`-search tag-list order (see tag search below) —
+`tag1`…`tag0` are a completely separate mechanism from selecting a searched tag.
 
 Draw-mode tool commands dispatch a defensive `d` (enter draw mode) immediately before their own
 letter, since the app's keymap documents them as draw-mode-only tools — **not live-verified
@@ -88,12 +89,165 @@ on commit. Watch the status line: it always says "confirm it actually applied."
 
 | Key | Action |
 |---|---|
-| `Escape` | clear the command input, or close the autocomplete dropdown if it's open |
+| `Escape` (command input focused) | clear the command input, or close the autocomplete dropdown if it's open |
+| `Escape` (nothing focused) | return the app to select — see "Select is the resting state" below |
 | `ArrowUp`/`ArrowDown` | move the autocomplete highlight |
 | `Tab` | fill the input with the highlighted match without running it |
 
+So Escape typed twice in a row does two different things: the first clears/closes the command bar
+(if it had focus), the second — now that nothing is focused — sends the app back to select.
+
+## Select is the resting state (AutoCAD-style)
+
+AutoCAD always drops you back to the bare selection cursor once a command finishes or is
+cancelled. This build does the same via three triggers, all funnelled through one path so they
+can never fire twice for the same event: **on load** (once the app looks idle — skipped if a tool
+is already armed, so re-pasting the loader after a navigation doesn't yank you out of a tool
+that's already working); **on Escape** while nothing else is focused (deferred slightly so the
+app's own Escape handling — cancelling whatever it was doing — runs first); and **on a poll**
+that notices `annotationState.currentTool` clearing itself back to null on its own (e.g. a shape
+finished), debounced across two ticks so a momentary null while switching tools can't yank you out
+of the tool you just picked. Running `pan`/`label`/`crop`/`mirror` is never fought back to select.
+
+If this ever mis-fires, `__RW._cmdAutoSelect = false` in the console turns the whole feature off
+without needing to re-paste the loader (it also turns itself off automatically, reporting why on
+the status line, if it ever reverts more than 5 times in 5 seconds — a safety net against a bad
+`currentTool`/`mode` read looping).
+
+**Press `Space` with nothing typed — it's a toggle** — another AutoCAD convention (pressing
+Space/Enter with an empty command line repeats the last command), extended into an on/off switch:
+
+- **Nothing currently armed** and a real draw tool has been run at least once (mode switches like
+  `pan`/`select`/`label`/`crop`/`mirror` don't count) → Space **re-arms that same tool** directly,
+  no need to type its name again.
+- **A tool is currently armed** → Space **closes it** (back to select) — unconditionally, whether
+  or not you adjusted any of its settings first; every setting change is already fully applied the
+  moment you make it, so there's nothing left in progress to protect by keeping the tool open.
+
+Both only fire when the command bar is genuinely empty (nothing mid-typed) and neither opens the
+command bar or dropdown — they're direct actions, not a search. Whether a tool is "currently armed"
+is tracked ourselves (not re-read from the app each press), so closing then repeating in a fast
+loop — press Space, press Space again right away, again, again — reliably keeps alternating between
+the tool and select every time, with no dead cycle where a press silently does nothing. It keeps
+remembering the same tool across as many close/repeat cycles as you like, until you explicitly use
+a different one, at which point *that* becomes what Space repeats instead.
+
+One accepted trade-off from tracking this ourselves: if a tool gets armed some other way — clicking
+the app's own toolbar directly, bypassing this command line — Space won't know to close it, since
+nothing here ever saw it arm. If nothing has been run through the command line yet at all, Space
+falls through to ordinary typing instead (opening the full command list, same as any other letter).
+
+**Practical tip**: this blind spot only ever affects *arming* — always start a tool by typing its
+name here (or letting the bare-param blend catch it while another tool's active), never by clicking
+the app's own toolbar button directly, and Space's close/repeat toggle stays accurate indefinitely.
+*Closing* has no such caveat — Escape, Space, or the tool just finishing on its own are all picked
+up correctly no matter how the tool was armed in the first place.
+
+## Middle-mouse hold-drag pans (does not switch tools)
+
+Hold the **middle mouse button** (scroll-wheel click) and drag to pan the page — like grabbing and
+dragging the paper, AutoCAD-style. Unlike every other feature here, this does **not** dispatch a
+key to the app's own pan tool — it moves the page directly, the same way ordinary scrolling would,
+specifically so that whatever tool is currently armed (`linear`, `rect`, `mline`, ...) survives the
+whole gesture untouched. See CLAUDE.md's amended Constraints for why this is the one feature that
+writes to the page directly instead of dispatching a synthetic key.
+
+The app's own native `Space` = temp-pan key still exists in its keymap (see below) but is, in
+practice, shadowed by this build's global typing-capture (a bare `Space` gets absorbed into the
+command input rather than reaching the app) — middle-drag is the replacement, not an addition.
+
+If it doesn't do anything on a given page, run `__RW._panDiagnose()` in the console first — it walks
+up from the annotation canvas and prints every ancestor's scroll metrics, which answers the one
+real unknown here: whether this app's viewport actually scrolls, or pans via a CSS transform
+instead (in which case no amount of `scrollLeft` writing will do anything, and this feature is a
+harmless no-op). Other console-tunable escape hatches: `__RW._panInvert = true` if the direction
+feels backwards; `__RW._panEnabled = false` to disable panning alone without touching the rest of
+the command line; `__RW._panStopHostEvents = false` to let the host app's own canvas see the middle
+press too (default `true`, to guard against a canvas whose mousedown handler doesn't check which
+button was pressed); `__RW._panContainerOverride = someElement` to skip the automatic scroll-ancestor
+search entirely.
+
+**Note on the global name**: everything here lives on `window.__RW` (the double-underscore prefix
+avoids colliding with any global the host page might already have). Inside this project's own
+source files it's aliased to a shorter local `const RW = window.__RW`, but that alias is only
+visible inside each module's own closure — **from the DevTools console itself, you must type
+`__RW.`, not `RW.`** (a bare `RW` is not defined globally and throws `ReferenceError: RW is not
+defined`). Every console command in this README uses the correct `__RW.` form.
+
 The only annotation-state write anywhere in this build is `annotationState.currentTag` (tag
-selection, above) — nothing here stages annotations, drawings, or edits of any kind.
+selection, above) — nothing here stages annotations, drawings, or edits of any kind. Middle-drag
+pan is a distinct, deliberate exception to that: it writes `scrollLeft`/`scrollTop` on a page
+viewport element, never on anything under `annotationState`.
+
+## Tool settings: drill in, apply a value, re-arm the tool
+
+Wand, wrap, and mline each have their own dedicated settings in the app. Their real DOM identity
+was confirmed live (via `__RW._toolSettingsDiagnose()`, below) and a write-back test on a real
+job — plain `.value` assignment plus a synthetic `input` event took effect immediately and
+persisted, no framework workaround needed. Every param under a tool is discovered **live**, by id
+prefix, every time you drill in — nothing is hardcoded beyond the three prefixes below, so ranges
+stay accurate if the app's own sliders ever change, and any control the app adds later under the
+same prefix becomes usable automatically, no update needed here:
+
+| Tool | Confirmed id prefix | Params found live under it (this round) |
+|---|---|---|
+| `wand` | `magic-wand-` | `tolerance` (0–255), `detail` (0–15, step 0.5), `padding` (-20–20) |
+| `wrap` | `shrink-wrap-` | `padding` (0–50), `smoothing` (0–50, step 0.5), `polygon-mode` (checkbox) |
+| `mline` | `ribbon-` | `width` (≥1, no confirmed max), `anchor` (dropdown, options read live) |
+
+**Two ways to reach a param, both lead to the same next step:**
+
+- **Type `<tool>.`** (e.g. `wand.`) from anywhere, active or not, to drill into that tool's
+  settings — the same dropdown switches to listing its parameters, each showing its live current
+  value (and range, for numeric ones).
+- **Or just type the param name bare** (e.g. `tolerance`, no `wand.` prefix) whenever that tool is
+  already the one currently armed — it's blended straight into the ordinary autocomplete
+  (highlighted in the same settings color), right alongside every other command. This is
+  **additive, not exclusive**: everything else you could already type — switching to a totally
+  different tool, tag search, anything — still works exactly the same while a tool with settings
+  is active. Nothing is blocked; the active tool's own params are just an extra, faster option.
+
+**What happens next depends on the param's type:**
+
+- **Numeric** (`tolerance`, `padding`, `width`, …): the input becomes `wand.tolerance = ` and stays
+  focused (unlike every other mode here, this one deliberately does **not** clear/blur) so you can
+  type a number directly. Press **Enter** to apply — clamped to the live range, written to the
+  real control, `input`+`change` dispatched, tool re-armed.
+- **Checkbox** (`polygon-mode`): picking it **flips it immediately** — off becomes on (or back),
+  re-arms the tool, no extra typing needed. Picking it again flips it back.
+- **Select** (`anchor`): picking it immediately shows a **second, numbered list** of its live
+  options — e.g. `1. Left`, `2. Center`, `3. Right` — read straight from the real `<select>`, never
+  hardcoded, starting highlighted on whichever option is *actually* current right now. Type a
+  number *or* the option's own name (a prefix is enough — `ri` matches `Right`) to filter, then
+  **Enter/Space/click** applies whichever's highlighted — no separate "type a value" step, since
+  picking the option *is* the value. **Tab live-previews each option on the real page as you
+  cycle** (Shift+Tab cycles the other way, wrapping at both ends) — genuinely applied, not just
+  filled into the input, so you can compare states before committing. The option list stays open
+  the whole time you're tabbing.
+
+**Escape** at any point cancels cleanly. For a numeric or checkbox param it always leaves the real
+control completely untouched. For a select param it's slightly different, on purpose: if you never
+pressed Tab, nothing was ever touched, same as the others — but if you *did* Tab through a few
+states to preview them, Escape puts it back to whatever was genuinely current before you started
+previewing, not whichever state you happened to land on last.
+
+**Confirmed vs. still-hedged**: the write-back technique (`.value` + `input`/`change` events) was
+tested live specifically against `magic-wand-tolerance`, and it worked — the app picked up the
+change and it stuck. Applying `wand.tolerance` therefore reports without a hedge. Every other
+control uses the identical technique but hasn't been individually write-tested the same way, so
+their status messages still say "confirm it actually applied," this project's standing convention
+for anything not fully live-confirmed.
+
+### `__RW._toolSettingsDiagnose(filter)` — the read-only probe this was built from
+
+A one-shot, console-only diagnostic — same convention as `__RW._panDiagnose()` above, manual and
+read-only, never touching `annotationState` or the status line. It reports two things separately:
+every `[data-tool]` element on the page (the same selector round 2's live inspection used to
+discover the `ribbon` tool), and every settings control anywhere on the page (range/number/
+checkbox inputs, selects) with its live value, min/max/step, name, title, and aria-label. Pass a
+string to narrow the tool list to a case-insensitive substring match on `data-tool`, e.g.
+`__RW._toolSettingsDiagnose('wand')`. Still useful for discovering a control this build doesn't
+know about yet, or for confirming the table above hasn't drifted.
 
 ## App built-in keymap (reference, extracted from their JS)
 
@@ -116,6 +270,10 @@ Double-click finishes polygon/polyline
 Arrows nudge selection 1px, Shift+arrows 10px
 ```
 
+Note: `Space` temp pan is the app's own native gesture, listed here for completeness, but this
+build's global typing-capture absorbs a bare `Space` into the command input rather than letting it
+reach the app — see "Middle-mouse hold-drag pans" above for the replacement.
+
 **A structural note on shadowing**: any workbench listener registered in the capture phase with
 `stopPropagation()` fully shadows the app's own same-key shortcut — this is how the command
 line's global auto-capture works (it must consume a keystroke before the app's own listener sees
@@ -127,3 +285,8 @@ only way to reach an app shortcut directly while this build is loaded.
 - Nothing auto-draws or auto-submits annotations.
 - The activity tracker (`/analytics/api/events/`) is read-only observed, never spoofed.
 - This is a bridge tool, not a replacement for engineering review.
+- Every feature dispatches a synthetic key to make the app switch its own tool/mode — **except**
+  middle-mouse pan, which writes `scrollLeft`/`scrollTop` on a page viewport element directly
+  (deliberately, since dispatching the app's own pan key would switch tools, which panning must
+  not do). It never touches `annotationState` or anything under it. See CLAUDE.md's Constraints
+  section for the full reasoning.
