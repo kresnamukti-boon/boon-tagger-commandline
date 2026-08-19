@@ -904,7 +904,10 @@ function loadModule(win, annotationState, timers){
     const orig = RW._cmdDispatchAppKey;
     RW._cmdDispatchAppKey = function(k, q){ dispatches.push(k); return orig(k, q); };
 
-    RW.runCommand('mirror'); // stamps RW._cmdLastUserCmdAt = Date.now()
+    // A draw-tool run (not a mode switch) — stamps RW._cmdLastUserCmdAt = Date.now()
+    // without also setting RW._cmdModeActive, which would otherwise block the revert
+    // on its own and defeat this test's isolation of the grace-window guard alone.
+    RW.runCommand('wand');
     dispatches.length = 0;
     as.currentTool = null; as.mode = null; // mode unreadable — falls back to tool-only logic
     RW._cmdToolWatchTick(); // arms the pending edge
@@ -2542,6 +2545,181 @@ function loadModule(win, annotationState, timers){
     keys.length = 0;
     doc._fire('keydown', { target: bodyTarget, key: ' ' }); // repeat -> should now be mline, not wand
     ok(JSON.stringify(keys) === JSON.stringify(['d','p']), 'once a different tool is actually used, IT becomes the one Space remembers, not wand');
+  }
+
+  /* ---------- 116. Round 7d: switching to label from an active tool records RW._cmdModeActive, not just RW._cmdToolArmed=false ---------- */
+  {
+    const { win } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    RW.runCommand('mline');
+    ok(RW._cmdModeActive === null && RW._cmdToolArmed === true, 'sanity: arming a draw tool records no active mode');
+
+    RW.runCommand('label');
+    ok(RW._cmdModeActive === 'label', 'switching to label records it as the active mode');
+    ok(RW._cmdToolArmed === false, 'and still clears the armed flag exactly as before');
+  }
+
+  /* ---------- 117. Round 7d (corrected): Space from label forces SELECT — never resumes the prior tool ---------- */
+  // A real job reported the opposite of round 7d's first cut: leaving `label` was already
+  // falling into the plain "nothing armed -> repeat last tool" branch (every mode switch
+  // clears RW._cmdToolArmed to false) even before SPACE_GOES_SELECT_FROM existed — THAT
+  // was the reported bug, not a resume feature to preserve. This test replaces the old
+  // (backwards) "Space resumes mline" assertion.
+  {
+    const { win, byId, doc } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    const bodyTarget = makeElement('div', byId);
+
+    RW.runCommand('mline'); // arm the tool
+    RW.runCommand('label'); // leave it for label
+    keys.length = 0;
+    doc._fire('keydown', { target: bodyTarget, key: ' ' });
+
+    ok(JSON.stringify(keys) === JSON.stringify(['s']), 'Space forces select directly — never resumes mline');
+    ok(byId['rw-cmd-input'].value === '', 'the command bar is never seeded — this is a direct action, not a search');
+    ok(RW._cmdModeActive === null, 'forcing select clears the active-mode record, via the ordinary RW._cmdGoSelect path');
+    ok(RW._cmdLastTool === 'mline', 'mline is still remembered — a LATER Space (once at rest) would repeat it, same as any other close-then-repeat cycle');
+  }
+
+  /* ---------- 118. Round 7d (corrected): forcing select wins even if RW._cmdToolArmed is stale-true (branch-ordering regression guard) ---------- */
+  // Reachable in practice only if a tool got armed some other way (e.g. the app's own
+  // toolbar) right before label — RW._cmdToolArmed would then be stale-true. Both branches
+  // happen to dispatch select in that case, but this still guards that the
+  // SPACE_GOES_SELECT_FROM check (checked first) is what's actually firing, not an
+  // accidental fallthrough — confirmed by never seeding the command bar either.
+  {
+    const { win, byId, doc } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    const bodyTarget = makeElement('div', byId);
+
+    RW.runCommand('mline');
+    RW.runCommand('label');
+    RW._cmdToolArmed = true; // force the stale/conflicting state directly
+    keys.length = 0;
+
+    doc._fire('keydown', { target: bodyTarget, key: ' ' });
+    ok(JSON.stringify(keys) === JSON.stringify(['s']), 'select still fires — the stale armed flag changes nothing about the outcome');
+  }
+
+  /* ---------- 119. Round 7d: scope is label-only — pan/crop/mirror keep their existing Space behavior unchanged ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    const bodyTarget = makeElement('div', byId);
+
+    RW.runCommand('mline');
+    RW.runCommand('pan'); // a mode switch, but NOT in SPACE_GOES_SELECT_FROM
+    ok(RW._cmdModeActive === 'pan', 'pan is still recorded as an active mode...');
+    keys.length = 0;
+    doc._fire('keydown', { target: bodyTarget, key: ' ' });
+    // Unchanged from test 111c: with RW._cmdToolArmed already false (set by running `pan`),
+    // this hits the pre-existing "repeat" branch, not the label-only select override.
+    ok(JSON.stringify(keys) === JSON.stringify(['d','p']), '...but Space still just repeats the last tool exactly as it did before this round, not the select override');
+  }
+
+  /* ---------- 120. Round 7d (corrected): Space forces select from label even with no RW._cmdLastTool recorded at all ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    RW.runCommand('label'); // no tool was ever run first — RW._cmdLastTool stays null
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    const bodyTarget = makeElement('div', byId);
+
+    doc._fire('keydown', { target: bodyTarget, key: ' ' });
+    ok(JSON.stringify(keys) === JSON.stringify(['s']), 'still forces select — the override does not depend on RW._cmdLastTool existing');
+    ok(byId['rw-cmd-input'].value === '', 'the command bar is never seeded');
+  }
+
+  /* ---------- 121. Round 7d: the poll's mode gate now also trusts RW._cmdModeActive, not just a live annotationState.mode read ---------- */
+  // Mirrors test 29 (the live-mode-string gate) but defeats that guard on purpose
+  // (mode set to an unrecognized/unreadable value) to prove RW._cmdModeActive alone
+  // is enough to stop the poll from fighting label back to select — the actual gap
+  // this round's live report traced back to (CLAUDE.md: only 'draw' has ever been
+  // confirmed live; label's real mode string is unconfirmed).
+  {
+    const { win } = makeStubWindow();
+    const as = { currentTool: 'ribbon', mode: 'draw' };
+    loadModule(win, as);
+    const RW = win.__RW;
+    RW._cmdDispatchAppKey = function(){}; // isolate — no resync from a real dispatch
+
+    RW.runCommand('mline');
+    RW.runCommand('label'); // RW._cmdModeActive = 'label'
+    RW._cmdLastUserCmdAt = 0; // defeat the grace window too — runCommand() above re-stamps it to "now"
+    as.currentTool = null; as.mode = undefined; // simulate an unrecognized/unreadable mode string
+
+    let selectCalls = 0;
+    const origGoSelect = RW._cmdGoSelect;
+    RW._cmdGoSelect = function(){ selectCalls++; return origGoSelect.apply(this, arguments); };
+    RW._cmdToolWatchTick();
+    RW._cmdToolWatchTick();
+    ok(selectCalls === 0, 'RW._cmdModeActive alone blocks the revert even though annotationState.mode is unreadable');
+
+    // And once we resync back to null (as a real resume/close would do), the still-pending
+    // edge is retried on the very next tick rather than having been silently dropped.
+    RW._cmdModeActive = null;
+    RW._cmdToolWatchTick();
+    ok(selectCalls === 1, 'clearing RW._cmdModeActive lets the still-pending edge fire — retried, not lost');
+  }
+
+  /* ---------- 122. RW._zoomDiagnose: walks ancestors reporting transform/zoom-relevant fields ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+
+    const outer = makeElement('div', byId); outer.id = 'zoom-outer';
+    outer._computed = { transform: 'matrix(1.5, 0, 0, 1.5, 0, 0)' }; // simulates a CSS-transform zoom implementation
+    const canvas = makeElement('canvas', byId); canvas.id = 'annotation-canvas';
+    canvas.width = 1600; canvas.height = 1200; // backing resolution
+    canvas.clientWidth = 800; canvas.clientHeight = 600; // rendered size — a res/render mismatch is itself a zoom signal
+    outer.appendChild(canvas);
+
+    const result = RW._zoomDiagnose(canvas);
+    ok(result.ancestors.length === 2, 'walked canvas + its one ancestor');
+    ok(result.ancestors[0].tag === 'CANVAS' && result.ancestors[0].canvasWidthAttr === 1600 && result.ancestors[0].canvasHeightAttr === 1200,
+      'reports a <canvas> element\'s backing resolution attributes');
+    ok(result.ancestors[1].id === 'zoom-outer' && result.ancestors[1].computedTransform === 'matrix(1.5, 0, 0, 1.5, 0, 0)',
+      'reports an ancestor\'s live computed transform — the CSS-transform-zoom signal');
+  }
+
+  /* ---------- 123. RW._zoomDiagnose: scans annotationState for zoom/scale-like keys, ignoring unrelated ones ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { zoomLevel: 1.5, scale: 2, currentTool: 'linear', foo: 'bar' };
+    loadModule(win, as);
+    const RW = win.__RW;
+    const target = makeElement('div', byId);
+
+    const result = RW._zoomDiagnose(target);
+    const keys = result.annotationStateZoomLikeKeys.map(function(k){ return k.key; }).sort();
+    ok(JSON.stringify(keys) === JSON.stringify(['scale', 'zoomLevel']), 'finds only the zoom/scale-shaped keys, not currentTool or foo');
+    const zl = result.annotationStateZoomLikeKeys.find(function(k){ return k.key === 'zoomLevel'; });
+    ok(zl.value === 1.5, 'reports the live value, not just the key name');
+  }
+
+  /* ---------- 124. RW._zoomDiagnose: degrades gracefully with no annotationState at all ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win); // no annotationState
+    const RW = win.__RW;
+    const target = makeElement('div', byId);
+
+    const result = RW._zoomDiagnose(target);
+    ok(Array.isArray(result.annotationStateZoomLikeKeys) && result.annotationStateZoomLikeKeys.length === 0,
+      'empty array, not a throw, when annotationState is absent');
   }
 
   finish();

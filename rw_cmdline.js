@@ -75,7 +75,13 @@
     return fn;
   }
   function nativeKey(key){
-    return function(){ RW._cmdDispatchAppKey(key); };
+    const fn = function(){ RW._cmdDispatchAppKey(key); };
+    // Marks this as a mode switch (pan/select/label/crop/mirror) so RW.runCommand
+    // can stamp RW._cmdModeActive below — Space's "force select from label" branch
+    // needs to know which mode we're deliberately sitting in, self-maintained the
+    // same way RW._cmdToolArmed already is rather than re-reading annotationState.
+    fn.__isModeSwitch = true;
+    return fn;
   }
 
   const NATIVE = 'native';
@@ -456,8 +462,17 @@
     // state updates synchronously). Running any mode switch (including a bare
     // `select`) also marks nothing armed, same as an explicit close.
     if (entry.run){
-      if (entry.run.__isDrawTool){ RW._cmdLastTool = entry.name; RW._cmdToolArmed = true; }
-      else { RW._cmdToolArmed = false; }
+      if (entry.run.__isDrawTool){
+        RW._cmdLastTool = entry.name; RW._cmdToolArmed = true; RW._cmdModeActive = null;
+      } else {
+        RW._cmdToolArmed = false;
+        // RW._cmdModeActive tracks which deliberate mode switch we're sitting in —
+        // `select` means we're at rest (same as never having entered one), every
+        // other mode switch (currently just `label`, see SPACE_GOES_SELECT_FROM
+        // below) records itself so Space knows to force select instead of falling
+        // into the ordinary repeat-last-tool branch.
+        RW._cmdModeActive = (entry.run.__isModeSwitch && entry.name !== 'select') ? entry.name : null;
+      }
       entry.run();
       return true;
     }
@@ -488,12 +503,25 @@
   const SELECT_MODE = 'select';
   const DRAW_MODE = 'draw';
   const KNOWN_MODES = ['pan','select','draw','label','crop','mirror'];
+  // Which RW._cmdModeActive values make Space go straight to SELECT, instead of
+  // falling into the ordinary "nothing armed -> repeat the last tool" branch
+  // below. Scoped to `label` only per live confirmation — pan/draw/crop/mirror
+  // keep their existing Space behavior (repeat from idle, close when armed).
+  //
+  // Round 7d originally had this backwards — see CLAUDE.md's "Round 7d
+  // (corrected)" for the live report that caught it: leaving `label` was
+  // already falling into the plain repeat-last-tool branch even before this
+  // constant existed (every mode switch clears RW._cmdToolArmed to false), and
+  // that was exactly the reported bug, not a fix target to preserve. What's
+  // needed here is the OPPOSITE override — force select, don't let repeat fire.
+  const SPACE_GOES_SELECT_FROM = ['label'];
 
   RW._cmdAutoSelect = true;             // console escape hatch: __RW._cmdAutoSelect = false
   RW._cmdLastSelectAt = 0;
   RW._cmdLastUserCmdAt = 0;
   RW._cmdLastTool = null;               // last draw tool run via RW.runCommand — see the Space-repeats-last-tool listener below
   RW._cmdToolArmed = false;             // our own belief about whether a tool is currently armed — see RW.runCommand and RW._cmdGoSelect
+  RW._cmdModeActive = null;             // our own belief about which mode switch (see SPACE_GOES_SELECT_FROM) we're deliberately sitting in, or null
   RW._cmdToolPrev = null;
   RW._cmdToolNullPending = false;
   RW._cmdAutoSelectRevertLog = [];
@@ -556,6 +584,7 @@
     if (readMode() === SELECT_MODE){
       resetWatchState(); // already resting — don't assume `s` toggles rather than switches
       RW._cmdToolArmed = false; // defensively in sync too — we're confirmed at rest either way
+      RW._cmdModeActive = null;
       return false;
     }
     RW._cmdDispatchAppKey(SELECT_KEY, quiet);
@@ -569,6 +598,7 @@
     // tool right after a Space-close, regardless of how quickly the app's own state
     // actually catches up.
     RW._cmdToolArmed = false;
+    RW._cmdModeActive = null;
     return true;
   };
 
@@ -594,6 +624,7 @@
       if (inputEl && inputEl.value) return;                                  // mid-typed command
       const mode = readMode();
       if (mode !== null && mode !== DRAW_MODE) return;                       // deliberate pan/label/crop/... — don't fight it
+      if (RW._cmdModeActive) return;                                         // OUR OWN record says we're in one too (e.g. `mode` was unreadable/unrecognized)
       RW._cmdToolNullPending = false;
       RW._cmdGoSelect('poll', true);
       return;
@@ -1018,6 +1049,19 @@
     // burned by exactly this kind of live-timing assumption before. Tracking our
     // own armed/closed state instead sidesteps the question entirely.
     if (e.key === ' ' && (!inputEl || !inputEl.value)){
+      // Leaving a mode switch in SPACE_GOES_SELECT_FROM (currently just `label`)
+      // forces select — checked ahead of the plain repeat branch below so it
+      // isn't shadowed: RW._cmdToolArmed is already false the moment `label` runs
+      // (every mode switch clears it), so without this override the very next
+      // check down would repeat RW._cmdLastTool instead — exactly the bug a real
+      // job reported (Space from label was resuming the prior tool; the fix is to
+      // force select here, not to make the resume "work" — see CLAUDE.md's
+      // "Round 7d (corrected)").
+      if (SPACE_GOES_SELECT_FROM.indexOf(RW._cmdModeActive) !== -1){
+        e.preventDefault(); e.stopImmediatePropagation();
+        RW._cmdGoSelect('space', true, true); // bypass the auto-trigger suppression window, same as the close branch below
+        return;
+      }
       if (!RW._cmdToolArmed && RW._cmdLastTool){
         e.preventDefault(); e.stopImmediatePropagation();
         RW.runCommand(RW._cmdLastTool);
@@ -1347,7 +1391,71 @@
   document.addEventListener('auxclick', panOnAuxClick, true);
   if (window.addEventListener) window.addEventListener('blur', panOnWindowBlur);
 
+  /* ---------- wheel-zoom: diagnostic first, no dispatch yet ---------- */
+  // Two prior cuts of this feature both dispatched a synthetic event to trigger
+  // one of the app's own documented zoom shortcuts (Ctrl+scroll, then Ctrl+Plus/
+  // Minus) — both reverted per direct user request: plain scrolling should zoom
+  // by itself, no keypress (real or synthetic) involved at all.
+  //
+  // That means this can no longer follow the dispatch idiom every other feature in
+  // this file uses — it has to actually PRODUCE the zoom itself, the same
+  // "implement it ourselves" territory middle-drag pan occupies. But zoom is not
+  // like pan: pan moves EXISTING content within its own scroll container via the
+  // universal, works-everywhere `scrollLeft`/`scrollTop` DOM properties — nothing
+  // about how the content is drawn changes, so there's no way to get it wrong.
+  // Zoom has no universal DOM equivalent — every app implements it differently
+  // (a CSS transform on a wrapper, a canvas re-rendered at a new resolution, a
+  // PDF-library-specific zoom API, a plain `annotationState` field) — and guessing
+  // wrong here is not cosmetic: if this app's own click/annotation-placement
+  // coordinates are computed against the page's real (untransformed) layout, an
+  // externally-applied CSS `transform: scale()` would silently desync the visual
+  // zoom from where a click actually lands, which is a correctness risk this
+  // project's own annotation-safety boundary (see Constraints below) exists to
+  // avoid — worse than shipping nothing.
+  //
+  // So: a read-only diagnostic first, exactly the same move round 3's
+  // RW._panDiagnose made before pan's real mechanism was built, rather than a
+  // third guess. Run RW._zoomDiagnose() once before zooming (via the app's own
+  // Ctrl+scroll or Ctrl+Plus/Minus) and once after, and diff the two outputs by
+  // eye — whatever actually changed is the real mechanism, and that's what the
+  // wheel handler will drive once it's identified. Not wired into the wheel event
+  // at all yet — plain scrolling still just scrolls, unchanged, until this comes
+  // back with a real answer instead of a guess.
+  RW._zoomDiagnose = function(el){
+    el = el || document.getElementById('annotation-canvas') || document.body;
+    const ancestors = [];
+    let n = el, hops = 0;
+    while (n && n.nodeType === 1 && hops++ < 64){
+      const cs = window.getComputedStyle ? window.getComputedStyle(n) : null;
+      ancestors.push({
+        tag: n.tagName, id: n.id, className: n.className,
+        computedTransform: cs ? cs.transform : undefined,
+        inlineTransform: n.style ? n.style.transform : undefined,
+        inlineZoom: n.style ? n.style.zoom : undefined, // legacy, non-standard, but some apps still use it
+        width: n.style && n.style.width, height: n.style && n.style.height,
+        // Only meaningful for a <canvas>: a mismatch between attribute size (the
+        // backing resolution) and the CSS-rendered size is itself one common real
+        // implementation of "zoom" (draw at native res, scale via CSS layout).
+        canvasWidthAttr: n.tagName === 'CANVAS' ? n.width : undefined,
+        canvasHeightAttr: n.tagName === 'CANVAS' ? n.height : undefined,
+        clientWidth: n.clientWidth, clientHeight: n.clientHeight
+      });
+      n = n.parentElement;
+    }
+    const stateKeys = [];
+    const as = (typeof annotationState !== 'undefined') ? annotationState : null;
+    if (as){
+      for (const k of Object.keys(as)){
+        if (/zoom|scale/i.test(k)) stateKeys.push({ key: k, value: as[k] });
+      }
+    }
+    const result = { ancestors: ancestors, annotationStateZoomLikeKeys: stateKeys };
+    if (console.table){ console.table(ancestors); console.table(stateKeys); } else { console.log(result); }
+    return result;
+  };
+
   return 'vcmd up: command line (native tools only) — just start typing a tool name (or # for a tag), '
     + RW._cmdTable.length + ' commands, ' + (RW._cmdTagList ? RW._cmdTagList.length + ' tags' : 'no tags detected')
-    + '. select is the resting state (Escape returns here); middle-drag pans without switching tools.';
+    + '. select is the resting state (Escape returns here); middle-drag pans without switching tools; '
+    + 'run __RW._zoomDiagnose() before/after zooming to find the real mechanism for wheel-zoom.';
 })()

@@ -123,6 +123,12 @@ Space/Enter with an empty command line repeats the last command), extended into 
 - **A tool is currently armed** → Space **closes it** (back to select) — unconditionally, whether
   or not you adjusted any of its settings first; every setting change is already fully applied the
   moment you make it, so there's nothing left in progress to protect by keeping the tool open.
+- **You switched to `label` while a tool was active** → Space goes straight to **select**, not
+  back to the tool that was active before label (`mline -> label -> Space -> select`, not `mline
+  -> label -> Space -> mline`). This is a deliberate override, scoped to `label` only — without
+  it, Space would fall into the plain repeat-from-idle rule above and resume the prior tool
+  directly, which is what leaving `label` used to do and is not what's wanted here. Switching to
+  `pan`/`crop`/`mirror` still uses that plain repeat-from-idle behavior, unaffected.
 
 Both only fire when the command bar is genuinely empty (nothing mid-typed) and neither opens the
 command bar or dropdown — they're direct actions, not a search. Whether a tool is "currently armed"
@@ -166,6 +172,34 @@ the command line; `__RW._panStopHostEvents = false` to let the host app's own ca
 press too (default `true`, to guard against a canvas whose mousedown handler doesn't check which
 button was pressed); `__RW._panContainerOverride = someElement` to skip the automatic scroll-ancestor
 search entirely.
+
+## Scroll-to-zoom (exploratory — diagnostic only so far)
+
+The goal: plain scrolling zooms in and out, no modifier key or keypress involved at all — not a
+dispatch to one of the app's own zoom shortcuts, an actual self-implemented zoom.
+
+That turns out to need real information this project doesn't have yet. Middle-drag pan (below)
+could be self-implemented safely because it moves EXISTING content within its own scroll container
+via `scrollLeft`/`scrollTop` — universal DOM properties every scrollable element has, so there's no
+way to get the mechanism wrong. Zoom has no such universal equivalent: different apps implement it
+as a CSS transform on a wrapper element, a canvas redrawn at a different resolution, a PDF-library
+zoom API, or a plain state field — and guessing wrong here isn't just cosmetic. If this app computes
+where a click lands from its real (untransformed) page layout, an externally-applied CSS zoom could
+silently desync what you see from where an annotation actually gets placed — a correctness risk
+serious enough that shipping a guess would be worse than shipping nothing.
+
+So this round shipped a **read-only diagnostic only**, `__RW._zoomDiagnose()` — run it once before
+zooming (using the app's own Ctrl+scroll or Ctrl+Plus/Minus), zoom in noticeably, run it again, and
+compare the two outputs by eye. It reports, for the annotation canvas and every ancestor: computed
+and inline CSS `transform`, the legacy `zoom` CSS property, a `<canvas>` element's backing
+resolution (`width`/`height` attributes) versus its rendered size, and any `annotationState` key
+whose name looks zoom/scale-shaped. Whatever value actually changes between the two runs is the
+real mechanism — that's what a real scroll-to-zoom implementation needs to drive, once it's known.
+Plain scrolling still just scrolls, unchanged, until then.
+
+(Two earlier attempts at this — redispatching a synthetic Ctrl+scroll, then dispatching Ctrl+Plus/
+Minus keydowns — were both dispatch-to-the-app approaches; this request specifically wants no
+dispatch involved at all, so both were dropped rather than adapted.)
 
 **Note on the global name**: everything here lives on `window.__RW` (the double-underscore prefix
 avoids colliding with any global the host page might already have). Inside this project's own
