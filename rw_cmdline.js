@@ -670,11 +670,6 @@
     menuEl.style.cssText = 'position:fixed;display:none;z-index:99991;background:#222;color:#eee;'
       + 'border:1px solid #666;border-radius:4px;max-height:200px;overflow-y:auto;';
     document.body.appendChild(menuEl);
-    // Mouse-wheel navigation (see onMenuWheel below) — registered on the menu itself,
-    // not document, so it only ever fires while the pointer is actually over the
-    // dropdown. { passive:false } because we call preventDefault to stop the menu
-    // (and the page under it) from scrolling.
-    menuEl.addEventListener('wheel', onMenuWheel, { passive: false });
   }
 
   function positionMenu(){
@@ -816,42 +811,6 @@
     renderMenuRows();
   }
 
-  // Console escape hatches for the two new navigation mechanisms below —
-  // subordinate to the master RW.enabled killswitch, matching every other
-  // feature's own on/off flag in this file.
-  RW._cmdMenuWheel = true;        // set false to disable wheel-navigation on its own
-  RW._cmdMenuWheelMs = 60;        // min ms between wheel-driven steps — one physical mouse
-                                   // notch fires a single 'wheel' event, but a trackpad
-                                   // gesture fires dozens of small-delta events per second
-  RW._cmdMenuWheelInvert = false; // flip if scroll-down-selects-next feels backwards
-  let menuWheelAt = 0;
-
-  // Only ever registered on #rw-cmd-menu itself (see ensureMenuDom above), never on
-  // document — the dropdown is the one thing round 3's own comment on #rw-cmd-menu
-  // already says "manages its own scrolling"; this makes that literally true, and
-  // means ordinary page scrolling (and any future scroll-to-zoom handler on
-  // document, see the "wheel-zoom" section further down) is never touched by this.
-  // Scoped to the same two plain search modes Tab-cycling uses below — the
-  // "<tool>." settings-param list and a select param's own option sub-list both
-  // keep their existing behavior (no wheel-nav), matching Tab's own scoping.
-  function onMenuWheel(e){
-    if (!RW.enabled || !RW._cmdMenuWheel) return;
-    if (menuMode !== 'command' && menuMode !== 'tag') return;
-    if (!menuItems.length) return;
-    const dy = e.deltaY || 0;
-    if (!dy) return; // horizontal-only scroll (deltaX only) isn't ours to handle
-    // preventDefault before the throttle check below, so a fast trackpad gesture's
-    // extra events never leak through to real scrolling just because they landed
-    // inside the throttle window.
-    e.preventDefault();
-    e.stopPropagation();
-    const now = Date.now();
-    if (now - menuWheelAt < RW._cmdMenuWheelMs) return;
-    menuWheelAt = now;
-    // Scroll down = next match, same sense as ArrowDown.
-    moveHighlight((RW._cmdMenuWheelInvert ? dy < 0 : dy > 0) ? 1 : -1);
-  }
-
   function runAndClear(item){
     if (isOptionItem(item)){
       // Picking a numbered option (click, or Enter while one's highlighted) applies it
@@ -923,6 +882,13 @@
     else RW.runCommand(item.name);
     inputEl.value = '';
     hideMenu();
+    // Clear the dropdown state after a command actually runs — otherwise menuMode
+    // stays 'command'/'tag' with stale non-empty rows. Defensive hygiene only: nothing
+    // needs the dropdown open after a run, and stale non-empty state here is exactly
+    // what caused scroll-hijack bugs when a document-level wheel handler still existed
+    // (see CLAUDE.md rounds 10b/10c — that handler is now removed entirely).
+    menuItems = [];
+    menuMode = 'command';
     inputEl.blur();
   }
 

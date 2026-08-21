@@ -2748,7 +2748,7 @@ function loadModule(win, annotationState, timers){
     ok(inp.value === '#Concrete Wall', 'Shift+Tab cycles backward');
   }
 
-  /* ---------- 126. Tab-cycling and wheel-navigating never apply anything — only Enter/Space/click actually commit ---------- */
+  /* ---------- 126. Tab-cycling never applies anything — only Enter/Space/click actually commit ---------- */
   {
     const { win, byId } = makeStubWindow();
     const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'},{id:3,name:'Concrete Wall'}] };
@@ -2762,13 +2762,10 @@ function loadModule(win, annotationState, timers){
 
     inp._fire('keydown', { key: 'Tab' }); // -> index 1 (Concrete Slab)
     ok(as.currentTag === null, 'Tab-cycling never assigns annotationState.currentTag on its own');
-
-    byId['rw-cmd-menu']._fire('wheel', { deltaY: 100 }); // -> index 2 (Concrete Wall)
-    ok(as.currentTag === null, 'wheel-navigating never assigns it either');
-    ok(keys.length === 0, 'neither Tab nor the wheel ever dispatches a key to the app on its own');
+    ok(keys.length === 0, 'Tab never dispatches a key to the app on its own');
 
     inp._fire('keydown', { key: 'Enter' });
-    ok(as.currentTag === as.tags[2], 'only committing (Enter) applies whatever was actually landed on — here, Concrete Wall');
+    ok(as.currentTag === as.tags[1], 'only committing (Enter) applies whatever was actually landed on — here, Concrete Slab');
   }
 
   /* ---------- 127. Tab cycles through command matches too, not just tags ---------- */
@@ -2827,100 +2824,38 @@ function loadModule(win, annotationState, timers){
     ok(inp.value === 'wrap.padding', 'Tab in settings-param mode still just fills the first (highlighted) param, never advancing to the second');
   }
 
-  /* ---------- 130. Mouse wheel over the dropdown moves the highlight through tag matches ---------- */
+  /* ---------- 133d. Running a command clears the input and hides the menu ---------- */
   {
     const { win, byId } = makeStubWindow();
-    const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'},{id:3,name:'Concrete Wall'}] };
-    loadModule(win, as);
-    const RW = win.__RW;
-    RW._cmdMenuWheelMs = 0; // no throttling for this test — one notch, one step
-    const inp = byId['rw-cmd-input'];
-    inp.value = '#conc';
-    inp.dispatchEvent({ type: 'input' });
-    const menu = byId['rw-cmd-menu'];
-    function highlightedIndex(){ return menu._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
-    ok(highlightedIndex() === 0, 'starts highlighted on the first match');
-
-    let pd = 0, sp = 0;
-    menu._fire('wheel', { deltaY: 100, preventDefault(){ pd++; }, stopPropagation(){ sp++; } });
-    ok(highlightedIndex() === 1, 'scrolling down over the dropdown moves the highlight to the next match');
-    ok(pd === 1 && sp === 1, 'the wheel event is fully consumed — no page/menu scroll, and stopped from ever reaching a future document-level wheel handler');
-
-    menu._fire('wheel', { deltaY: -100 });
-    ok(highlightedIndex() === 0, 'scrolling up moves back to the previous match');
-  }
-
-  /* ---------- 131. Mouse wheel also navigates command matches, not just tags ---------- */
-  {
-    const { win, byId } = makeStubWindow();
-    loadModule(win);
-    const RW = win.__RW;
-    RW._cmdMenuWheelMs = 0;
-    const inp = byId['rw-cmd-input'];
-    inp.value = 'po';
-    inp.dispatchEvent({ type: 'input' });
-    const menu = byId['rw-cmd-menu'];
-    function highlightedRow(){ return menu._children.find(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
-    ok(highlightedRow().innerText.indexOf('polygon') === 0, 'starts on the first command match');
-
-    menu._fire('wheel', { deltaY: 50 });
-    ok(highlightedRow().innerText.indexOf('polyline') === 0, 'scrolling down moves to the next command match');
-  }
-
-  /* ---------- 132. Wheel navigation is throttled — a fast burst moves the highlight once, not once per event ---------- */
-  {
-    const { win, byId } = makeStubWindow();
-    const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'},{id:3,name:'Concrete Wall'}] };
-    loadModule(win, as);
-    const inp = byId['rw-cmd-input'];
-    inp.value = '#conc';
-    inp.dispatchEvent({ type: 'input' });
-    const menu = byId['rw-cmd-menu'];
-    function highlightedIndex(){ return menu._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
-
-    let pd = 0;
-    menu._fire('wheel', { deltaY: 30, preventDefault(){ pd++; } });
-    menu._fire('wheel', { deltaY: 30, preventDefault(){ pd++; } });
-    ok(highlightedIndex() === 1, 'a fast back-to-back pair of wheel notches (default 60ms throttle) only advances the highlight once');
-    ok(pd === 2, 'both events are still preventDefaulted — even the throttled one must never leak into a real scroll');
-  }
-
-  /* ---------- 133. Wheel navigation respects the killswitches and skips the modes it isn't scoped to ---------- */
-  {
-    const { win, byId, doc } = makeStubWindow();
     const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'}] };
     loadModule(win, as);
     const RW = win.__RW;
-    RW._cmdMenuWheelMs = 0;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
     const inp = byId['rw-cmd-input'];
-    inp.value = '#conc';
+    inp.value = 'linear'; // a native tool command
     inp.dispatchEvent({ type: 'input' });
     const menu = byId['rw-cmd-menu'];
-    function highlightedIndex(){ return menu._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
+    ok(menu._children.length >= 1, 'command matches shown before dispatch');
+    inp._fire('keydown', { key: 'Enter' }); // runs it
+    ok(JSON.stringify(keys) === JSON.stringify(['d','q']), 'the command was dispatched (draw-prefix d + linear\'s q)');
+    ok(inp.value === '', 'input cleared after a command runs');
+    ok(menu.style.display === 'none', 'menu hidden after a command runs');
+  }
 
-    RW.enabled = false;
-    menu._fire('wheel', { deltaY: 30 });
-    ok(highlightedIndex() === 0, 'the wheel does nothing while the master RW.enabled killswitch is off');
-    RW.enabled = true;
-
-    RW._cmdMenuWheel = false;
-    menu._fire('wheel', { deltaY: 30 });
-    ok(highlightedIndex() === 0, 'the wheel does nothing when its own RW._cmdMenuWheel flag is off, even with RW.enabled true');
-    RW._cmdMenuWheel = true;
-
-    let pd = 0;
-    menu._fire('wheel', { deltaY: 0, preventDefault(){ pd++; } });
-    ok(highlightedIndex() === 0 && pd === 0, 'a horizontal-only scroll (deltaY 0) is left alone entirely — not even preventDefaulted');
-
-    const anchor = makeSelect(byId, 'ribbon-anchor', [['left','Left'],['center','Center'],['right','Right']], 'left');
-    doc.body.appendChild(anchor);
-    inp.value = 'mline.anchor';
-    inp.dispatchEvent({ type: 'input' });
-    byId['rw-cmd-menu']._children[0]._fire('click', {}); // drills into the option sub-list
-    const beforeHighlight = byId['rw-cmd-menu']._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; });
-    byId['rw-cmd-menu']._fire('wheel', { deltaY: 30 });
-    const afterHighlight = byId['rw-cmd-menu']._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; });
-    ok(beforeHighlight === afterHighlight, 'wheel is scoped to plain command/tag search — a select param\'s own option sub-list is untouched, matching Tab\'s own scoping');
+  /* ---------- 133e. A query that misses hides the menu — even if stale rows remain ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Concrete'}] };
+    loadModule(win, as);
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#conc';
+    inp.dispatchEvent({ type: 'input' }); // menu opens with a match
+    const menu = byId['rw-cmd-menu'];
+    ok(menu.style.display !== 'none', 'menu is open');
+    inp.value = '#zzz';
+    inp.dispatchEvent({ type: 'input' }); // no matches -> hideMenu() sets display:none
+    ok(menu.style.display === 'none', 'menu hidden once the query misses');
   }
 
   /* ---------- 134. ArrowUp/ArrowDown move the highlight — existing behavior, previously untested ---------- */
