@@ -2722,6 +2722,226 @@ function loadModule(win, annotationState, timers){
       'empty array, not a throw, when annotationState is absent');
   }
 
+  /* ---------- 125. Tab now CYCLES the highlight through tag matches, filling each in, wrapping both ways ---------- */
+  // Confirmed via AskUserQuestion: Tab should advance to the next match (like shell-style
+  // completion) rather than just re-filling the same already-highlighted one every time.
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'},{id:3,name:'Concrete Wall'}] };
+    loadModule(win, as);
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#conc';
+    inp.dispatchEvent({ type: 'input' }); // highlights "Concrete" at index 0, none filled yet
+
+    inp._fire('keydown', { key: 'Tab' });
+    ok(inp.value === '#Concrete Slab', 'Tab advances the highlight to the next tag match and fills it in');
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows[1].style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1, 'the highlight itself moved to that row, not just the filled text');
+
+    inp._fire('keydown', { key: 'Tab' });
+    ok(inp.value === '#Concrete Wall', 'a second Tab advances again');
+
+    inp._fire('keydown', { key: 'Tab' });
+    ok(inp.value === '#Concrete', 'a third Tab wraps back around to the first match');
+
+    inp._fire('keydown', { key: 'Tab', shiftKey: true });
+    ok(inp.value === '#Concrete Wall', 'Shift+Tab cycles backward');
+  }
+
+  /* ---------- 126. Tab-cycling and wheel-navigating never apply anything — only Enter/Space/click actually commit ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'},{id:3,name:'Concrete Wall'}] };
+    loadModule(win, as);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#conc';
+    inp.dispatchEvent({ type: 'input' }); // highlight at index 0 (Concrete)
+
+    inp._fire('keydown', { key: 'Tab' }); // -> index 1 (Concrete Slab)
+    ok(as.currentTag === null, 'Tab-cycling never assigns annotationState.currentTag on its own');
+
+    byId['rw-cmd-menu']._fire('wheel', { deltaY: 100 }); // -> index 2 (Concrete Wall)
+    ok(as.currentTag === null, 'wheel-navigating never assigns it either');
+    ok(keys.length === 0, 'neither Tab nor the wheel ever dispatches a key to the app on its own');
+
+    inp._fire('keydown', { key: 'Enter' });
+    ok(as.currentTag === as.tags[2], 'only committing (Enter) applies whatever was actually landed on — here, Concrete Wall');
+  }
+
+  /* ---------- 127. Tab cycles through command matches too, not just tags ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'po'; // matches polygon, then polyline
+    inp.dispatchEvent({ type: 'input' });
+    ok(inp.value === 'po', 'no fill yet before any Tab press');
+
+    inp._fire('keydown', { key: 'Tab' });
+    ok(inp.value === 'polyline', 'Tab advances off the already-highlighted first match, to the next one, and fills it');
+
+    inp._fire('keydown', { key: 'Tab' });
+    ok(inp.value === 'polygon', 'a second Tab wraps back around (only two matches)');
+
+    inp._fire('keydown', { key: 'Tab', shiftKey: true });
+    ok(inp.value === 'polyline', 'Shift+Tab cycles backward');
+  }
+
+  /* ---------- 128. Enter after Tab-cycling runs the command actually landed on, not the original first match ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Tab' }); // advances off polygon, onto polyline
+    inp._fire('keydown', { key: 'Enter' });
+    ok(JSON.stringify(keys) === JSON.stringify(['d','t']), 'Enter dispatches polyline (the tool actually cycled to), not polygon');
+  }
+
+  /* ---------- 129. Tab does NOT cycle inside the "<tool>." settings-param list — keeps its older fill-only behavior ---------- */
+  // Deliberately out of scope (confirmed via AskUserQuestion): picking a param arms a value
+  // draft, so cycling through param names by Tab was never the point there.
+  {
+    const { win, byId, doc } = makeStubWindow();
+    loadModule(win);
+    const padding = makeElement('input', byId);
+    padding.id = 'shrink-wrap-padding'; padding.type = 'range'; padding.min = '0'; padding.max = '50'; padding.value = '5';
+    doc.body.appendChild(padding);
+    const smoothing = makeElement('input', byId);
+    smoothing.id = 'shrink-wrap-smoothing'; smoothing.type = 'range'; smoothing.min = '0'; smoothing.max = '50'; smoothing.value = '2';
+    doc.body.appendChild(smoothing);
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'wrap.'; // both of wrap's params match (empty query after the dot)
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.length === 2, 'both of wrap\'s params are listed');
+
+    inp._fire('keydown', { key: 'Tab' });
+    ok(inp.value === 'wrap.padding', 'Tab in settings-param mode still just fills the first (highlighted) param, never advancing to the second');
+  }
+
+  /* ---------- 130. Mouse wheel over the dropdown moves the highlight through tag matches ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'},{id:3,name:'Concrete Wall'}] };
+    loadModule(win, as);
+    const RW = win.__RW;
+    RW._cmdMenuWheelMs = 0; // no throttling for this test — one notch, one step
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#conc';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    function highlightedIndex(){ return menu._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
+    ok(highlightedIndex() === 0, 'starts highlighted on the first match');
+
+    let pd = 0, sp = 0;
+    menu._fire('wheel', { deltaY: 100, preventDefault(){ pd++; }, stopPropagation(){ sp++; } });
+    ok(highlightedIndex() === 1, 'scrolling down over the dropdown moves the highlight to the next match');
+    ok(pd === 1 && sp === 1, 'the wheel event is fully consumed — no page/menu scroll, and stopped from ever reaching a future document-level wheel handler');
+
+    menu._fire('wheel', { deltaY: -100 });
+    ok(highlightedIndex() === 0, 'scrolling up moves back to the previous match');
+  }
+
+  /* ---------- 131. Mouse wheel also navigates command matches, not just tags ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    RW._cmdMenuWheelMs = 0;
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    function highlightedRow(){ return menu._children.find(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
+    ok(highlightedRow().innerText.indexOf('polygon') === 0, 'starts on the first command match');
+
+    menu._fire('wheel', { deltaY: 50 });
+    ok(highlightedRow().innerText.indexOf('polyline') === 0, 'scrolling down moves to the next command match');
+  }
+
+  /* ---------- 132. Wheel navigation is throttled — a fast burst moves the highlight once, not once per event ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'},{id:3,name:'Concrete Wall'}] };
+    loadModule(win, as);
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#conc';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    function highlightedIndex(){ return menu._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
+
+    let pd = 0;
+    menu._fire('wheel', { deltaY: 30, preventDefault(){ pd++; } });
+    menu._fire('wheel', { deltaY: 30, preventDefault(){ pd++; } });
+    ok(highlightedIndex() === 1, 'a fast back-to-back pair of wheel notches (default 60ms throttle) only advances the highlight once');
+    ok(pd === 2, 'both events are still preventDefaulted — even the throttled one must never leak into a real scroll');
+  }
+
+  /* ---------- 133. Wheel navigation respects the killswitches and skips the modes it isn't scoped to ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow();
+    const as = { currentTag: null, tags: [{id:1,name:'Concrete'},{id:2,name:'Concrete Slab'}] };
+    loadModule(win, as);
+    const RW = win.__RW;
+    RW._cmdMenuWheelMs = 0;
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#conc';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    function highlightedIndex(){ return menu._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
+
+    RW.enabled = false;
+    menu._fire('wheel', { deltaY: 30 });
+    ok(highlightedIndex() === 0, 'the wheel does nothing while the master RW.enabled killswitch is off');
+    RW.enabled = true;
+
+    RW._cmdMenuWheel = false;
+    menu._fire('wheel', { deltaY: 30 });
+    ok(highlightedIndex() === 0, 'the wheel does nothing when its own RW._cmdMenuWheel flag is off, even with RW.enabled true');
+    RW._cmdMenuWheel = true;
+
+    let pd = 0;
+    menu._fire('wheel', { deltaY: 0, preventDefault(){ pd++; } });
+    ok(highlightedIndex() === 0 && pd === 0, 'a horizontal-only scroll (deltaY 0) is left alone entirely — not even preventDefaulted');
+
+    const anchor = makeSelect(byId, 'ribbon-anchor', [['left','Left'],['center','Center'],['right','Right']], 'left');
+    doc.body.appendChild(anchor);
+    inp.value = 'mline.anchor';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children[0]._fire('click', {}); // drills into the option sub-list
+    const beforeHighlight = byId['rw-cmd-menu']._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; });
+    byId['rw-cmd-menu']._fire('wheel', { deltaY: 30 });
+    const afterHighlight = byId['rw-cmd-menu']._children.findIndex(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; });
+    ok(beforeHighlight === afterHighlight, 'wheel is scoped to plain command/tag search — a select param\'s own option sub-list is untouched, matching Tab\'s own scoping');
+  }
+
+  /* ---------- 134. ArrowUp/ArrowDown move the highlight — existing behavior, previously untested ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'po'; // polygon, polyline
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    function highlightedRow(){ return menu._children.find(function(r){ return r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }); }
+    ok(highlightedRow().innerText.indexOf('polygon') === 0, 'starts highlighted on the first match');
+
+    inp._fire('keydown', { key: 'ArrowDown' });
+    ok(highlightedRow().innerText.indexOf('polyline') === 0, 'ArrowDown moves to the next match');
+    ok(inp.value === 'po', 'unlike Tab, ArrowDown never fills the input');
+
+    inp._fire('keydown', { key: 'ArrowUp' });
+    ok(highlightedRow().innerText.indexOf('polygon') === 0, 'ArrowUp moves back to the previous match');
+  }
+
   finish();
 })();
 

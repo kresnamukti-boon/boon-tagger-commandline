@@ -92,10 +92,26 @@ on commit. Watch the status line: it always says "confirm it actually applied."
 | `Escape` (command input focused) | clear the command input, or close the autocomplete dropdown if it's open |
 | `Escape` (nothing focused) | return the app to select — see "Select is the resting state" below |
 | `ArrowUp`/`ArrowDown` | move the autocomplete highlight |
-| `Tab` | fill the input with the highlighted match without running it |
+| `Tab` / `Shift+Tab` | cycle the highlight to the next/previous match, filling each in as you go |
+| mouse wheel over the dropdown | same as Tab/Shift+Tab — scroll down for next, up for previous |
 
 So Escape typed twice in a row does two different things: the first clears/closes the command bar
 (if it had focus), the second — now that nothing is focused — sends the app back to select.
+
+**Tab and the mouse wheel both just move the highlight — neither one ever applies anything.**
+Cycling through `#conc` → CONCRETE / CONCRETE SLAB / CONCRETE WALL with Tab or the wheel only
+changes what's highlighted (and, for Tab, what's filled into the input); the tag is only actually
+assigned — same as picking a command — once you press Enter, Space, or click a row. The wheel
+only does this while the mouse is actually over the dropdown itself, so ordinary page scrolling
+(and the still-unbuilt scroll-to-zoom feature, see below) is completely unaffected. Both are
+scoped to the two plain search modes (commands and tags) — a `<tool>.` settings-param list keeps
+Tab's older fill-only behavior (no wheel-nav either), and a select param's own option list keeps
+its existing Tab-live-previews-each-state behavior (see "Tool settings" below); the wheel does
+nothing in either of those. Console escape hatches: `RW._cmdMenuWheel` (default `true`) turns
+wheel-navigation off on its own without the master killswitch, `RW._cmdMenuWheelMs` (default
+`60`) is the minimum time between wheel-driven steps (a physical mouse notch is one event, but a
+trackpad gesture can fire dozens per second), and `RW._cmdMenuWheelInvert` flips the scroll
+direction if it feels backwards.
 
 ## Select is the resting state (AutoCAD-style)
 
