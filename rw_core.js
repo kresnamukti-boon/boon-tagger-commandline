@@ -11,13 +11,20 @@
   RW.vcore = true;
   RW.enabled = (window.__RWgate ? window.__RWgate.enabled : true);
 
-  const rail = document.getElementById('right-rail-content');
   const old = document.getElementById('rw-panel'); if (old) old.remove();
   const panel = document.createElement('div');
   panel.id = 'rw-panel';
-  panel.style.cssText = 'border-top:1px solid #999;margin-top:8px;padding:8px;font-size:12px;max-height:45%;overflow-y:auto;';
+  // Fixed bottom-center overlay pinned to the canvas viewport (positioned by
+  // rw_cmdline.js's RW._cmdRepositionOverlay, which also stays pinned on
+  // resize). Appended to document.body, not the side rail, so it neither
+  // scrolls nor pans with the drawing. z-index is set to the 32-bit signed
+  // max so no app-owned element (the annotation canvas wrapper, the right
+  // rail, toolbars, modals) can stack above it — a plain high-but-finite
+  // value like 99990 was occluded on a real job once the panel left the
+  // rail and became a sibling of the app's own content.
+  panel.style.cssText = 'position:fixed;z-index:2147483647;background:#222;border:1px solid #666;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.5);padding:8px;font-size:12px;color:#eee;';
   panel.innerHTML = '<div id="rw-list"></div>'; // title bar + killswitch added by rw_panelux.js's retrofit()
-  if (rail) rail.insertBefore(panel, rail.firstChild);
+  document.body.appendChild(panel);
 
   RW._commitStatus = function(msg){
     const el = document.getElementById('rw-commit-status');

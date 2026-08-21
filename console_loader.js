@@ -104,27 +104,25 @@
     };
     panel.insertBefore(header, body);
 
-    panel.style.position = 'relative';
-    panel.style.resize = 'vertical';
-    panel.style.overflow = 'auto';
-    panel.style.minHeight = '32px';
-    panel.style.maxHeight = '50%';
+    // No side-panel CSS anymore — the panel is a fixed bottom-center overlay
+    // styled by rw_core.js and positioned by rw_cmdline.js's
+    // RW._cmdRepositionOverlay. Nothing here manages its box geometry.
 
     /* ---------- panel state ---------- */
     RW.panelExpanded = true;
     RW.setPanelExpanded = function(on){
       RW.panelExpanded = !!on;
-      const p = document.getElementById('rw-panel');
       const b = document.getElementById('rw-body');
       const c = document.getElementById('rw-collapse');
-      if (!p || !c) return;
+      if (!c) return;
+      // Expansion now only toggles the body's display — the panel's fixed
+      // overlay box stays as rw_core.js sized it (the overlay is positioned
+      // bottom-up, so a collapsed body naturally leaves just the header).
       if (RW.panelExpanded){
-        p.style.maxHeight = '50%';
         if (b) b.style.display = '';
         c.innerHTML = '&#9660;';
         c.title = 'Collapse Command Line';
       } else {
-        p.style.maxHeight = '32px';
         if (b) b.style.display = 'none';
         c.innerHTML = '&#9654;';
         c.title = 'Expand Command Line';
@@ -183,13 +181,20 @@
   RW.vcore = true;
   RW.enabled = (window.__RWgate ? window.__RWgate.enabled : true);
 
-  const rail = document.getElementById('right-rail-content');
   const old = document.getElementById('rw-panel'); if (old) old.remove();
   const panel = document.createElement('div');
   panel.id = 'rw-panel';
-  panel.style.cssText = 'border-top:1px solid #999;margin-top:8px;padding:8px;font-size:12px;max-height:45%;overflow-y:auto;';
+  // Fixed bottom-center overlay pinned to the canvas viewport (positioned by
+  // rw_cmdline.js's RW._cmdRepositionOverlay, which also stays pinned on
+  // resize). Appended to document.body, not the side rail, so it neither
+  // scrolls nor pans with the drawing. z-index is set to the 32-bit signed
+  // max so no app-owned element (the annotation canvas wrapper, the right
+  // rail, toolbars, modals) can stack above it — a plain high-but-finite
+  // value like 99990 was occluded on a real job once the panel left the
+  // rail and became a sibling of the app's own content.
+  panel.style.cssText = 'position:fixed;z-index:2147483647;background:#222;border:1px solid #666;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.5);padding:8px;font-size:12px;color:#eee;';
   panel.innerHTML = '<div id="rw-list"></div>'; // title bar + killswitch added by rw_panelux.js's retrofit()
-  if (rail) rail.insertBefore(panel, rail.firstChild);
+  document.body.appendChild(panel);
 
   RW._commitStatus = function(msg){
     const el = document.getElementById('rw-commit-status');
@@ -882,11 +887,17 @@
     document.body.appendChild(menuEl);
   }
 
+  // Positions the dropdown ABOVE the input: the bar is now a bottom-anchored
+  // overlay (RW._cmdRepositionOverlay below), so the menu grows upward from
+  // just above the input rather than below it (which would push it off the
+  // bottom of the viewport). Bottom is measured from the input's top edge
+  // with a fixed 6px gap; top is cleared so it never double-anchors.
   function positionMenu(){
     const r = inputEl.getBoundingClientRect();
     menuEl.style.left = r.left + 'px';
-    menuEl.style.top = (r.bottom + 2) + 'px';
     menuEl.style.width = r.width + 'px';
+    menuEl.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+    menuEl.style.top = 'auto';
   }
 
   function hideMenu(){ if (menuEl) menuEl.style.display = 'none'; }
@@ -1234,7 +1245,14 @@
     inputEl.autocomplete = 'off';
     inputEl.spellcheck = false;
     inputEl.placeholder = 'native tool (linear, rect, pan…) or #tag — just start typing';
-    inputEl.style.cssText = 'flex:1;font-size:11px;padding:2px 4px;';
+    inputEl.style.cssText = 'flex:1;font-size:11px;padding:2px 4px;'
+      // Near-white text (inherited from #rw-panel's color) on the input's
+      // default WHITE UA background is unreadable — give it an explicit dark
+      // background and light text so the input matches the dark panel. The
+      // placeholder also needs a light-ish color (it would otherwise use the
+      // same near-white text, but a faint version reads better).
+      + 'background:#111;color:#eee;border:1px solid #555;border-radius:3px;'
+      + 'color-scheme:dark;';
     barEl.appendChild(inputEl);
     host.insertBefore(barEl, list);
 
@@ -1242,6 +1260,107 @@
     inputEl.addEventListener('keydown', onInputKeydown);
     inputEl.addEventListener('blur', function(){ setTimeout(hideMenu, 150); });
   }
+
+  /* ---------- bottom-center overlay positioning ---------- */
+  // The command-line panel is a fixed overlay appended to document.body (by
+  // rw_core.js), not a side-rail box. This repositions it horizontally
+  // centered over the annotation canvas's on-screen rect (so it accounts for
+  // the side rail, unlike window-centering) and pinned a tunable gap above
+  // the canvas's bottom edge — the whole point being it must NOT scroll or
+  // pan with the drawing. No-op without throwing if either #rw-panel or
+  // #annotation-canvas is missing. Re-runs on resize to stay pinned over a
+  // re-laid-out canvas.
+  RW._cmdBarOffset = 16;   // px gap above the canvas's bottom edge — console escape hatch
+  RW._cmdBarWidth = 480;   // overlay width, px — console escape hatch
+
+  // Make the two tunables LIVE: assigning __RW._cmdBarWidth or
+  // __RW._cmdBarOffset in the console repositions the panel immediately
+  // instead of only taking effect on the next resize/paste. Accessors rather
+  // than plain fields so `__RW._cmdBarWidth = 600` is a single, complete act
+  // — no follow-up `_cmdRepositionOverlay()` call needed (RW._cmdRepositionOverlay
+  // is defined immediately below; these are only invoked at runtime, after the
+  // module has fully loaded).
+  Object.defineProperty(RW, '_cmdBarWidth', {
+    configurable: true, enumerable: true,
+    get(){ return this.__cmdBarWidthV; },
+    set(v){ this.__cmdBarWidthV = Number(v); if (RW._cmdRepositionOverlay) RW._cmdRepositionOverlay(); }
+  });
+  RW._cmdBarWidth = 480;
+  Object.defineProperty(RW, '_cmdBarOffset', {
+    configurable: true, enumerable: true,
+    get(){ return this.__cmdBarOffsetV; },
+    set(v){ this.__cmdBarOffsetV = Number(v); if (RW._cmdRepositionOverlay) RW._cmdRepositionOverlay(); }
+  });
+  RW._cmdBarOffset = 16;
+
+  RW._cmdRepositionOverlay = function(){
+    const panel = document.getElementById('rw-panel');
+    const canvas = document.getElementById('annotation-canvas');
+    if (!panel || !canvas) return; // no-op without throwing
+    const cr = canvas.getBoundingClientRect();
+    const width = Math.min(RW._cmdBarWidth, cr.width);
+    panel.style.width = width + 'px';
+    panel.style.left = (cr.left + (cr.width - width) / 2) + 'px';
+    // Bottom edge is (innerHeight - canvas.bottom) + offset in viewport
+    // space. When the drawing is scrolled so the canvas bottom falls BELOW
+    // the viewport (a long PDF), this goes negative and the fixed panel
+    // would sit entirely off-screen — visible nowhere while the input still
+    // takes focus (commands "work"). Clamp so the panel's bottom edge never
+    // dips below `offset` from the viewport bottom: the bar stays on-screen
+    // over the drawing, which is strictly better than disappearing.
+    const rawBottom = (window.innerHeight - cr.bottom) + RW._cmdBarOffset;
+    panel.style.bottom = Math.max(RW._cmdBarOffset, rawBottom) + 'px';
+  };
+
+  // Live overlay diagnostic — run when the bar is missing from the page to
+  // learn WHY (stacking/occlusion vs. off-screen placement vs. a transformed
+  // body/html breaking position:fixed). Read-only, console-only, same spirit
+  // as RW._panDiagnose/RW._zoomDiagnose.
+  RW._overlayDiagnose = function(){
+    const panel = document.getElementById('rw-panel');
+    const canvas = document.getElementById('annotation-canvas');
+    const out = { viewport: { innerWidth: window.innerWidth, innerHeight: window.innerHeight } };
+    if (panel){
+      const p = panel.getBoundingClientRect ? panel.getBoundingClientRect() : null;
+      out.panel = {
+        present: true,
+        style: { left: panel.style.left, bottom: panel.style.bottom, width: panel.style.width, display: panel.style.display, zIndex: panel.style.zIndex },
+        rect: p ? { left: p.left, right: p.right, top: p.top, bottom: p.bottom, width: p.width, height: p.height } : null,
+        onScreen: p ? (p.bottom > 0 && p.top < window.innerHeight && p.right > 0 && p.left < window.innerWidth) : false
+      };
+    } else {
+      out.panel = { present: false };
+    }
+    if (canvas){
+      const c = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
+      out.canvas = { present: true, rect: c ? { left: c.left, right: c.right, top: c.top, bottom: c.bottom, width: c.width, height: c.height } : null };
+    } else {
+      out.canvas = { present: false };
+    }
+    // position:fixed is only viewport-anchored if NO ancestor (here: body/html)
+    // carries a transform/filter/perspective — otherwise it anchors to that
+    // ancestor and the viewport-relative bottom/left computed above is wrong.
+    function transformInfo(el, name){
+      if (!el) return null;
+      const cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+      const tf = cs ? (cs.transform && cs.transform !== 'none' ? cs.transform : undefined) : undefined;
+      const filt = cs ? (cs.filter && cs.filter !== 'none' ? cs.filter : undefined) : undefined;
+      const persp = cs ? (cs.perspective && cs.perspective !== 'none' ? cs.perspective : undefined) : undefined;
+      if (!tf && !filt && !persp) return { name: name, clean: true };
+      return { name: name, clean: false, transform: tf, filter: filt, perspective: persp };
+    }
+    out.ancestors = [
+      transformInfo(document.body, 'body'),
+      transformInfo(document.documentElement, 'html')
+    ];
+    if (console.table) console.table(out); else console.log(out);
+    return out;
+  };
+
+  // Called once at load, and on every window resize so the overlay stays
+  // pinned to the canvas even after the layout re-flows.
+  RW._cmdRepositionOverlay();
+  if (window.addEventListener) window.addEventListener('resize', RW._cmdRepositionOverlay);
 
   mountCommandBar();
   RW._cmdDetectTags();

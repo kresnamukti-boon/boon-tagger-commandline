@@ -85,27 +85,25 @@
     };
     panel.insertBefore(header, body);
 
-    panel.style.position = 'relative';
-    panel.style.resize = 'vertical';
-    panel.style.overflow = 'auto';
-    panel.style.minHeight = '32px';
-    panel.style.maxHeight = '50%';
+    // No side-panel CSS anymore — the panel is a fixed bottom-center overlay
+    // styled by rw_core.js and positioned by rw_cmdline.js's
+    // RW._cmdRepositionOverlay. Nothing here manages its box geometry.
 
     /* ---------- panel state ---------- */
     RW.panelExpanded = true;
     RW.setPanelExpanded = function(on){
       RW.panelExpanded = !!on;
-      const p = document.getElementById('rw-panel');
       const b = document.getElementById('rw-body');
       const c = document.getElementById('rw-collapse');
-      if (!p || !c) return;
+      if (!c) return;
+      // Expansion now only toggles the body's display — the panel's fixed
+      // overlay box stays as rw_core.js sized it (the overlay is positioned
+      // bottom-up, so a collapsed body naturally leaves just the header).
       if (RW.panelExpanded){
-        p.style.maxHeight = '50%';
         if (b) b.style.display = '';
         c.innerHTML = '&#9660;';
         c.title = 'Collapse Command Line';
       } else {
-        p.style.maxHeight = '32px';
         if (b) b.style.display = 'none';
         c.innerHTML = '&#9654;';
         c.title = 'Expand Command Line';

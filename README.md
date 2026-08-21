@@ -22,7 +22,9 @@ Each module is a versioned IIFE gated on the previous module's version flag. `co
    own global keystroke capture).
 2. **rw_core.js** — minimal bootstrap replacing `rw_install.js`'s scaffolding on this branch:
    creates `window.__RW`, a bare `#rw-panel`/`#rw-list` for the command line to mount into, and
-   `RW._commitStatus` for its status-line messages. No region/mask/annotation engine at all.
+   `RW._commitStatus` for its status-line messages. `#rw-panel` is created as a fixed bottom-center
+   overlay appended to `document.body` (positioned over the canvas by `rw_cmdline.js`'s
+   `RW._cmdRepositionOverlay`), not a side-rail box. No region/mask/annotation engine at all.
 3. **rw_cmdline.js** — the command line itself (see "Command line" below).
 
 **To rebuild** after editing a source module:
@@ -47,6 +49,23 @@ the top of the panel and seeds it, an autocomplete dropdown suggests matches as 
 (light green), and **Enter or Space** dispatches it to the app — both act identically, AutoCAD's
 own classic convention, and both work the same way whether you're confirming a command or a
 searched tag (see below).
+
+**The whole command-line panel — input, status line, and the RW: ON/OFF killswitch — is a fixed
+overlay pinned to the bottom-center of the annotation canvas**, not a box in the side rail. It
+stays horizontally centered over the canvas's on-screen rect (so it accounts for the side rail,
+unlike window-centering) and sits a tunable gap above the canvas's bottom edge (default 16px);
+because it's `position:fixed`, it neither scrolls nor pans with the drawing. The autocomplete
+dropdown opens **upward** above the input, so it can't fall off the bottom of the viewport. Two
+console escape hatches tune it: `__RW._cmdBarOffset` (px gap above the canvas's bottom edge) and
+`__RW._cmdBarWidth` (overlay width, default 480px) — **both are live**: assigning either one
+(e.g. `__RW._cmdBarWidth = 600`) repositions the bar immediately, no reload or resize needed.
+It also re-centers itself automatically on window resize. The panel is given the maximum
+`z-index` (2147483647) so nothing the app stacks above the canvas can cover it, and its bottom
+edge is clamped so it stays on-screen even when the drawing is scrolled so the canvas's bottom
+falls below the viewport. **If the bar ever goes missing but
+commands still work**, run `__RW._overlayDiagnose()` in the console — it reports whether the panel
+and canvas are present, the panel's actual on-screen rect and visibility, and whether `body`/`html`
+carry a transform that would break `position:fixed` anchoring.
 
 **Because typing is captured from anywhere, it takes over the host app's own single-key
 shortcuts while you're mid-command** — to press an app shortcut key directly again, blur the

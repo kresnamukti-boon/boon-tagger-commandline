@@ -309,7 +309,7 @@ function makeStubWindow(){
   documentStub.documentElement = makeScrollable(byId, 'rw-test-html', {});
   documentStub.scrollingElement = documentStub.documentElement;
 
-  const win = { document: documentStub };
+  const win = { document: documentStub, innerWidth: 1000, innerHeight: 700 };
   win.__RW = {
     vcore: true,
     enabled: true,
@@ -2875,6 +2875,247 @@ function loadModule(win, annotationState, timers){
 
     inp._fire('keydown', { key: 'ArrowUp' });
     ok(highlightedRow().innerText.indexOf('polygon') === 0, 'ArrowUp moves back to the previous match');
+  }
+
+  /* ---------- 135. Dropdown opens upward above the input (bottom-anchored overlay) ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    // Input sits low in the viewport, like a bottom-anchored bar; give it a
+    // known rect (top edge at y=650 of a 700-high viewport).
+    inp._rect = { left: 300, top: 650, right: 780, bottom: 670, width: 480, height: 20 };
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' }); // renders rows -> positionMenu() runs
+    const menu = byId['rw-cmd-menu'];
+    ok(menu.style.display !== 'none', 'menu opened for the query');
+    const bottom = parseFloat(menu.style.bottom);
+    ok(!isNaN(bottom) && bottom > 0, 'menu anchors by a positive bottom (grew upward): got "' + menu.style.bottom + '"');
+    ok(menu.style.top === 'auto', 'menu top is cleared to auto (single, upward anchor), got "' + menu.style.top + '"');
+    // bottom = innerHeight - inputTop + 6 = 700 - 650 + 6 = 56
+    ok(bottom === 56, 'menu bottom uses the input top edge + 6px gap (expected 56, got ' + bottom + ')');
+  }
+
+  /* ---------- 136. Reposition centers the panel over the canvas ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    loadModule(win);
+    const RW = win.__RW;
+    RW._cmdBarOffset = 16; RW._cmdBarWidth = 480;
+    const panel = byId['rw-panel'] || makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    canvas._rect = { left: 20, top: 40, right: 820, bottom: 640, width: 800, height: 600 };
+    win.document.body.appendChild(canvas);
+
+    RW._cmdRepositionOverlay();
+    ok(panel.style.left === '180px', 'panel left = canvas.left + (canvas.width - barWidth)/2 = 20 + 160 = 180px, got "' + panel.style.left + '"');
+    ok(panel.style.width === '480px', 'panel width = bar width (480px), got "' + panel.style.width + '"');
+    ok(panel.style.bottom === '76px', 'panel bottom = (innerHeight - canvas.bottom) + offset = (700-640)+16 = 76px, got "' + panel.style.bottom + '"');
+  }
+
+  /* ---------- 137. Reposition clamps width when the canvas is narrower than the bar ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    RW._cmdBarWidth = 480;
+    const panel = byId['rw-panel'] || makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    canvas._rect = { left: 10, top: 10, right: 210, bottom: 610, width: 200, height: 600 };
+    win.document.body.appendChild(canvas);
+
+    RW._cmdRepositionOverlay();
+    ok(panel.style.left === '10px', 'panel left = canvas.left when the canvas is narrower than the bar, got "' + panel.style.left + '"');
+    ok(parseInt(panel.style.width, 10) <= 200, 'panel width is clamped to the canvas width (<=200), got "' + panel.style.width + '"');
+  }
+
+  /* ---------- 138. Offset is tunable via RW._cmdBarOffset ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerHeight = 700;
+    loadModule(win);
+    const RW = win.__RW;
+    const panel = byId['rw-panel'] || makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    canvas._rect = { left: 0, top: 0, right: 500, bottom: 600, width: 500, height: 600 };
+    win.document.body.appendChild(canvas);
+
+    RW._cmdBarOffset = 16;
+    RW._cmdRepositionOverlay();
+    ok(panel.style.bottom === '116px', 'offset 16 -> bottom (700-600)+16 = 116px, got "' + panel.style.bottom + '"');
+    RW._cmdBarOffset = 40;
+    RW._cmdRepositionOverlay();
+    ok(panel.style.bottom === '140px', 'offset 40 -> bottom (700-600)+40 = 140px, got "' + panel.style.bottom + '"');
+  }
+
+  /* ---------- 139. Reposition no-ops safely without #annotation-canvas or #rw-panel ---------- */
+  {
+    const { win } = makeStubWindow();
+    loadModule(win); // neither #rw-panel nor #annotation-canvas exists — overlay can't run
+    let threw = false;
+    try { win.__RW._cmdRepositionOverlay(); } catch(_e){ threw = true; }
+    ok(!threw, 'reposition no-ops without throwing when #rw-panel / #annotation-canvas are absent');
+  }
+
+  /* ---------- 140. Reposition runs on load and re-runs on window resize ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerHeight = 700;
+    loadModule(win);
+    const panel = byId['rw-panel'] || makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    canvas._rect = { left: 0, top: 0, right: 500, bottom: 600, width: 500, height: 600 };
+    win.document.body.appendChild(canvas);
+
+    // The module calls _cmdRepositionOverlay() at load, so the panel should
+    // already be positioned before we touch it.
+    ok(panel.style.bottom !== '', 'overlay ran at load (panel has a bottom position), got "' + panel.style.bottom + '"');
+
+    // Simulate a resize: re-flow the canvas lower, then fire window resize.
+    canvas._rect = { left: 0, top: 0, right: 500, bottom: 500, width: 500, height: 500 };
+    win._fire('resize');
+    ok(panel.style.bottom === (700 - 500 + 16) + 'px', 'resize re-runs reposition to the new canvas bottom (expected ' + (700-500+16) + 'px, got "' + panel.style.bottom + '")');
+  }
+
+  /* ---------- 141. Reposition clamps bottom so the bar never leaves the viewport ---------- */
+  {
+    // When the drawing is scrolled so the canvas bottom falls below the viewport
+    // (a long PDF), the unclamped (innerHeight - canvas.bottom) + offset goes
+    // negative and a position:fixed panel would sit entirely off-screen — the
+    // reported "can't see the bar but commands work" symptom. Clamp keeps it on.
+    const { win, byId } = makeStubWindow();
+    win.innerHeight = 700;
+    loadModule(win);
+    const RW = win.__RW;
+    RW._cmdBarOffset = 16;
+    const panel = byId['rw-panel'] || makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    win.document.body.appendChild(canvas);
+
+    // canvas bottom at 1000, viewport height 700 -> raw bottom = (700-1000)+16 = -284
+    canvas._rect = { left: 0, top: 400, right: 500, bottom: 1000, width: 500, height: 600 };
+    RW._cmdRepositionOverlay();
+    ok(panel.style.bottom === '16px', 'negative raw bottom clamps to the offset (16px), got "' + panel.style.bottom + '"');
+
+    // and a normal in-view case is untouched: canvas bottom 600 -> (700-600)+16 = 116
+    canvas._rect = { left: 0, top: 0, right: 500, bottom: 600, width: 500, height: 600 };
+    RW._cmdRepositionOverlay();
+    ok(panel.style.bottom === '116px', 'in-view canvas still uses the real computed bottom (116px), got "' + panel.style.bottom + '"');
+  }
+
+  /* ---------- 142. _overlayDiagnose reports panel/canvas/ancestor state without throwing ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerHeight = 700;
+    loadModule(win);
+    const panel = byId['rw-panel'] || makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    panel.style.left = '180px'; panel.style.bottom = '76px'; panel.style.width = '480px';
+    panel._rect = { left: 180, top: 600, right: 660, bottom: 684, width: 480, height: 84 };
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    win.document.body.appendChild(canvas);
+    canvas._rect = { left: 20, top: 40, right: 820, bottom: 640, width: 800, height: 600 };
+
+    let threw = false;
+    let diag = null;
+    try { diag = win.__RW._overlayDiagnose(); } catch(_e){ threw = true; }
+    ok(!threw, '_overlayDiagnose runs without throwing');
+    ok(diag && diag.panel && diag.panel.present === true, 'diagnose reports the panel as present');
+    ok(diag && diag.canvas && diag.canvas.present === true, 'diagnose reports the canvas as present');
+    ok(diag && diag.panel.onScreen === true, 'diagnose computes the panel on-screen (rect inside the 1000x700 viewport)');
+    ok(Array.isArray(diag && diag.ancestors) && diag.ancestors.length === 2, 'diagnose reports body + html ancestor transform info');
+  }
+
+  /* ---------- 143. _overlayDiagnose degrades gracefully when elements are missing ---------- */
+  {
+    const { win } = makeStubWindow();
+    loadModule(win); // no #rw-panel, no #annotation-canvas
+    let threw = false;
+    let diag = null;
+    try { diag = win.__RW._overlayDiagnose(); } catch(_e){ threw = true; }
+    ok(!threw, 'diagnose no-ops without throwing when panel/canvas are absent');
+    ok(diag && diag.panel && diag.panel.present === false, 'diagnose reports the panel absent');
+    ok(diag && diag.canvas && diag.canvas.present === false, 'diagnose reports the canvas absent');
+  }
+
+  /* ---------- 144. Assigning _cmdBarWidth / _cmdBarOffset repositions immediately ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerHeight = 700;
+    // Build the panel + canvas BEFORE loadModule so the module's load-time
+    // _cmdRepositionOverlay() applies the defaults (tests load only
+    // rw_cmdline.js, which doesn't create #rw-panel itself).
+    const panel = makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    win.document.body.appendChild(canvas);
+    canvas._rect = { left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600 };
+
+    loadModule(win);
+    const RW = win.__RW;
+
+    // Width: 480 (default) centers at (800-480)/2 = 160.
+    ok(panel.style.left === '160px' && panel.style.width === '480px', 'default width 480 centers the panel (left 160), got left="' + panel.style.left + '" width="' + panel.style.width + '"');
+    RW._cmdBarWidth = 600;
+    ok(panel.style.width === '600px', 'assigning _cmdBarWidth repositions immediately to 600px, got "' + panel.style.width + '"');
+    ok(panel.style.left === '100px', 'recentered for the new width: (800-600)/2 = 100, got "' + panel.style.left + '"');
+
+    // Offset: (700-600)+16 = 116 by default.
+    ok(panel.style.bottom === '116px', 'default offset 16 gives bottom 116px, got "' + panel.style.bottom + '"');
+    RW._cmdBarOffset = 40;
+    ok(panel.style.bottom === '140px', 'assigning _cmdBarOffset repositions immediately to 140px, got "' + panel.style.bottom + '"');
+
+    // Values survive a read back.
+    ok(RW._cmdBarWidth === 600 && RW._cmdBarOffset === 40, 'the new values are retained on read-back (width ' + RW._cmdBarWidth + ', offset ' + RW._cmdBarOffset + ')');
+  }
+
+  /* ---------- 145. The command input is styled readable against the dark panel ---------- */
+  {
+    // Near-white text (inherited from #rw-panel's color) on the input's default
+    // WHITE UA background is unreadable — the fix is an explicit dark input bg +
+    // light text. Guard that the input carries both, so a regression can't return
+    // the white-on-white state.
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    ok(inp && inp.style.cssText.indexOf('background:#111') !== -1, 'input has an explicit dark background (unreadable white-on-white avoided)');
+    ok(inp && inp.style.cssText.indexOf('color:#eee') !== -1, 'input has explicit near-white text');
+    ok(inp && inp.style.cssText.indexOf('color-scheme:dark') !== -1, 'input opts into a dark native color scheme');
   }
 
   finish();
