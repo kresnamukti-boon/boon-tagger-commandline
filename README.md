@@ -48,24 +48,46 @@ AutoCAD's command line): the first character you type auto-focuses the always-vi
 the top of the panel and seeds it, an autocomplete dropdown suggests matches as you keep typing
 (light green), and **Enter or Space** dispatches it to the app — both act identically, AutoCAD's
 own classic convention, and both work the same way whether you're confirming a command or a
-searched tag (see below).
+searched tag (see below). A query with exactly one match always renders that one row visibly
+highlighted in the dropdown — a single match is never silently run without a visible row to
+confirm (there is no hidden "only one match, just run it" shortcut).
 
 **The whole command-line panel — input, status line, and the RW: ON/OFF killswitch — is a fixed
 overlay pinned to the bottom-center of the annotation canvas**, not a box in the side rail. It
 stays horizontally centered over the canvas's on-screen rect (so it accounts for the side rail,
 unlike window-centering) and sits a tunable gap above the canvas's bottom edge (default 16px);
-because it's `position:fixed`, it neither scrolls nor pans with the drawing. The autocomplete
-dropdown opens **upward** above the input, so it can't fall off the bottom of the viewport. Two
-console escape hatches tune it: `__RW._cmdBarOffset` (px gap above the canvas's bottom edge) and
+because it's `position:fixed`, it neither scrolls nor pans with the drawing. Two console escape
+hatches tune it: `__RW._cmdBarOffset` (px gap above the canvas's bottom edge) and
 `__RW._cmdBarWidth` (overlay width, default 480px) — **both are live**: assigning either one
 (e.g. `__RW._cmdBarWidth = 600`) repositions the bar immediately, no reload or resize needed.
-It also re-centers itself automatically on window resize. The panel is given the maximum
-`z-index` (2147483647) so nothing the app stacks above the canvas can cover it, and its bottom
-edge is clamped so it stays on-screen even when the drawing is scrolled so the canvas's bottom
-falls below the viewport. **If the bar ever goes missing but
-commands still work**, run `__RW._overlayDiagnose()` in the console — it reports whether the panel
-and canvas are present, the panel's actual on-screen rect and visibility, and whether `body`/`html`
-carry a transform that would break `position:fixed` anchoring.
+It also re-centers itself automatically on window resize. The panel is given a near-maximum
+`z-index` (2147483646, one below the 32-bit signed max) so nothing the app stacks above the
+canvas can cover it, and its bottom edge is clamped so it stays on-screen even when the drawing
+is scrolled so the canvas's bottom falls below the viewport. **If the bar ever goes missing but
+commands still work**, run `__RW._overlayDiagnose()` in the console — it reports whether the panel,
+canvas, and dropdown are present, their actual on-screen rects and visibility, and whether
+`body`/`html` carry a transform that would break `position:fixed` anchoring.
+
+**The autocomplete dropdown always paints above the whole panel, never behind it or clipped by
+its header strip.** It's given the true 32-bit max `z-index` (one above the panel's own, so it
+always wins any overlap) and is anchored off the *panel's* rect, not just the input's — so it
+never grows into the header strip (the caret / "Command Line" title / RW: ON/OFF button) and gets
+hidden behind it, which is what happened before this was fixed. It **prefers to open upward**
+above the panel; if there isn't enough room (e.g. the bar has been dragged near the top of the
+screen — see below), it **flips to open downward** below the panel instead, so matches stay fully
+visible wherever the bar has been moved. An open dropdown also follows the panel if it's
+repositioned (e.g. on a window resize).
+
+**Drag the panel by its header strip to move it anywhere on screen.** Press and drag from the
+title bar (not the collapse caret or the RW: ON/OFF button, which keep their own click behavior)
+with the **left mouse button**; a small press-without-real-movement still just collapses/expands
+the panel as before — only a real drag (past a 3px threshold) moves it, and swallows the one click
+that would otherwise fire on release, so dragging never accidentally toggles collapse. The panel
+is clamped so it's always fully on-screen, and once moved it **stays put** — window resizes no
+longer re-center it, only keep it sized and on-screen. Position is **per-page only**: a fresh paste
+of the loader always re-pins bottom-center. To re-pin manually without reloading, run
+`__RW._cmdResetBar()` in the console. `__RW._cmdBarDrag = false` disables dragging entirely if it's
+ever in the way.
 
 **Because typing is captured from anywhere, it takes over the host app's own single-key
 shortcuts while you're mid-command** — to press an app shortcut key directly again, blur the
@@ -172,6 +194,19 @@ One accepted trade-off from tracking this ourselves: if a tool gets armed some o
 the app's own toolbar directly, bypassing this command line — Space won't know to close it, since
 nothing here ever saw it arm. If nothing has been run through the command line yet at all, Space
 falls through to ordinary typing instead (opening the full command list, same as any other letter).
+
+**Void workflow awareness**: the app's native void flow (draw a void area over previously-drawn
+content, then the area and its contents are deleted) auto-reverts to whatever drawing tool was
+armed just before you entered void — and this command line's "last tool" memory reflects exactly
+that. `void` and the area tools you use while drawing the void region (`rect`, `circle`,
+`polygon`, `polyline`, ...) never become what Space repeats: `rect -> void -> circle -> Space ->
+Space` closes the reverted `rect` (first Space) and then repeats `rect` (second Space) — the
+pre-void tool, never `void` or the last area tool. This is tracked entirely from our own command
+history (which tools you ran, in what order), not by reading the app's state back — so it stays
+correct even if the app's own revert is silent or asynchronous. Known, accepted edge: if after an
+auto-revert you immediately run a *different* brand-new draw tool (with no Space, mode switch, or
+close in between), that tool is briefly frozen out of the repeat target until one of those happens
+— rare in practice, and the pre-void tool is usually what gets re-selected or Space'd anyway.
 
 **Practical tip**: this blind spot only ever affects *arming* — always start a tool by typing its
 name here (or letting the bare-param blend catch it while another tool's active), never by clicking
