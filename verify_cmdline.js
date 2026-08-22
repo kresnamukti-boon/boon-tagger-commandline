@@ -136,6 +136,10 @@ function makeElement(tag, registry){
       return child;
     },
     get children(){ return this._children; },
+    // Needed by the draggable-panel feature's barHeaderEl(), which identifies
+    // the drag handle structurally (the panel's firstChild, no id) rather
+    // than by id — a real DOM gap this stub never needed to close before.
+    get firstChild(){ return this._children.length ? this._children[0] : null; },
     get nextSibling(){
       if (!this.parentNode) return null;
       const idx = this.parentNode._children.indexOf(this);
@@ -172,6 +176,39 @@ function makeSelect(byId, id, optionPairs, currentValue){
   el.options = optionPairs.map(function(p){ return { value: p[0], text: p[1] }; });
   el.value = currentValue != null ? currentValue : (el.options[0] ? el.options[0].value : '');
   return el;
+}
+
+// A #rw-panel fixture matching both what RW._cmdRepositionOverlay would have
+// already pinned it to (style.left/bottom/width + a rect) AND rw_panelux.js's
+// real structural layout: a header with NO id (the drag handle, identified
+// structurally — see barHeaderEl in rw_cmdline.js) holding #rw-collapse and
+// #rw-enable, plus an #rw-body sibling standing in for the panel's
+// non-header content (the input/status area — pressing there must never
+// start a drag). Attached to doc.body so it's discoverable exactly like the
+// real panel, and built BEFORE loadModule() so the drag-attach code (which
+// runs once at module load) finds it, same discipline as the existing
+// overlay-positioning tests.
+function makeDragPanel(win, byId){
+  const panel = makeElement('div', byId);
+  panel.id = 'rw-panel';
+  byId['rw-panel'] = panel;
+  panel.style.left = '160px'; panel.style.bottom = '76px'; panel.style.width = '480px';
+  panel._rect = { left: 160, top: 600, right: 640, bottom: 690, width: 480, height: 90 };
+
+  const header = makeElement('div', byId); // no id — the structural drag handle
+  const caret = makeElement('span', byId); caret.id = 'rw-collapse';
+  const title = makeElement('b', byId);
+  const enableBtn = makeElement('button', byId); enableBtn.id = 'rw-enable';
+  header.appendChild(caret); header.appendChild(title); header.appendChild(enableBtn);
+  panel.appendChild(header);
+
+  const body = makeElement('div', byId); body.id = 'rw-body';
+  const bodyContent = makeElement('div', byId); // stand-in for the input/status area
+  body.appendChild(bodyContent);
+  panel.appendChild(body);
+
+  win.document.body.appendChild(panel);
+  return { panel, header, caret, enableBtn, title, body, bodyContent };
 }
 
 // Plain-object mouse/pointer event factory — the module never CONSTRUCTS a
@@ -3116,6 +3153,647 @@ function loadModule(win, annotationState, timers){
     ok(inp && inp.style.cssText.indexOf('background:#111') !== -1, 'input has an explicit dark background (unreadable white-on-white avoided)');
     ok(inp && inp.style.cssText.indexOf('color:#eee') !== -1, 'input has explicit near-white text');
     ok(inp && inp.style.cssText.indexOf('color-scheme:dark') !== -1, 'input opts into a dark native color scheme');
+  }
+
+  /* ---------- 146. Single-match UX: a query with exactly one command match renders one VISIBLE highlighted row ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'rect'; // exact name match — only one command matches
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    ok(menu.style.display === 'block', 'a single match still opens the dropdown (display:block), never silently hidden');
+    ok(menu._children.length === 1, 'exactly one row is rendered for a single match');
+    ok(menu._children[0].style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1, 'the single row is visibly highlighted, ready for Enter/Space');
+  }
+
+  /* ---------- 147. Single-match UX: Enter with the single match visible runs it through the visible-highlight branch ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'rect';
+    inp.dispatchEvent({ type: 'input' }); // single visible, highlighted match
+    inp._fire('keydown', { key: 'Enter' });
+    ok(JSON.stringify(keys) === JSON.stringify(['d','w']), 'Enter on a single visible match runs it (draw-prefix d + rect\'s w)');
+    ok(inp.value === '' && byId['rw-cmd-menu'].style.display === 'none', 'input cleared and menu hidden after the run');
+  }
+
+  /* ---------- 148. Single-match UX regression guard: the invisible `matches.length === 1` fallback is GONE ---------- */
+  // The old Enter/Space handler had a hidden escape hatch that ran a single command
+  // match even with no visible dropdown — the exact "no dropdown shown, but still can
+  // select" confusion. Now selection only happens via a real highlighted row; with the
+  // menu emptied, Enter reports unknown command instead of silently running.
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'rect'; // a real match first — creates the menu element
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'].style.display === 'block', 'menu opens for a real match (baseline)');
+    inp.value = 'zzz-nonexistent'; // now a no-match query empties menuItems and hides the menu
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'].style.display === 'none', 'no-match query leaves the menu hidden (baseline)');
+    inp.value = 'rect'; // WITHOUT an input event: a stale input whose text WOULD match exactly one command
+    inp._fire('keydown', { key: 'Enter' });
+    ok(keys.length === 0, 'Enter with no highlighted row never dispatches — the invisible single-match fallback is gone');
+    ok(RW._lastStatus.indexOf('unknown command') !== -1, 'it reports unknown command instead of silently running');
+  }
+
+  /* ---------- 149. Void: `void` is still a real draw tool — dispatches d then v ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('void');
+    ok(JSON.stringify(keys) === JSON.stringify(['d','v']), 'void dispatches draw-prefix d then its own letter v, unchanged');
+  }
+
+  /* ---------- 150. Void: void never becomes the Space-repeat target; _cmdVoidPrev snapshots the pre-void tool ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('rect'); // the pre-void tool
+    RW.runCommand('void');
+    ok(RW._cmdLastTool === 'rect', 'void does NOT overwrite the last tool — rect is still remembered');
+    ok(RW._cmdVoidPrev === 'rect', 'the pre-void tool is snapshotted into _cmdVoidPrev');
+    ok(RW._cmdVoidActive === true, 'the void workflow is marked active');
+    ok(RW._cmdToolArmed === true, 'void is a real draw tool, so the app genuinely has a tool armed');
+  }
+
+  /* ---------- 151. Void: an area tool used during void freezes _cmdLastTool at the pre-void tool ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('rect');
+    RW.runCommand('void');
+    RW.runCommand('circle'); // an area step while inside void
+    ok(RW._cmdLastTool === 'rect', 'circle does not become the last tool while void is active — frozen at rect');
+    ok(JSON.stringify(keys) === JSON.stringify(['d','w','d','v','d','y']), 'circle still dispatches its own draw keys (d then y)');
+    ok(RW._cmdToolArmed === true, 'area tools still mark a tool as armed');
+  }
+
+  /* ---------- 152. Void: full reported loop — rect -> void -> circle -> Space -> Space repeats the PRE-VOID tool ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('rect');
+    RW.runCommand('void');
+    RW.runCommand('circle');
+    keys.length = 0; // only care about what the two Space presses dispatch
+    const bodyTarget = makeElement('div', byId);
+    doc._fire('keydown', { target: bodyTarget, key: ' ' }); // first Space: closes the armed tool
+    ok(JSON.stringify(keys) === JSON.stringify(['s']), 'first Space closes the armed (post-revert rect) tool');
+    ok(RW._cmdToolArmed === false, 'after the close, nothing is armed');
+    keys.length = 0;
+    doc._fire('keydown', { target: bodyTarget, key: ' ' }); // second Space: repeats the last (pre-void) tool
+    ok(JSON.stringify(keys) === JSON.stringify(['d','w']), 'second Space repeats rect — the PRE-VOID tool, not void or circle');
+  }
+
+  /* ---------- 153. Void: a mode switch ends the session and releases the freeze ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('rect');
+    RW.runCommand('void');
+    RW.runCommand('pan'); // a mode switch ends the void session
+    ok(RW._cmdVoidActive === false, 'the mode switch clears _cmdVoidActive');
+    RW.runCommand('circle');
+    ok(RW._cmdLastTool === 'circle', 'after the session ends, a later tool stamps _cmdLastTool normally again');
+  }
+
+  /* ---------- 154. Void: RW._cmdGoSelect (Escape/Space-close/poll) ends the session ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('rect');
+    RW.runCommand('void');
+    RW._cmdGoSelect('escape', true); // a close ends the session too
+    ok(RW._cmdVoidActive === false, 'a close clears _cmdVoidActive');
+    ok(RW._cmdToolArmed === false, 'a close leaves nothing armed');
+    RW.runCommand('circle');
+    ok(RW._cmdLastTool === 'circle' && RW._cmdToolArmed === true, 'a later tool stamps _cmdLastTool and arms normally after the session ends');
+  }
+
+  /* ---------- 155. Void: re-running the pre-void tool itself ends the session — the app has reverted ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('rect');
+    RW.runCommand('void');
+    RW.runCommand('rect'); // the pre-void tool itself -> the app has reverted, session over
+    ok(RW._cmdVoidActive === false, 're-running the pre-void tool clears _cmdVoidActive');
+    ok(RW._cmdLastTool === 'rect' && RW._cmdToolArmed === true, 'normal bookkeeping resumes — rect is the last tool and armed');
+  }
+
+  /* ---------- 156. Void: whole void bookkeeping works with no annotationState at all ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow(); // no annotationState passed to loadModule
+    loadModule(win);
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('rect');
+    RW.runCommand('void');
+    RW.runCommand('circle');
+    ok(RW._cmdLastTool === 'rect' && RW._cmdVoidActive === true, 'void bookkeeping holds with annotationState absent');
+    ok(RW._cmdToolArmed === true, 'armed flag is maintained without annotationState');
+    // And the Space toggle still works end to end without annotationState.
+    keys.length = 0; // only care about what the two Space presses dispatch
+    const bodyTarget = makeElement('div', byId);
+    doc._fire('keydown', { target: bodyTarget, key: ' ' });
+    doc._fire('keydown', { target: bodyTarget, key: ' ' });
+    ok(JSON.stringify(keys) === JSON.stringify(['s','d','w']), 'Space-close then Space-repeat of the pre-void tool both work with no annotationState');
+  }
+
+  /* ---------- 157. Dropdown anchors clear of the WHOLE panel, not just the input ---------- */
+  {
+    // The load-bearing regression guard for this round: the input sits INSIDE
+    // the panel, below its header strip (caret / "Command Line" / RW: ON/OFF).
+    // Anchoring off the input alone (the old behavior) would let the dropdown's
+    // lower rows grow straight into that header and be painted over by it —
+    // positionMenu must anchor off the PANEL's top edge instead.
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    const panel = makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    // Panel's header strip sits above the input inside it: panel top (600) is
+    // well above the input's own top (650).
+    panel._rect = { left: 300, top: 600, right: 780, bottom: 690, width: 480, height: 90 };
+    inp._rect = { left: 300, top: 650, right: 780, bottom: 670, width: 480, height: 20 };
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    const bottom = parseFloat(menu.style.bottom);
+    // bottom = innerHeight - panelTop + 6 = 700 - 600 + 6 = 106 (NOT 700-650+6=56, the input-anchored value)
+    ok(bottom === 106, 'menu anchors off the PANEL top edge (expected 106), got "' + menu.style.bottom + '"');
+    ok(menu.style.top === 'auto', 'still a single, upward anchor (top cleared)');
+  }
+
+  /* ---------- 158. Dropdown horizontal position still tracks the INPUT, not the panel ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    const panel = makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    panel._rect = { left: 280, top: 600, right: 800, bottom: 690, width: 520, height: 90 };
+    inp._rect = { left: 300, top: 650, right: 780, bottom: 670, width: 480, height: 20 };
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    ok(menu.style.left === '300px', 'menu left still tracks the INPUT rect (300px), not the wider panel, got "' + menu.style.left + '"');
+    ok(menu.style.width === '480px', 'menu width still tracks the INPUT rect (480px), got "' + menu.style.width + '"');
+  }
+
+  /* ---------- 159. Dropdown flips BELOW the panel when there's no room above ---------- */
+  {
+    // Simulates the panel having been dragged near the top of the screen
+    // (the draggable-panel feature) — the dropdown must still be fully
+    // visible, so it opens downward instead of clipping off the top.
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    const panel = makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    // Panel pinned near the very top: only 10px above it, but 590px below.
+    panel._rect = { left: 300, top: 10, right: 780, bottom: 100, width: 480, height: 90 };
+    inp._rect = { left: 300, top: 70, right: 780, bottom: 90, width: 480, height: 20 };
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    ok(menu.style.bottom === 'auto', 'flip clears the bottom anchor, got "' + menu.style.bottom + '"');
+    // top = panelBottom + 6 = 100 + 6 = 106
+    ok(menu.style.top === '106px', 'flipped menu anchors below the panel (top 106px), got "' + menu.style.top + '"');
+    const maxH = parseFloat(menu.style.maxHeight);
+    // below = innerHeight - panelBottom - 6 = 700 - 100 - 6 = 594, clamped to MENU_MAX_H (200)
+    ok(maxH === 200, 'flipped menu maxHeight clamps to the 200px cap when there is ample room below, got "' + menu.style.maxHeight + '"');
+  }
+
+  /* ---------- 160. Dropdown does NOT flip when there's enough room above (prefers upward) ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    const panel = makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    panel._rect = { left: 300, top: 600, right: 780, bottom: 690, width: 480, height: 90 };
+    inp._rect = { left: 300, top: 650, right: 780, bottom: 670, width: 480, height: 20 };
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    ok(menu.style.top === 'auto', 'no flip: top stays cleared, got "' + menu.style.top + '"');
+    ok(menu.style.bottom !== 'auto' && menu.style.bottom !== '', 'no flip: bottom is set, got "' + menu.style.bottom + '"');
+    ok(menu.style.maxHeight === '200px', 'ample room above still clamps to the 200px cap, got "' + menu.style.maxHeight + '"');
+  }
+
+  /* ---------- 161. Dropdown maxHeight floors at MENU_MIN_H when neither side has much room ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 200; // a tiny viewport
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    const panel = makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    // Panel sits mid-viewport: only ~90px above, ~70px below.
+    panel._rect = { left: 300, top: 90, right: 780, bottom: 130, width: 480, height: 40 };
+    inp._rect = { left: 300, top: 100, right: 780, bottom: 120, width: 480, height: 20 };
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    const maxH = parseFloat(menu.style.maxHeight);
+    ok(maxH >= 60, 'maxHeight never shrinks below the 60px floor even when space is tight, got "' + menu.style.maxHeight + '"');
+  }
+
+  /* ---------- 162. Dropdown falls back to the input's own rect when #rw-panel is absent ---------- */
+  {
+    // e.g. a synthetic harness, or (defensively) a page state where the panel
+    // hasn't mounted yet — positionMenu must never throw.
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    loadModule(win); // no #rw-panel built
+    const inp = byId['rw-cmd-input'];
+    inp._rect = { left: 300, top: 650, right: 780, bottom: 670, width: 480, height: 20 };
+    let threw = false;
+    try {
+      inp.value = 'po';
+      inp.dispatchEvent({ type: 'input' });
+    } catch(_e){ threw = true; }
+    ok(!threw, 'positionMenu does not throw without #rw-panel');
+    const menu = byId['rw-cmd-menu'];
+    ok(parseFloat(menu.style.bottom) === 56, 'falls back to anchoring off the INPUT rect (56px, same as pre-fix behavior), got "' + menu.style.bottom + '"');
+  }
+
+  /* ---------- 163. Menu and panel stacking: menu z-index above the panel's, source-confirmed on both files ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    ok(menu.style.cssText.indexOf('z-index:2147483647') !== -1, 'menu carries the true 32-bit max z-index, got "' + menu.style.cssText + '"');
+    // rw_core.js (the panel's own module) isn't loaded by this harness (only
+    // rw_cmdline.js is sandboxed) — read its source directly to confirm the
+    // panel was deliberately dropped one below the menu's max, not left equal.
+    const coreSrc = fs.readFileSync(path.join(__dirname, 'rw_core.js'), 'utf8');
+    ok(coreSrc.indexOf('z-index:2147483646') !== -1, 'rw_core.js pins the panel one below the true max, so the menu always wins, got no match');
+    ok(coreSrc.indexOf('z-index:2147483647') === -1, 'rw_core.js no longer claims the true max for the panel itself');
+  }
+
+  /* ---------- 164. A resize repositions an OPEN dropdown; a closed one is left alone ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerHeight = 700;
+    loadModule(win);
+    const RW = win.__RW;
+    const inp = byId['rw-cmd-input'];
+    const panel = byId['rw-panel'] || makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    win.document.body.appendChild(canvas);
+    canvas._rect = { left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600 };
+    panel._rect = { left: 160, top: 600, right: 640, bottom: 684, width: 480, height: 84 };
+    inp._rect = { left: 160, top: 650, right: 640, bottom: 670, width: 480, height: 20 };
+
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' }); // opens the menu, anchored off the current panel rect
+    const menu = byId['rw-cmd-menu'];
+    const beforeBottom = menu.style.bottom;
+
+    // Move the panel (simulating a resize re-centering it) and re-fire resize.
+    panel._rect = { left: 160, top: 500, right: 640, bottom: 584, width: 480, height: 84 };
+    canvas._rect = { left: 0, top: 0, right: 800, bottom: 500, width: 800, height: 500 };
+    win._fire('resize');
+    ok(menu.style.bottom !== beforeBottom, 'an OPEN dropdown is repositioned along with the panel on resize (was "' + beforeBottom + '", now "' + menu.style.bottom + '")');
+
+    // Now close it and confirm a further resize does not reopen/touch it.
+    menu.style.display = 'none';
+    const afterCloseBottom = menu.style.bottom;
+    panel._rect = { left: 160, top: 300, right: 640, bottom: 384, width: 480, height: 84 };
+    canvas._rect = { left: 0, top: 0, right: 800, bottom: 300, width: 800, height: 300 };
+    win._fire('resize');
+    ok(menu.style.display === 'none', 'a CLOSED dropdown stays closed after a resize');
+    ok(menu.style.bottom === afterCloseBottom, 'a CLOSED dropdown is left at its stale position, untouched, got "' + menu.style.bottom + '"');
+  }
+
+  /* ---------- 165. _overlayDiagnose reports the menu section (present + absent) ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const RW = win.__RW;
+    const inp = byId['rw-cmd-input'];
+
+    let diag = RW._overlayDiagnose();
+    ok(diag.menu && diag.menu.present === false, 'diagnose reports the menu absent before any query has ever matched');
+
+    inp.value = 'po';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    menu._rect = { left: 300, top: 500, right: 780, bottom: 650, width: 480, height: 150 };
+    diag = RW._overlayDiagnose();
+    ok(diag.menu && diag.menu.present === true, 'diagnose reports the menu present once it has been created');
+    ok(diag.menu.style && diag.menu.style.zIndex === menu.style.zIndex, 'diagnose reports the menu\'s own zIndex style');
+    ok(diag.menu.rect && diag.menu.rect.height === 150, 'diagnose reports the menu\'s live rect');
+  }
+
+  /* ---------- 166. Press+move past threshold sets style.left/top from deltas, converts bottom->top anchoring ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    const fx = makeDragPanel(win, byId);
+    loadModule(win);
+    const doc = win.document;
+
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:210, clientY:655, buttons:1 })); // dx=10, dy=5
+
+    ok(fx.panel.style.left === '170px', 'left = start(160) + dx(10) = 170px, got "' + fx.panel.style.left + '"');
+    ok(fx.panel.style.top === '605px', 'top = start(600) + dy(5) = 605px, got "' + fx.panel.style.top + '"');
+    ok(fx.panel.style.bottom === 'auto', 'bottom is cleared — the overlay converts to top-anchoring on first real drag, got "' + fx.panel.style.bottom + '"');
+  }
+
+  /* ---------- 167. Clamping at all four viewport edges ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    const fx = makeDragPanel(win, byId);
+    loadModule(win);
+    const doc = win.document;
+
+    // Drag far up-left: clamps to (0, 0).
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:-5000, clientY:-5000, buttons:1 }));
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+    ok(fx.panel.style.left === '0px', 'far up-left drag clamps left to 0, got "' + fx.panel.style.left + '"');
+    ok(fx.panel.style.top === '0px', 'far up-left drag clamps top to 0, got "' + fx.panel.style.top + '"');
+
+    // Drag far down-right: clamps to (innerWidth - width, innerHeight - height) = (1000-480, 700-90) = (520, 610).
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:0, clientY:0, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:5000, clientY:5000, buttons:1 }));
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+    ok(fx.panel.style.left === '520px', 'far down-right drag clamps left to innerWidth-width=520, got "' + fx.panel.style.left + '"');
+    ok(fx.panel.style.top === '610px', 'far down-right drag clamps top to innerHeight-height=610, got "' + fx.panel.style.top + '"');
+  }
+
+  /* ---------- 168. Sub-threshold press+release: no style mutation, the click is NOT consumed ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const fx = makeDragPanel(win, byId);
+    loadModule(win);
+    const doc = win.document;
+
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:201, clientY:650, buttons:1 })); // manhattan 1 <= threshold 3
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+
+    ok(fx.panel.style.left === '160px', 'a sub-threshold press+release never touches style.left (still the fixture\'s pinned value), got "' + fx.panel.style.left + '"');
+    ok(fx.panel.style.top === undefined, 'a sub-threshold press+release never touches style.top');
+
+    const evt = fx.panel._fire('click', mouseEvt({}));
+    ok(evt.defaultPrevented === false && evt._propStopped === false, 'the click-to-collapse click is left completely alone (nothing suppressed)');
+  }
+
+  /* ---------- 169. Presses starting on #rw-collapse / #rw-enable / the body never start a drag, even with movement ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const fx = makeDragPanel(win, byId);
+    loadModule(win);
+    const doc = win.document;
+
+    [fx.caret, fx.enableBtn, fx.bodyContent].forEach(function(target, i){
+      fx.panel._fire('pointerdown', mouseEvt({ button:0, target: target, clientX:200, clientY:650, pointerId:1 }));
+      doc._fire('pointermove', mouseEvt({ target: target, clientX:400, clientY:400, buttons:1 })); // well past threshold
+      doc._fire('pointerup', mouseEvt({ target: target }));
+      ok(fx.panel.style.left === '160px', 'target #' + i + ' never starts a drag (style.left still the fixture\'s pinned value)');
+      ok(fx.panel.style.top === undefined, 'target #' + i + ' never starts a drag (style.top untouched)');
+    });
+  }
+
+  /* ---------- 170. A middle-button (button:1) press on the header never starts a drag ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const fx = makeDragPanel(win, byId);
+    loadModule(win);
+    const doc = win.document;
+
+    fx.panel._fire('pointerdown', mouseEvt({ button:1, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:400, clientY:400, buttons:4 }));
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+    ok(fx.panel.style.left === '160px', 'a middle-button press on the header never starts a drag (style.left still the fixture\'s pinned value)');
+  }
+
+  /* ---------- 171. First real drag sets RW._cmdBarUserMoved; a later reposition keeps position, never re-centers ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    const fx = makeDragPanel(win, byId);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    canvas._rect = { left: 20, top: 40, right: 820, bottom: 640, width: 800, height: 600 };
+    win.document.body.appendChild(canvas);
+    loadModule(win);
+    const RW = win.__RW;
+    const doc = win.document;
+
+    ok(RW._cmdBarUserMoved === false, 'starts un-moved');
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:150, clientY:600, buttons:1 })); // dx=-50, dy=-50
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+    ok(RW._cmdBarUserMoved === true, 'a real drag sets RW._cmdBarUserMoved');
+
+    const draggedLeft = fx.panel.style.left, draggedTop = fx.panel.style.top;
+    RW._cmdRepositionOverlay(); // simulates a window resize re-running reposition
+    ok(fx.panel.style.left === draggedLeft && fx.panel.style.top === draggedTop,
+      'reposition after a user move keeps the dragged position (was "' + draggedLeft + '/' + draggedTop + '", now "' + fx.panel.style.left + '/' + fx.panel.style.top + '")');
+    ok(fx.panel.style.width === '480px', 'the default bar width is still applied in the moved branch');
+
+    RW._cmdBarWidth = 600; // live setter also triggers a reposition
+    ok(fx.panel.style.width === '600px', 'assigning _cmdBarWidth still applies immediately while moved, got "' + fx.panel.style.width + '"');
+    ok(fx.panel.style.left === draggedLeft, 'a width change alone does not re-center a user-moved panel');
+  }
+
+  /* ---------- 172. RW._cmdResetBar() clears the flag and re-pins (re-centers over canvas) ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    const fx = makeDragPanel(win, byId);
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    canvas._rect = { left: 20, top: 40, right: 820, bottom: 640, width: 800, height: 600 };
+    win.document.body.appendChild(canvas);
+    loadModule(win);
+    const RW = win.__RW;
+    const doc = win.document;
+
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:150, clientY:600, buttons:1 }));
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+    ok(RW._cmdBarUserMoved === true, 'moved before reset');
+
+    RW._cmdResetBar();
+    ok(RW._cmdBarUserMoved === false, '_cmdResetBar clears the moved flag');
+    // Re-centered exactly like RW._cmdRepositionOverlay's default (un-moved) branch: left = cr.left + (cr.width-width)/2 = 20 + (800-480)/2 = 180
+    ok(fx.panel.style.left === '180px', 're-pins centered over the canvas, got "' + fx.panel.style.left + '"');
+    ok(fx.panel.style.bottom !== 'auto' && fx.panel.style.bottom !== '', 're-pins bottom-anchored again, got "' + fx.panel.style.bottom + '"');
+  }
+
+  /* ---------- 173. Post-drag click is consumed exactly once; the next click is not; the fallback timer clears it with no click following ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const timers = makeFakeTimers();
+    const fx = makeDragPanel(win, byId);
+    loadModule(win, undefined, timers);
+    const doc = win.document;
+
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:230, clientY:650, buttons:1 })); // real drag
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+
+    const consumed = fx.panel._fire('click', mouseEvt({}));
+    ok(consumed.defaultPrevented === true && consumed._propStopped === true, 'the release click is consumed exactly once');
+
+    const next = fx.panel._fire('click', mouseEvt({}));
+    ok(next.defaultPrevented === false && next._propStopped === false, 'the click AFTER the consumed one is left alone');
+
+    // A second drag with no click following: the fallback setTimeout(0) must clear suppressClick on its own.
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:230, clientY:650, buttons:1 }));
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+    timers.runTimeouts(); // no click ever fired — the fallback timer must clear suppressClick itself
+    const later = fx.panel._fire('click', mouseEvt({}));
+    ok(later.defaultPrevented === false && later._propStopped === false, 'with no click following, the fallback timer clears suppressClick and a later click survives');
+  }
+
+  /* ---------- 174. Teardown paths: pointerup, pointercancel, lostpointercapture, window blur, and buttons-cleared mid-drag ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const fx = makeDragPanel(win, byId);
+    loadModule(win);
+    const doc = win.document;
+
+    function beginRealDrag(){
+      fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+      doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:220, clientY:650, buttons:1 })); // crosses the 3px threshold
+    }
+    function assertIgnoredAfterTeardown(label){
+      const before = fx.panel.style.left;
+      doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:900, clientY:650, buttons:1 }));
+      ok(fx.panel.style.left === before, label + ': a further move after teardown is ignored (listeners were really removed)');
+    }
+
+    beginRealDrag();
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+    assertIgnoredAfterTeardown('pointerup');
+
+    beginRealDrag();
+    doc._fire('pointercancel', mouseEvt({ target: fx.header }));
+    assertIgnoredAfterTeardown('pointercancel');
+
+    beginRealDrag();
+    fx.header._fire('lostpointercapture', {});
+    assertIgnoredAfterTeardown('lostpointercapture');
+
+    beginRealDrag();
+    win._fire('blur', {});
+    assertIgnoredAfterTeardown('window blur');
+
+    // buttons-cleared MID-drag (after already crossing the threshold), not just a sub-threshold press.
+    beginRealDrag();
+    const midDragLeft = fx.panel.style.left;
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:400, clientY:650, buttons:0 }));
+    ok(fx.panel.style.left === midDragLeft, 'a move with the left buttons bit cleared mid-drag stops applying further deltas');
+    assertIgnoredAfterTeardown('buttons-cleared');
+
+    // A fresh drag afterward is not double-driven (proves listener removal is real, not additive).
+    beginRealDrag();
+    const singleDriveLeft = fx.panel.style.left;
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+    ok(fx.panel.style.left === singleDriveLeft, 'a subsequent drag applies deltas exactly once, not doubled by leftover listeners');
+  }
+
+  /* ---------- 175. RW._cmdBarDrag = false disables the whole feature ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const fx = makeDragPanel(win, byId);
+    loadModule(win);
+    const RW = win.__RW;
+    const doc = win.document;
+    RW._cmdBarDrag = false;
+
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    doc._fire('pointermove', mouseEvt({ target: fx.header, clientX:400, clientY:400, buttons:1 }));
+    doc._fire('pointerup', mouseEvt({ target: fx.header }));
+
+    ok(fx.panel.style.left === '160px', 'RW._cmdBarDrag=false disables dragging entirely (style.left still the fixture\'s pinned value)');
+    ok(RW._cmdBarUserMoved === false, 'and never marks the panel as user-moved');
+  }
+
+  /* ---------- 176. Regression: RW._cmdRepositionOverlay always clears style.top when re-pinning (no double-anchor stretch) ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    win.innerHeight = 700;
+    const fx = makeDragPanel(win, byId);
+    fx.panel.style.top = '123px'; // simulate a leftover top-anchor from an earlier drag
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    canvas._rect = { left: 0, top: 0, right: 500, bottom: 600, width: 500, height: 600 };
+    win.document.body.appendChild(canvas);
+    loadModule(win);
+    const RW = win.__RW;
+
+    ok(RW._cmdBarUserMoved === false, 'not in the user-moved branch for this test');
+    RW._cmdRepositionOverlay();
+    ok(fx.panel.style.top === 'auto', 're-pinning always clears a stale style.top (no double-anchor stretch), got "' + fx.panel.style.top + '"');
   }
 
   finish();

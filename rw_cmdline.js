@@ -100,7 +100,7 @@
     { name:'cloud',    kind:NATIVE, aliases:['u'],  run: nativeDrawTool('u') },
     { name:'wand',     kind:NATIVE, aliases:['k'],  run: nativeDrawTool('k') },
     { name:'wrap',     kind:NATIVE, aliases:['x'],  run: nativeDrawTool('x') },
-    { name:'void',     kind:NATIVE, aliases:['v'],  run: nativeDrawTool('v') },
+    { name:'void',     kind:NATIVE, aliases:['v'],  void:true, run: nativeDrawTool('v') }, // void:true marks it so RW.runCommand can self-track the void workflow (see below) without reversing its draw-tool dispatch
     // Confirmed live via opencli (not in the app-keymap reference doc when
     // this table was first written): a new native tool, data-tool="ribbon",
     // key P — click points along a path's centerline, drag to measure a
@@ -462,8 +462,37 @@
     // state updates synchronously). Running any mode switch (including a bare
     // `select`) also marks nothing armed, same as an explicit close.
     if (entry.run){
+      // ----- void workflow self-tracking (see CLAUDE.md round 12) -----
+      // The app's native void flow: enter void -> draw the area with the
+      // previously-selected area tools (rect/bbox, circle, polygon, polyline)
+      // -> area deleted -> app auto-reverts to whatever draw tool was armed
+      // just before void. So `void` and the area tools used while drawing the
+      // void area must NEVER become Space's repeat target — Space must resume
+      // the PRE-VOID tool. Tracked purely from our own command history (no
+      // fresh annotationState read at decision time, per this project's
+      // self-track doctrine). RW._cmdVoidPrev snapshots RW._cmdLastTool the
+      // moment void runs; RW._cmdVoidActive is true while "inside" the
+      // workflow. While active, _cmdLastTool is frozen at the pre-void tool.
+      const isVoid = !!entry.void;
+      const wasVoidActive = RW._cmdVoidActive;
+      if (isVoid){
+        // (re)start the session — re-running void re-snapshots from the current
+        // (possibly already-frozen) last tool and restarts.
+        RW._cmdVoidPrev = RW._cmdLastTool;
+        RW._cmdVoidActive = true;
+      } else if (wasVoidActive && entry.run.__isModeSwitch){
+        // a mode switch ends the session; _cmdLastTool already holds _cmdVoidPrev
+        RW._cmdVoidActive = false;
+      } else if (wasVoidActive && entry.name === RW._cmdVoidPrev){
+        // re-running the pre-void tool itself is the self-track signal that the
+        // app has reverted; end the session and let normal bookkeeping stamp below
+        RW._cmdVoidActive = false;
+      }
       if (entry.run.__isDrawTool){
-        RW._cmdLastTool = entry.name; RW._cmdToolArmed = true; RW._cmdModeActive = null;
+        RW._cmdToolArmed = true; RW._cmdModeActive = null;
+        // freeze _cmdLastTool at the pre-void tool while the void workflow is
+        // active (void itself never becomes the target; neither do area tools)
+        if (!RW._cmdVoidActive) RW._cmdLastTool = entry.name;
       } else {
         RW._cmdToolArmed = false;
         // RW._cmdModeActive tracks which deliberate mode switch we're sitting in —
@@ -522,6 +551,8 @@
   RW._cmdLastTool = null;               // last draw tool run via RW.runCommand — see the Space-repeats-last-tool listener below
   RW._cmdToolArmed = false;             // our own belief about whether a tool is currently armed — see RW.runCommand and RW._cmdGoSelect
   RW._cmdModeActive = null;             // our own belief about which mode switch (see SPACE_GOES_SELECT_FROM) we're deliberately sitting in, or null
+  RW._cmdVoidPrev = null;               // the draw tool Space would have resumed just before `void` ran (void's own self-tracking, see RW.runCommand)
+  RW._cmdVoidActive = false;            // true while "inside" the void workflow — while set, _cmdLastTool is frozen at _cmdVoidPrev
   RW._cmdToolPrev = null;
   RW._cmdToolNullPending = false;
   RW._cmdAutoSelectRevertLog = [];
@@ -550,7 +581,7 @@
     RW._cmdToolNullPending = false;
   }
 
-  function recordAutoRevert(reason){
+  function recordAutoRevert(_reason){
     const now = Date.now();
     RW._cmdAutoSelectRevertLog = RW._cmdAutoSelectRevertLog.filter(function(t){ return now - t < AUTOSEL_BURST_MS; });
     RW._cmdAutoSelectRevertLog.push(now);
@@ -585,6 +616,7 @@
       resetWatchState(); // already resting — don't assume `s` toggles rather than switches
       RW._cmdToolArmed = false; // defensively in sync too — we're confirmed at rest either way
       RW._cmdModeActive = null;
+      RW._cmdVoidActive = false; // confirmed at rest — no void workflow in progress
       return false;
     }
     RW._cmdDispatchAppKey(SELECT_KEY, quiet);
@@ -599,6 +631,7 @@
     // actually catches up.
     RW._cmdToolArmed = false;
     RW._cmdModeActive = null;
+    RW._cmdVoidActive = false; // a close ends the void workflow too — _cmdLastTool already holds _cmdVoidPrev
     return true;
   };
 
@@ -663,26 +696,58 @@
   // every keystroke) — {tool, param} once a setting's been picked and we're awaiting its value.
   let settingsDraft = null;
 
+  // Gap between the dropdown and whichever edge of the panel it's anchored
+  // to, its "prefer this much room" height, and the floor it's still
+  // allowed to shrink to when neither side of the panel has much space.
+  // MENU_MAX_H doubles as ensureMenuDom's CSS max-height so the two can't
+  // drift apart.
+  const MENU_GAP = 6, MENU_MAX_H = 200, MENU_MIN_H = 60;
+
   function ensureMenuDom(){
     if (menuEl) return;
     menuEl = document.createElement('div');
     menuEl.id = 'rw-cmd-menu';
-    menuEl.style.cssText = 'position:fixed;display:none;z-index:99991;background:#222;color:#eee;'
-      + 'border:1px solid #666;border-radius:4px;max-height:200px;overflow-y:auto;';
+    // z-index is the true 32-bit signed max — one above #rw-panel's own
+    // (rw_core.js, deliberately one below the max) — so the dropdown always
+    // paints on top of the panel, never behind it. Before this the menu sat
+    // at a much lower z-index and its rows anchored off the INPUT's rect,
+    // which sits below the panel's header strip — so the list's own lower
+    // rows grew straight into the header and were painted over by it. See
+    // positionMenu() below for the anchor-off-the-panel half of the fix.
+    menuEl.style.cssText = 'position:fixed;display:none;z-index:2147483647;background:#222;color:#eee;'
+      + 'border:1px solid #666;border-radius:4px;max-height:' + MENU_MAX_H + 'px;overflow-y:auto;';
     document.body.appendChild(menuEl);
   }
 
-  // Positions the dropdown ABOVE the input: the bar is now a bottom-anchored
-  // overlay (RW._cmdRepositionOverlay below), so the menu grows upward from
-  // just above the input rather than below it (which would push it off the
-  // bottom of the viewport). Bottom is measured from the input's top edge
-  // with a fixed 6px gap; top is cleared so it never double-anchors.
+  // Anchors the dropdown clear of the WHOLE panel (never just the input),
+  // so it never overlaps the panel's own header strip (caret / "Command
+  // Line" / RW: ON/OFF) — previously anchored off the input's rect alone,
+  // which sits below that header inside the panel, so the list's lower rows
+  // grew straight into it and were hidden behind it (see the z-index note
+  // above; both defects had to be fixed together). Preferentially opens
+  // upward above the panel; flips to open downward below it only when there
+  // genuinely isn't room above (e.g. the panel's been dragged near the top
+  // of the screen) and there's more room below. The panel rect is read
+  // fresh on every call, so a dragged panel is followed automatically with
+  // no extra wiring. Falls back to the input's own rect when #rw-panel
+  // doesn't exist (e.g. a synthetic/test harness) so this never throws.
   function positionMenu(){
     const r = inputEl.getBoundingClientRect();
-    menuEl.style.left = r.left + 'px';
+    const panel = document.getElementById('rw-panel');
+    const pr = (panel && panel.getBoundingClientRect) ? panel.getBoundingClientRect() : r;
+    menuEl.style.left = r.left + 'px';   // horizontal tracking stays off the INPUT (inset by the panel's own padding)
     menuEl.style.width = r.width + 'px';
-    menuEl.style.bottom = (window.innerHeight - r.top + 6) + 'px';
-    menuEl.style.top = 'auto';
+    const above = pr.top - MENU_GAP;
+    const below = window.innerHeight - pr.bottom - MENU_GAP;
+    if (above >= MENU_MAX_H || above >= below){
+      menuEl.style.bottom = (window.innerHeight - pr.top + MENU_GAP) + 'px';
+      menuEl.style.top = 'auto';
+      menuEl.style.maxHeight = Math.max(MENU_MIN_H, Math.min(MENU_MAX_H, above)) + 'px';
+    } else {
+      menuEl.style.top = (pr.bottom + MENU_GAP) + 'px';
+      menuEl.style.bottom = 'auto';
+      menuEl.style.maxHeight = Math.max(MENU_MIN_H, Math.min(MENU_MAX_H, below)) + 'px';
+    }
   }
 
   function hideMenu(){ if (menuEl) menuEl.style.display = 'none'; }
@@ -982,10 +1047,13 @@
       e.preventDefault(); e.stopPropagation();
       let item = null;
       if (menuHighlight >= 0 && menuItems[menuHighlight]) item = menuItems[menuHighlight];
-      else if (menuMode === 'command'){
-        const matches = RW._cmdMatch(inputEl.value);
-        if (matches.length === 1) item = matches[0];
-      }
+      // NOTE: there is deliberately NO `matches.length === 1` invisible fallback here
+      // anymore. Selection happens ONLY when there's a real highlighted row; otherwise
+      // the unknown-command branch below reports it. The old fallback let a command run
+      // with no visible dropdown — the "single match selected something invisible"
+      // confusion. onInput always sets menuHighlight = 0 whenever menuItems is
+      // non-empty, so a legitimate 1-match query still reaches this through the
+      // visible-highlight branch; the fallback was never load-bearing.
       if (item) runAndClear(item);
       else {
         const label = menuMode==='tag' ? 'tag' : ((menuMode==='settings-param'||menuMode==='settings-option') ? 'setting' : 'command');
@@ -1084,8 +1152,19 @@
     if (!panel || !canvas) return; // no-op without throwing
     const cr = canvas.getBoundingClientRect();
     const width = Math.min(RW._cmdBarWidth, cr.width);
+    // Once the user has dragged the bar (RW._cmdBarUserMoved), never
+    // re-center it — only keep it the right width and clamp it back
+    // on-screen (a resize could otherwise leave it partly off-viewport).
+    // __RW._cmdResetBar() is the only way back to the default layout.
+    if (RW._cmdBarUserMoved){
+      panel.style.width = width + 'px';
+      RW._cmdClampBar();
+      if (menuEl && menuEl.style.display !== 'none') positionMenu();
+      return;
+    }
     panel.style.width = width + 'px';
     panel.style.left = (cr.left + (cr.width - width) / 2) + 'px';
+    panel.style.top = 'auto'; // clear a prior top-anchor (from a dragged state) before re-pinning bottom-center
     // Bottom edge is (innerHeight - canvas.bottom) + offset in viewport
     // space. When the drawing is scrolled so the canvas bottom falls BELOW
     // the viewport (a long PDF), this goes negative and the fixed panel
@@ -1095,6 +1174,10 @@
     // over the drawing, which is strictly better than disappearing.
     const rawBottom = (window.innerHeight - cr.bottom) + RW._cmdBarOffset;
     panel.style.bottom = Math.max(RW._cmdBarOffset, rawBottom) + 'px';
+    // The dropdown anchors off the panel's own rect (positionMenu, above) —
+    // if it's open while the panel moves (e.g. a resize), it would otherwise
+    // stay at its stale pre-move coordinates until the next keystroke.
+    if (menuEl && menuEl.style.display !== 'none') positionMenu();
   };
 
   // Live overlay diagnostic — run when the bar is missing from the page to
@@ -1109,12 +1192,24 @@
       const p = panel.getBoundingClientRect ? panel.getBoundingClientRect() : null;
       out.panel = {
         present: true,
-        style: { left: panel.style.left, bottom: panel.style.bottom, width: panel.style.width, display: panel.style.display, zIndex: panel.style.zIndex },
+        style: { left: panel.style.left, top: panel.style.top, bottom: panel.style.bottom, width: panel.style.width, display: panel.style.display, zIndex: panel.style.zIndex },
         rect: p ? { left: p.left, right: p.right, top: p.top, bottom: p.bottom, width: p.width, height: p.height } : null,
         onScreen: p ? (p.bottom > 0 && p.top < window.innerHeight && p.right > 0 && p.left < window.innerWidth) : false
       };
     } else {
       out.panel = { present: false };
+    }
+    // The autocomplete dropdown — reported so a live page can confirm it's
+    // stacking (and staying positioned) above the panel, not behind it.
+    if (menuEl){
+      const m = menuEl.getBoundingClientRect ? menuEl.getBoundingClientRect() : null;
+      out.menu = {
+        present: true,
+        style: { top: menuEl.style.top, bottom: menuEl.style.bottom, maxHeight: menuEl.style.maxHeight, display: menuEl.style.display, zIndex: menuEl.style.zIndex },
+        rect: m ? { left: m.left, right: m.right, top: m.top, bottom: m.bottom, width: m.width, height: m.height } : null
+      };
+    } else {
+      out.menu = { present: false }; // never created yet — no query has matched anything so far
     }
     if (canvas){
       const c = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
@@ -1141,6 +1236,186 @@
     if (console.table) console.table(out); else console.log(out);
     return out;
   };
+
+  /* ---------- draggable command-line panel ---------- */
+  // Lets the whole #rw-panel overlay be moved by dragging its header strip
+  // (the row with the collapse caret / "Command Line" title / RW: ON/OFF
+  // button) with the left mouse button. Follows the same pointer-event idiom
+  // as middle-drag pan above: document-level capture-phase pointermove/up/
+  // cancel listeners added per drag and really removed on teardown,
+  // setPointerCapture on the press target, and several independent teardown
+  // paths so a drag can never get stuck "active". Once dragged, the panel
+  // stays where the user put it — RW._cmdRepositionOverlay (below) stops
+  // re-centering it, only re-applying width and clamping back on-screen.
+  // Explicitly NOT gated on RW.enabled: dragging the panel is the panel's
+  // own chrome, same category as the collapse toggle, which already works
+  // while RW is off — only the subordinate RW._cmdBarDrag flag gates this.
+  RW._cmdBarDrag = true;         // subordinate disable flag
+  RW._cmdBarThreshold = 3;       // px (Manhattan) before a press counts as a real drag, not a click
+  RW._cmdBarUserMoved = false;   // once true, reposition never re-centers — see RW._cmdRepositionOverlay
+
+  // { rect } is the panel's own box (left/top/width/height), cached ONCE per
+  // drag the moment it crosses the threshold — never re-read mid-drag, same
+  // "resolve once per drag" discipline as panState.cx/cy above.
+  const barDragState = { active:false, dragging:false, startX:0, startY:0, rect:null, header:null, suppressClick:false };
+
+  function barClampBox(left, top, width, height){
+    const maxLeft = Math.max(0, window.innerWidth - width);
+    const maxTop = Math.max(0, window.innerHeight - height);
+    return { left: Math.min(Math.max(0, left), maxLeft), top: Math.min(Math.max(0, top), maxTop) };
+  }
+
+  // Identified STRUCTURALLY, not by id: post-retrofit (rw_panelux.js), the
+  // header it inserts is the panel's firstChild and carries no id of its
+  // own — every pre-retrofit child (#rw-commit-status, #rw-list) DOES have
+  // an id, so this can't misfire before retrofit runs (there's simply no
+  // drag target yet, and dragging is a no-op until there is one).
+  function barHeaderEl(panel){
+    const fc = panel && panel.firstChild;
+    return (fc && !fc.id) ? fc : null;
+  }
+
+  // Read-only: current on-screen box, width from the style we just wrote
+  // (authoritative — nothing else touches it), height from the live rect
+  // (the panel autosizes to its content; there's no style equivalent).
+  function barCurrentBox(panel){
+    const r = (panel && panel.getBoundingClientRect) ? panel.getBoundingClientRect() : { width:0, height:0 };
+    const w = parseFloat(panel.style.width);
+    return { width: isNaN(w) ? r.width : w, height: r.height };
+  }
+
+  // Console escape hatch + the only place outside a live drag that needs to
+  // clamp a stale position back on-screen (a resize after the user moved the
+  // bar, or a viewport that shrank under it).
+  RW._cmdClampBar = function(){
+    const panel = document.getElementById('rw-panel');
+    if (!panel) return;
+    const box = barCurrentBox(panel);
+    const left = parseFloat(panel.style.left);
+    const top = parseFloat(panel.style.top);
+    const c = barClampBox(isNaN(left) ? 0 : left, isNaN(top) ? 0 : top, box.width, box.height);
+    panel.style.left = c.left + 'px';
+    panel.style.top = c.top + 'px';
+  };
+
+  // Clears the moved flag and re-pins bottom-center — the only way back to
+  // the default layout, since this project deliberately persists nothing
+  // across pages/reloads (a fresh paste of the loader already re-pins on
+  // its own; this is for resetting mid-session).
+  RW._cmdResetBar = function(){
+    RW._cmdBarUserMoved = false;
+    const panel = document.getElementById('rw-panel');
+    if (panel) panel.style.top = 'auto';
+    RW._cmdRepositionOverlay();
+  };
+
+  function barOnPointerMove(e){
+    if (!barDragState.active) return;
+    if (typeof e.buttons === 'number' && (e.buttons & 1) === 0){ barOnPointerEnd(); return; }
+    const dx = e.clientX - barDragState.startX;
+    const dy = e.clientY - barDragState.startY;
+    if (!barDragState.dragging){
+      if (Math.abs(dx) + Math.abs(dy) <= RW._cmdBarThreshold) return;
+      barDragState.dragging = true;
+      const panel = document.getElementById('rw-panel');
+      barDragState.rect = panel.getBoundingClientRect(); // cached once — see barDragState comment above
+      // first real movement converts the bottom-anchored overlay to a
+      // top-anchored one, from its own live rect, so it never double-anchors.
+      panel.style.top = barDragState.rect.top + 'px';
+      panel.style.bottom = 'auto';
+      if (barDragState.header) barDragState.header.style.cursor = 'grabbing';
+    }
+    const panel = document.getElementById('rw-panel');
+    const r = barDragState.rect;
+    const c = barClampBox(r.left + dx, r.top + dy, r.width, r.height);
+    panel.style.left = c.left + 'px';
+    panel.style.top = c.top + 'px';
+  }
+
+  function barOnPointerEnd(){
+    if (!barDragState.active) return;
+    barDragState.active = false;
+    if (barDragState.header) barDragState.header.style.cursor = '';
+    barRemoveListeners();
+    if (barDragState.dragging){
+      RW._cmdBarUserMoved = true;
+      // Swallow the ONE click that fires on release, so dragging doesn't
+      // also toggle the collapse/expand the header's own onclick handles —
+      // barOnClick (registered below) checks this flag in the capture phase,
+      // which runs before the header's own bubble-phase onclick. Cleared on
+      // a fallback timer in case no click follows at all (e.g. the pointer
+      // was captured by something else).
+      barDragState.suppressClick = true;
+      setTimeout(function(){ barDragState.suppressClick = false; }, 0);
+    }
+    barDragState.dragging = false;
+  }
+  function barOnLostCapture(){ barOnPointerEnd(); }
+  function barOnWindowBlur(){ barOnPointerEnd(); }
+
+  function barAddListeners(){
+    document.addEventListener('pointermove', barOnPointerMove, true);
+    document.addEventListener('pointerup', barOnPointerEnd, true);
+    document.addEventListener('pointercancel', barOnPointerEnd, true);
+    if (barDragState.header && barDragState.header.addEventListener) barDragState.header.addEventListener('lostpointercapture', barOnLostCapture);
+  }
+  function barRemoveListeners(){
+    document.removeEventListener('pointermove', barOnPointerMove, true);
+    document.removeEventListener('pointerup', barOnPointerEnd, true);
+    document.removeEventListener('pointercancel', barOnPointerEnd, true);
+    if (barDragState.header && barDragState.header.removeEventListener) barDragState.header.removeEventListener('lostpointercapture', barOnLostCapture);
+  }
+
+  function barOnPointerDown(e){
+    if (!RW._cmdBarDrag) return;
+    if (e.button !== 0) return; // left button only — middle-drag pan owns the rest of the page
+    const panel = document.getElementById('rw-panel');
+    if (!panel) return;
+    // Walk up from the press target: abort on the caret or the RW button
+    // (left entirely to their own click handlers), and require the press to
+    // actually land inside the structural header, not the body below it.
+    const header = barHeaderEl(panel);
+    if (!header) return;
+    let n = e.target, hops = 0, hitControl = false, onHeader = false;
+    while (n && n.nodeType === 1 && hops++ < 32){
+      if (n.id === 'rw-collapse' || n.id === 'rw-enable'){ hitControl = true; break; }
+      if (n === header) onHeader = true;
+      if (n === panel) break;
+      n = n.parentElement;
+    }
+    if (hitControl || !onHeader) return;
+
+    barDragState.active = true;
+    barDragState.dragging = false;
+    barDragState.startX = e.clientX;
+    barDragState.startY = e.clientY;
+    barDragState.header = header;
+    header.style.cursor = 'move';
+    header.style.touchAction = 'none'; // defensive: touch dragging isn't live-verified, see CLAUDE.md
+    if (e.target && e.target.setPointerCapture){
+      try { e.target.setPointerCapture(e.pointerId); } catch(_err){ /* not connected — ignore */ }
+    }
+    barAddListeners();
+  }
+
+  // Capture-phase on the panel: runs before the header's own bubble-phase
+  // onclick, so a post-drag release can't toggle collapse/expand. A
+  // sub-threshold press never sets suppressClick, so ordinary click-to-
+  // collapse is completely unaffected.
+  function barOnClick(e){
+    if (!barDragState.suppressClick) return;
+    barDragState.suppressClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }
+
+  (function attachBarDrag(){
+    const panel = document.getElementById('rw-panel'); // always present in real usage (rw_core.js); no-op otherwise
+    if (!panel) return;
+    panel.addEventListener('pointerdown', barOnPointerDown, true);
+    panel.addEventListener('click', barOnClick, true);
+  })();
+  if (window.addEventListener) window.addEventListener('blur', barOnWindowBlur);
 
   // Called once at load, and on every window resize so the overlay stays
   // pinned to the canvas even after the layout re-flows.
