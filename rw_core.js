@@ -11,23 +11,34 @@
   RW.vcore = true;
   RW.enabled = (window.__RWgate ? window.__RWgate.enabled : true);
 
-  const old = document.getElementById('rw-panel'); if (old) old.remove();
-  const panel = document.createElement('div');
-  panel.id = 'rw-panel';
-  // Fixed bottom-center overlay pinned to the canvas viewport (positioned by
-  // rw_cmdline.js's RW._cmdRepositionOverlay, which also stays pinned on
-  // resize). Appended to document.body, not the side rail, so it neither
-  // scrolls nor pans with the drawing. z-index is set one below the 32-bit
-  // signed max so no app-owned element (the annotation canvas wrapper, the
-  // right rail, toolbars, modals) can stack above it — a plain high-but-finite
-  // value like 99990 was occluded on a real job once the panel left the
-  // rail and became a sibling of the app's own content. The one thing that
-  // DOES deliberately stack above the panel is rw_cmdline.js's own
-  // #rw-cmd-menu autocomplete dropdown, at the true max (2147483647) — it
-  // used to render behind the panel and get clipped by the header strip.
-  panel.style.cssText = 'position:fixed;z-index:2147483646;background:#222;border:1px solid #666;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.5);padding:8px;font-size:12px;color:#eee;';
-  panel.innerHTML = '<div id="rw-list"></div>'; // title bar + killswitch added by rw_panelux.js's retrofit()
-  document.body.appendChild(panel);
+  // Reuse #rw-panel if the workbench's rw_install.js already built one — this
+  // is meant as a minimal FALLBACK bootstrap for when the real workbench isn't
+  // present, not a competitor to it. First-loaded owns the panel's mount/style.
+  let panel = document.getElementById('rw-panel');
+  if (!panel){
+    panel = document.createElement('div');
+    panel.id = 'rw-panel';
+    // Fixed bottom-center overlay pinned to the canvas viewport (positioned by
+    // rw_cmdline.js's RW._cmdRepositionOverlay, which also stays pinned on
+    // resize). Appended to document.body, not the side rail, so it neither
+    // scrolls nor pans with the drawing. z-index is set one below the 32-bit
+    // signed max so no app-owned element (the annotation canvas wrapper, the
+    // right rail, toolbars, modals) can stack above it — a plain high-but-finite
+    // value like 99990 was occluded on a real job once the panel left the
+    // rail and became a sibling of the app's own content. The one thing that
+    // DOES deliberately stack above the panel is rw_cmdline.js's own
+    // #rw-cmd-menu autocomplete dropdown, at the true max (2147483647) — it
+    // used to render behind the panel and get clipped by the header strip.
+    panel.style.cssText = 'position:fixed;z-index:2147483646;background:#222;border:1px solid #666;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.5);padding:8px;font-size:12px;color:#eee;';
+    panel.innerHTML = '<div id="rw-list"></div>'; // title bar + killswitch added by rw_panelux.js's retrofit()
+    document.body.appendChild(panel);
+    // Only the tool that actually built the fixed overlay owns its
+    // positioning — RW._cmdRepositionOverlay/the drag handlers check this
+    // before writing style.left/top/bottom, so they no-op instead of
+    // dislocating a panel some other tool mounted differently (e.g. embedded
+    // in #right-rail-content with position:relative).
+    RW._cmdOwnsPanelPosition = true;
+  }
 
   RW._commitStatus = function(msg){
     const el = document.getElementById('rw-commit-status');

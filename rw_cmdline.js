@@ -1147,6 +1147,12 @@
   RW._cmdBarOffset = 16;
 
   RW._cmdRepositionOverlay = function(){
+    // Only the tool that actually built the fixed overlay (rw_core.js, when
+    // no #rw-panel existed yet) owns its positioning. If the workbench's
+    // rw_install.js built the panel first (embedded, position:relative), this
+    // no-ops rather than writing fixed-style offsets onto a panel that isn't
+    // fixed — see CLAUDE.md's load-order-independence section.
+    if (!RW._cmdOwnsPanelPosition) return;
     const panel = document.getElementById('rw-panel');
     const canvas = document.getElementById('annotation-canvas');
     if (!panel || !canvas) return; // no-op without throwing
@@ -1368,6 +1374,10 @@
 
   function barOnPointerDown(e){
     if (!RW._cmdBarDrag) return;
+    // Same ownership check as RW._cmdRepositionOverlay — dragging a panel
+    // this tool doesn't own the positioning of would fight whatever mount
+    // built it (e.g. the workbench's embedded, position:relative panel).
+    if (!RW._cmdOwnsPanelPosition) return;
     if (e.button !== 0) return; // left button only — middle-drag pan owns the rest of the page
     const panel = document.getElementById('rw-panel');
     if (!panel) return;

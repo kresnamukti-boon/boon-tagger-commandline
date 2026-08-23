@@ -350,6 +350,11 @@ function makeStubWindow(){
   win.__RW = {
     vcore: true,
     enabled: true,
+    // This fixture represents the normal single-tool case, where rw_core.js
+    // built #rw-panel fresh (no workbench present) — matches the real
+    // contract rw_core.js now sets when it owns the panel's positioning.
+    // See CLAUDE.md's load-order-independence section.
+    _cmdOwnsPanelPosition: true,
     _commitStatus(msg){ this._lastStatus = msg; }
   };
   // window-level listener support (only `blur` is registered on window by
@@ -414,6 +419,20 @@ function loadModule(win, annotationState, timers){
   const fn = new Function(...Object.keys(sandboxGlobals), src + '\n//# sourceURL=rw_cmdline.js');
   const ret = fn(...Object.values(sandboxGlobals));
   return ret;
+}
+
+// Sandboxes rw_core.js itself (never loaded by loadModule() above, which only
+// exercises rw_cmdline.js) — added for the load-order-independence tests
+// below. Note: the stub's innerHTML setter doesn't parse markup into real
+// elements (see its own comment), so rw_core.js's fresh-build branch's
+// `panel.innerHTML = '<div id="rw-list"></div>'` never registers a findable
+// #rw-list under this harness — the fresh-build test below doesn't assert on
+// it for that reason. The panel-reuse test isn't affected, since reuse never
+// touches innerHTML.
+function loadCoreModule(win){
+  const src = fs.readFileSync(path.join(__dirname, 'rw_core.js'), 'utf8');
+  const fn = new Function('window', 'document', src + '\n//# sourceURL=rw_core.js');
+  return fn(win, win.document);
 }
 
 /* ---------- 1. RW._cmdMatch ranking ---------- */
@@ -3794,6 +3813,83 @@ function loadModule(win, annotationState, timers){
     ok(RW._cmdBarUserMoved === false, 'not in the user-moved branch for this test');
     RW._cmdRepositionOverlay();
     ok(fx.panel.style.top === 'auto', 're-pinning always clears a stale style.top (no double-anchor stretch), got "' + fx.panel.style.top + '"');
+  }
+
+  /* ---------- 177. Load-order independence: rw_core.js reuses an existing #rw-panel instead of removing it ---------- */
+  {
+    // Simulates the workbench's rw_install.js having already built #rw-panel
+    // (embedded, with its own button row + #rw-list) before boon-command-line
+    // ever loads — see CLAUDE.md's load-order-independence section. rw_core.js
+    // isn't loaded by loadModule() (only rw_cmdline.js is sandboxed), so its
+    // source is loaded directly, the same pattern test 163 already uses.
+    const { win, byId } = makeStubWindow();
+    const existingPanel = win.document.createElement('div');
+    existingPanel.id = 'rw-panel';
+    existingPanel.style.cssText = 'border-top:1px solid #999;'; // the workbench's own embedded styling
+    byId['rw-panel'] = existingPanel;
+    const existingList = win.document.createElement('div');
+    existingList.id = 'rw-list';
+    byId['rw-list'] = existingList;
+    existingPanel.appendChild(existingList);
+    win.document.body.appendChild(existingPanel);
+    win.__RW = { v: 2, W: 9999 }; // a pre-existing workbench key that must survive the merge
+
+    loadCoreModule(win);
+
+    ok(win.document.getElementById('rw-panel') === existingPanel, 'rw_core.js reuses the existing #rw-panel object rather than removing and rebuilding it');
+    ok(existingPanel.style.cssText.indexOf('border-top') !== -1, "the workbench's own panel styling survives — rw_core.js never rebuilt it");
+    ok(win.__RW.v === 2 && win.__RW.W === 9999, 'pre-existing __RW keys survive the merge (window.__RW = window.__RW || {})');
+    ok(win.__RW.vcore === true, 'rw_core.js still stamps its own vcore flag onto the shared object');
+    ok(!win.__RW._cmdOwnsPanelPosition, 'reusing another tool\'s panel does NOT claim positioning ownership');
+    ok(win.document.getElementById('rw-commit-status'), 'the commit-status div is still added into the reused panel');
+  }
+
+  /* ---------- 178. Load-order independence: rw_core.js builds its own fixed overlay and claims positioning ownership when no panel exists yet ---------- */
+  {
+    const { win } = makeStubWindow();
+    // The default fixture's __RW already has vcore:true (it represents the
+    // post-rw_core.js state every other test in this file needs) — clear it
+    // so rw_core.js's own re-entry guard doesn't short-circuit before this
+    // test can observe its fresh-build branch.
+    win.__RW = null;
+    ok(!win.document.getElementById('rw-panel'), 'no panel exists yet (the normal single-tool case)');
+
+    loadCoreModule(win);
+
+    const panel = win.document.getElementById('rw-panel');
+    ok(!!panel, 'rw_core.js builds a fresh #rw-panel when none exists');
+    ok(panel.style.cssText.indexOf('position:fixed') !== -1, 'the freshly-built panel is the fixed overlay, unchanged from before this round');
+    ok(win.__RW._cmdOwnsPanelPosition === true, 'building the panel fresh claims positioning ownership — matches the default fixture every other test in this file relies on');
+  }
+
+  /* ---------- 179. Not owning the panel's positioning: reposition and drag both no-op ---------- */
+  {
+    // Simulates rw_cmdline.js reusing a panel the workbench's rw_install.js
+    // built (embedded, position:relative) — RW._cmdOwnsPanelPosition is unset
+    // in that case (test 177), so neither the resize/reposition path nor the
+    // drag-to-move path may touch panel.style, or they'd dislocate a panel
+    // this tool doesn't own the layout of. See CLAUDE.md.
+    const { win, byId } = makeStubWindow();
+    win.innerWidth = 1000; win.innerHeight = 700;
+    win.__RW._cmdOwnsPanelPosition = false;
+    const fx = makeDragPanel(win, byId);
+    const before = { left: fx.panel.style.left, top: fx.panel.style.top, bottom: fx.panel.style.bottom, width: fx.panel.style.width };
+    const canvas = makeElement('canvas', byId);
+    canvas.id = 'annotation-canvas';
+    byId['annotation-canvas'] = canvas;
+    canvas._rect = { left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600 };
+    win.document.body.appendChild(canvas);
+    loadModule(win);
+    const RW = win.__RW;
+
+    RW._cmdRepositionOverlay();
+    ok(fx.panel.style.left === before.left && fx.panel.style.top === before.top && fx.panel.style.bottom === before.bottom && fx.panel.style.width === before.width,
+      'RW._cmdRepositionOverlay is a no-op when this tool does not own the panel\'s positioning');
+
+    fx.panel._fire('pointerdown', mouseEvt({ button:0, target: fx.header, clientX:200, clientY:650, pointerId:1 }));
+    win.document._fire('pointermove', mouseEvt({ target: fx.header, clientX:400, clientY:750, buttons:1 }));
+    ok(fx.panel.style.left === before.left && fx.panel.style.top === before.top,
+      'a drag never arms either — no style mutation from a press+move past the threshold');
   }
 
   finish();

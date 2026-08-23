@@ -47,51 +47,61 @@
     if (!RW) return;
     const panel = document.getElementById('rw-panel');
     if (!panel) return;
-    if (document.getElementById('rw-collapse')) return; // already retrofitted (e.g. re-pasted loader)
 
     RW.enabled = gate.enabled;
     RW.v28 = true;
 
-    // wrap existing panel children into a collapsible body
-    const body = document.createElement('div');
-    body.id = 'rw-body';
-    while (panel.firstChild) body.appendChild(panel.firstChild);
-    panel.appendChild(body);
+    // Build the header/collapsible-body DOM exactly once. Guarded so a
+    // re-paste of this loader, OR the workbench's own rw_panelux.js having
+    // already retrofitted the same shared panel first (load-order
+    // independence — see CLAUDE.md), doesn't duplicate the header.
+    if (!document.getElementById('rw-collapse')){
+      // wrap existing panel children into a collapsible body
+      const body = document.createElement('div');
+      body.id = 'rw-body';
+      while (panel.firstChild) body.appendChild(panel.firstChild);
+      panel.appendChild(body);
 
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;user-select:none;';
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;user-select:none;';
 
-    const caret = document.createElement('span');
-    caret.id = 'rw-collapse';
-    caret.style.cssText = 'font-size:11px;flex:none;';
-    caret.innerHTML = '&#9660;';
-    caret.title = 'Collapse Command Line';
-    caret.onclick = (e)=>{ e.stopPropagation(); RW.setPanelExpanded(!RW.panelExpanded); };
+      const caret = document.createElement('span');
+      caret.id = 'rw-collapse';
+      caret.style.cssText = 'font-size:11px;flex:none;';
+      caret.innerHTML = '&#9660;';
+      caret.title = 'Collapse Command Line';
+      caret.onclick = (e)=>{ e.stopPropagation(); RW.setPanelExpanded(!RW.panelExpanded); };
 
-    const title = document.createElement('b');
-    title.innerText = 'Command Line';
-    title.style.cssText = 'font-size:12px;flex:1;';
+      const title = document.createElement('b');
+      title.innerText = 'Command Line';
+      title.style.cssText = 'font-size:12px;flex:1;';
 
-    const enableBtn = document.createElement('button');
-    enableBtn.id = 'rw-enable';
-    enableBtn.style.cssText = 'font-size:11px;padding:1px 6px;flex:none;border-radius:3px;';
-    enableBtn.onclick = (e)=>{ e.stopPropagation(); RW.setEnabled(!RW.enabled); };
+      const enableBtn = document.createElement('button');
+      enableBtn.id = 'rw-enable';
+      enableBtn.style.cssText = 'font-size:11px;padding:1px 6px;flex:none;border-radius:3px;';
+      enableBtn.onclick = (e)=>{ e.stopPropagation(); RW.setEnabled(!RW.enabled); };
 
-    header.appendChild(caret);
-    header.appendChild(title);
-    header.appendChild(enableBtn);
-    header.onclick = (e)=>{
-      if (e.target === header || e.target === title) RW.setPanelExpanded(!RW.panelExpanded);
-    };
-    panel.insertBefore(header, body);
+      header.appendChild(caret);
+      header.appendChild(title);
+      header.appendChild(enableBtn);
+      header.onclick = (e)=>{
+        if (e.target === header || e.target === title) RW.setPanelExpanded(!RW.panelExpanded);
+      };
+      panel.insertBefore(header, body);
+    }
 
     // No side-panel CSS anymore — the panel is a fixed bottom-center overlay
     // styled by rw_core.js and positioned by rw_cmdline.js's
     // RW._cmdRepositionOverlay. Nothing here manages its box geometry.
 
-    /* ---------- panel state ---------- */
+    /* ---------- panel state — compose with whatever the workbench's own
+       rw_panelux.js already defined here (load-order independence), so
+       behavior accumulates regardless of which copy's retrofit() ran
+       first. See CLAUDE.md. ---------- */
     RW.panelExpanded = true;
+    const prevSetPanelExpanded = RW.setPanelExpanded || function(){};
     RW.setPanelExpanded = function(on){
+      prevSetPanelExpanded(on);
       RW.panelExpanded = !!on;
       const b = document.getElementById('rw-body');
       const c = document.getElementById('rw-collapse');
@@ -110,7 +120,9 @@
       }
     };
 
+    const prevSetEnabled = RW.setEnabled || function(){};
     RW.setEnabled = function(on){
+      prevSetEnabled(on);
       gate.enabled = !!on;
       RW.enabled = !!on;
       const btn = document.getElementById('rw-enable');

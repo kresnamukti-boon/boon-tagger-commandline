@@ -66,51 +66,61 @@
     if (!RW) return;
     const panel = document.getElementById('rw-panel');
     if (!panel) return;
-    if (document.getElementById('rw-collapse')) return; // already retrofitted (e.g. re-pasted loader)
 
     RW.enabled = gate.enabled;
     RW.v28 = true;
 
-    // wrap existing panel children into a collapsible body
-    const body = document.createElement('div');
-    body.id = 'rw-body';
-    while (panel.firstChild) body.appendChild(panel.firstChild);
-    panel.appendChild(body);
+    // Build the header/collapsible-body DOM exactly once. Guarded so a
+    // re-paste of this loader, OR the workbench's own rw_panelux.js having
+    // already retrofitted the same shared panel first (load-order
+    // independence — see CLAUDE.md), doesn't duplicate the header.
+    if (!document.getElementById('rw-collapse')){
+      // wrap existing panel children into a collapsible body
+      const body = document.createElement('div');
+      body.id = 'rw-body';
+      while (panel.firstChild) body.appendChild(panel.firstChild);
+      panel.appendChild(body);
 
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;user-select:none;';
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;user-select:none;';
 
-    const caret = document.createElement('span');
-    caret.id = 'rw-collapse';
-    caret.style.cssText = 'font-size:11px;flex:none;';
-    caret.innerHTML = '&#9660;';
-    caret.title = 'Collapse Command Line';
-    caret.onclick = (e)=>{ e.stopPropagation(); RW.setPanelExpanded(!RW.panelExpanded); };
+      const caret = document.createElement('span');
+      caret.id = 'rw-collapse';
+      caret.style.cssText = 'font-size:11px;flex:none;';
+      caret.innerHTML = '&#9660;';
+      caret.title = 'Collapse Command Line';
+      caret.onclick = (e)=>{ e.stopPropagation(); RW.setPanelExpanded(!RW.panelExpanded); };
 
-    const title = document.createElement('b');
-    title.innerText = 'Command Line';
-    title.style.cssText = 'font-size:12px;flex:1;';
+      const title = document.createElement('b');
+      title.innerText = 'Command Line';
+      title.style.cssText = 'font-size:12px;flex:1;';
 
-    const enableBtn = document.createElement('button');
-    enableBtn.id = 'rw-enable';
-    enableBtn.style.cssText = 'font-size:11px;padding:1px 6px;flex:none;border-radius:3px;';
-    enableBtn.onclick = (e)=>{ e.stopPropagation(); RW.setEnabled(!RW.enabled); };
+      const enableBtn = document.createElement('button');
+      enableBtn.id = 'rw-enable';
+      enableBtn.style.cssText = 'font-size:11px;padding:1px 6px;flex:none;border-radius:3px;';
+      enableBtn.onclick = (e)=>{ e.stopPropagation(); RW.setEnabled(!RW.enabled); };
 
-    header.appendChild(caret);
-    header.appendChild(title);
-    header.appendChild(enableBtn);
-    header.onclick = (e)=>{
-      if (e.target === header || e.target === title) RW.setPanelExpanded(!RW.panelExpanded);
-    };
-    panel.insertBefore(header, body);
+      header.appendChild(caret);
+      header.appendChild(title);
+      header.appendChild(enableBtn);
+      header.onclick = (e)=>{
+        if (e.target === header || e.target === title) RW.setPanelExpanded(!RW.panelExpanded);
+      };
+      panel.insertBefore(header, body);
+    }
 
     // No side-panel CSS anymore — the panel is a fixed bottom-center overlay
     // styled by rw_core.js and positioned by rw_cmdline.js's
     // RW._cmdRepositionOverlay. Nothing here manages its box geometry.
 
-    /* ---------- panel state ---------- */
+    /* ---------- panel state — compose with whatever the workbench's own
+       rw_panelux.js already defined here (load-order independence), so
+       behavior accumulates regardless of which copy's retrofit() ran
+       first. See CLAUDE.md. ---------- */
     RW.panelExpanded = true;
+    const prevSetPanelExpanded = RW.setPanelExpanded || function(){};
     RW.setPanelExpanded = function(on){
+      prevSetPanelExpanded(on);
       RW.panelExpanded = !!on;
       const b = document.getElementById('rw-body');
       const c = document.getElementById('rw-collapse');
@@ -129,7 +139,9 @@
       }
     };
 
+    const prevSetEnabled = RW.setEnabled || function(){};
     RW.setEnabled = function(on){
+      prevSetEnabled(on);
       gate.enabled = !!on;
       RW.enabled = !!on;
       const btn = document.getElementById('rw-enable');
@@ -181,23 +193,34 @@
   RW.vcore = true;
   RW.enabled = (window.__RWgate ? window.__RWgate.enabled : true);
 
-  const old = document.getElementById('rw-panel'); if (old) old.remove();
-  const panel = document.createElement('div');
-  panel.id = 'rw-panel';
-  // Fixed bottom-center overlay pinned to the canvas viewport (positioned by
-  // rw_cmdline.js's RW._cmdRepositionOverlay, which also stays pinned on
-  // resize). Appended to document.body, not the side rail, so it neither
-  // scrolls nor pans with the drawing. z-index is set one below the 32-bit
-  // signed max so no app-owned element (the annotation canvas wrapper, the
-  // right rail, toolbars, modals) can stack above it — a plain high-but-finite
-  // value like 99990 was occluded on a real job once the panel left the
-  // rail and became a sibling of the app's own content. The one thing that
-  // DOES deliberately stack above the panel is rw_cmdline.js's own
-  // #rw-cmd-menu autocomplete dropdown, at the true max (2147483647) — it
-  // used to render behind the panel and get clipped by the header strip.
-  panel.style.cssText = 'position:fixed;z-index:2147483646;background:#222;border:1px solid #666;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.5);padding:8px;font-size:12px;color:#eee;';
-  panel.innerHTML = '<div id="rw-list"></div>'; // title bar + killswitch added by rw_panelux.js's retrofit()
-  document.body.appendChild(panel);
+  // Reuse #rw-panel if the workbench's rw_install.js already built one — this
+  // is meant as a minimal FALLBACK bootstrap for when the real workbench isn't
+  // present, not a competitor to it. First-loaded owns the panel's mount/style.
+  let panel = document.getElementById('rw-panel');
+  if (!panel){
+    panel = document.createElement('div');
+    panel.id = 'rw-panel';
+    // Fixed bottom-center overlay pinned to the canvas viewport (positioned by
+    // rw_cmdline.js's RW._cmdRepositionOverlay, which also stays pinned on
+    // resize). Appended to document.body, not the side rail, so it neither
+    // scrolls nor pans with the drawing. z-index is set one below the 32-bit
+    // signed max so no app-owned element (the annotation canvas wrapper, the
+    // right rail, toolbars, modals) can stack above it — a plain high-but-finite
+    // value like 99990 was occluded on a real job once the panel left the
+    // rail and became a sibling of the app's own content. The one thing that
+    // DOES deliberately stack above the panel is rw_cmdline.js's own
+    // #rw-cmd-menu autocomplete dropdown, at the true max (2147483647) — it
+    // used to render behind the panel and get clipped by the header strip.
+    panel.style.cssText = 'position:fixed;z-index:2147483646;background:#222;border:1px solid #666;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.5);padding:8px;font-size:12px;color:#eee;';
+    panel.innerHTML = '<div id="rw-list"></div>'; // title bar + killswitch added by rw_panelux.js's retrofit()
+    document.body.appendChild(panel);
+    // Only the tool that actually built the fixed overlay owns its
+    // positioning — RW._cmdRepositionOverlay/the drag handlers check this
+    // before writing style.left/top/bottom, so they no-op instead of
+    // dislocating a panel some other tool mounted differently (e.g. embedded
+    // in #right-rail-content with position:relative).
+    RW._cmdOwnsPanelPosition = true;
+  }
 
   RW._commitStatus = function(msg){
     const el = document.getElementById('rw-commit-status');
@@ -1365,6 +1388,12 @@
   RW._cmdBarOffset = 16;
 
   RW._cmdRepositionOverlay = function(){
+    // Only the tool that actually built the fixed overlay (rw_core.js, when
+    // no #rw-panel existed yet) owns its positioning. If the workbench's
+    // rw_install.js built the panel first (embedded, position:relative), this
+    // no-ops rather than writing fixed-style offsets onto a panel that isn't
+    // fixed — see CLAUDE.md's load-order-independence section.
+    if (!RW._cmdOwnsPanelPosition) return;
     const panel = document.getElementById('rw-panel');
     const canvas = document.getElementById('annotation-canvas');
     if (!panel || !canvas) return; // no-op without throwing
@@ -1586,6 +1615,10 @@
 
   function barOnPointerDown(e){
     if (!RW._cmdBarDrag) return;
+    // Same ownership check as RW._cmdRepositionOverlay — dragging a panel
+    // this tool doesn't own the positioning of would fight whatever mount
+    // built it (e.g. the workbench's embedded, position:relative panel).
+    if (!RW._cmdOwnsPanelPosition) return;
     if (e.button !== 0) return; // left button only — middle-drag pan owns the rest of the page
     const panel = document.getElementById('rw-panel');
     if (!panel) return;
