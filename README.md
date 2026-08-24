@@ -107,6 +107,37 @@ do not mean "the Nth tag in the detected list."** That distinction matters: a re
 app's digit hotkeys do **not** map to `#`-search tag-list order (see tag search below) —
 `tag1`…`tag0` are a completely separate mechanism from selecting a searched tag.
 
+### Tool keymap
+
+The same vocabulary as above, as a lookup table — every row is a 1:1 `RW._cmdTable` entry, so this
+stays accurate as long as it's re-derived from that table rather than hand-maintained prose.
+
+| Command | Key | Aliases | Type | Notes |
+|---|---|---|---|---|
+| `linear` | `Q` | — | draw tool | |
+| `rect` | `W` | `bbox` | draw tool | AutoCAD-ish rename; `bbox` still works |
+| `count` | `E` | — | draw tool | |
+| `polygon` | `R` | — | draw tool | |
+| `polyline` | `T` | — | draw tool | |
+| `circle` | `Y` | — | draw tool | |
+| `cloud` | `U` | — | draw tool | revision cloud |
+| `wand` | `K` | — | draw tool | magic wand — has settings (`wand.` → tolerance/detail/padding) |
+| `wrap` | `X` | — | draw tool | shrink-wrap — has settings (`wrap.` → padding/smoothing/polygon-mode) |
+| `void` | `V` | — | draw tool | delete-area workflow; never becomes Space's repeat target (see "Void workflow awareness") |
+| `mline` | `P` | `ribbon` | draw tool | constant-width path — has settings (`mline.` → width/anchor) |
+| `tag1`…`tag9`, `tag0` | `1`…`9`, `0` | — | tag select+draw | dispatches the app's own digit hotkeys directly — **not** the Nth tag in a `#`-search |
+| `pan` | `A` | — | mode switch | |
+| `select` | `S` | — | mode switch | the resting state (see "Select is the resting state") |
+| `draw` | `D` | — | mode switch | every draw-mode tool above dispatches this first, defensively |
+| `label` | `F` | — | mode switch | Space always returns to `select` from here, never resumes the prior tool |
+| `crop` | `G` | — | mode switch | |
+| `mirror` | `M` | — | mode switch | |
+
+Every draw-mode tool row dispatches a defensive `D` immediately before its own key (see below).
+Two additional inputs aren't table commands but act like keymap entries: `#<name>` searches and
+selects a tag (see "Tag search"), and `<tool>.` drills into that tool's own settings (see "Tool
+settings" below).
+
 Draw-mode tool commands dispatch a defensive `d` (enter draw mode) immediately before their own
 letter, since the app's keymap documents them as draw-mode-only tools — **not live-verified
 whether that's actually required.** Every dispatch reports a live diagnostic to the status line:
