@@ -2,7 +2,10 @@
 // NATIVE-TOOLS-ONLY BRANCH: trimmed to drop workbench-teardown on disable
 // (rw_install.js/rw_masktools.js/rw_brushpoly.js are gone on this branch) —
 // see CLAUDE.md's "A dedicated branch" section.
-// MUST be loaded FIRST (before rw_core). Wraps annotation-canvas's
+// DUAL-TARGET BRANCH: loaded right after rw_host.js, so window.__RWhost is
+// already set — see CLAUDE.md's host-adapter round for why detection itself
+// lives in that separate, tinier file rather than here.
+// MUST be loaded before rw_core. Wraps the host's canvas/stage element's
 // addEventListener so every handler registered by later modules auto-checks
 // RW.enabled.
 (function boot(){
@@ -13,8 +16,12 @@
   if (!window.__RWgate) window.__RWgate = { enabled: true };
   const gate = window.__RWgate;
 
-  /* ---------- auto-gate all annotation-canvas listeners ---------- */
-  const ac = document.getElementById('annotation-canvas');
+  // Falls back to the annotate-page id if rw_host.js somehow didn't run —
+  // defensive, matching this file's existing no-op-without-throwing style.
+  const canvasId = (window.__RWhost && window.__RWhost.canvasId) || 'annotation-canvas';
+
+  /* ---------- auto-gate all host-canvas listeners ---------- */
+  const ac = document.getElementById(canvasId);
   if (ac && !ac.__RWrawAdd){
     ac.__RWrawAdd = ac.addEventListener;
     ac.addEventListener = function(type, handler, options){
@@ -131,7 +138,7 @@
         btn.style.background = RW.enabled ? 'rgba(100,220,100,0.25)' : 'rgba(220,100,100,0.30)';
       }
       if (!RW.enabled){
-        const av = document.getElementById('annotation-canvas');
+        const av = document.getElementById(canvasId);
         if (av) av.style.cursor = '';
       }
     };

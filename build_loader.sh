@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
 # Rebuild console_loader.js from source modules after editing them.
-# NATIVE-TOOLS-ONLY BRANCH: this loader installs only the command line and
-# its native-app-tool dispatch/tag search — no region/mask/pipe/elbow
-# workbench. See CLAUDE.md's "A dedicated branch" section.
+# NATIVE-TOOLS-ONLY, DUAL-TARGET BRANCH: this loader installs only the
+# command line and its native-app-tool dispatch/tag-or-system search — no
+# region/mask/pipe/elbow workbench. It installs on either of two hosts: the
+# annotate-job page, or the graph session ("Duct Takeoff") duct editor. See
+# CLAUDE.md's "A dedicated branch" and host-adapter sections.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 OUT=console_loader.js
 
 cat > "$OUT" <<'HEADER'
-/* Boon Command Line (native-tools-only build) — console loader.
+/* Boon Command Line (native-tools-only, dual-target build) — console loader.
  * Usage: F12 -> Console -> paste this entire block -> Enter.
- * Installs only the AutoCAD-style command line: type a native app tool's
- * name/alias (or #tag) to dispatch it. No region workbench on this build.
- * Paste again after each page navigation. */
+ * Installs the AutoCAD-style command line on either the annotate-job page or
+ * the graph session ("Duct Takeoff") duct editor: type a native app tool's
+ * name/alias (or #tag / #system) to dispatch it. No region workbench on this
+ * build. Paste again after each page navigation. */
 (async function(){
   function ready(){
+    // The graph session has no annotationState/pdf-canvas at all — detected
+    // by its own root id instead, confirmed live via opencli.
+    if (document.getElementById('graph-session-root')){
+      return document.getElementById('graph-canvas-stage')
+          && typeof __graphDebug !== 'undefined';
+    }
     return typeof annotationState !== 'undefined'
         && annotationState.annotations
         && document.getElementById('pdf-canvas')
@@ -30,7 +39,7 @@ cat > "$OUT" <<'HEADER'
 HEADER
 
 FIRST=1
-for f in rw_panelux.js rw_core.js rw_cmdline.js; do
+for f in rw_host.js rw_panelux.js rw_core.js rw_cmdline.js; do
   if [ $FIRST -eq 0 ]; then printf ';\n' >> "$OUT"; fi
   FIRST=0
   echo "// ===== $f =====" >> "$OUT"
@@ -40,7 +49,7 @@ done
 
 cat >> "$OUT" <<'FOOTER'
 
-  console.log('[RW] command line ready: ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' tags' : 'no tags detected') + '. Type a tool name (or # for a tag) anywhere on the page. select is the resting state (Escape returns here); hold the middle mouse button to pan.');
+  console.log('[RW] command line ready (' + __RW._host.id + ' host): ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' ' + (__RW._host.id === 'graph' ? 'systems' : 'tags') : 'none detected') + '. Type a tool name (or # for a ' + (__RW._host.id === 'graph' ? 'system' : 'tag') + ') anywhere on the page. select is the resting state (Escape returns here);' + (__RW._host.id === 'graph' ? ' this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.' : ' hold the middle mouse button to pan.'));
 })()
 FOOTER
 

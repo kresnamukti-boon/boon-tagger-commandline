@@ -3,13 +3,18 @@
 // to mount into, and RW._commitStatus. No region/mask/annotation machinery —
 // see CLAUDE.md's "A dedicated branch" section for why this branch exists.
 //
-// Load after rw_panelux.js, before rw_cmdline.js.
+// Load after rw_host.js and rw_panelux.js, before rw_cmdline.js.
 (function(){
   if (window.__RW && window.__RW.vcore) return 'RW core already installed';
 
   const RW = window.__RW = window.__RW || {};
   RW.vcore = true;
   RW.enabled = (window.__RWgate ? window.__RWgate.enabled : true);
+  // Copied onto RW for rw_cmdline.js's convenience (it already aliases
+  // window.__RW to a local RW const) — falls back to the annotate-page
+  // identity if rw_host.js somehow didn't run, same defensive style as
+  // rw_panelux.js's own fallback.
+  RW._host = window.__RWhost || { id: 'annotate', canvasId: 'annotation-canvas' };
 
   // Reuse #rw-panel if the workbench's rw_install.js already built one — this
   // is meant as a minimal FALLBACK bootstrap for when the real workbench isn't

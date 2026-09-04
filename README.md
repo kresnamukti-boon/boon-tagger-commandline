@@ -12,20 +12,33 @@ own copy of a workbench-aware command line with restored single-key shortcuts) l
 sibling repo `boon-tagger-mask` (also under `~/Projects/boon-projects/`). This repo was extracted
 from that project's history — see `CLAUDE.md` for the full evolution.
 
+**Dual-target: installs on either of two hosts.** The same loader works on the annotate-job page
+(`/annotation-jobs/<job>/annotate/<item>/`) **and** the graph session / "Duct Takeoff" duct editor
+(`/graph/projects/<project>/session/?page=<page>`) — it detects which one it's on and switches its
+whole tool vocabulary, settings, and `#`-search accordingly. See "The graph ('Duct Takeoff') host"
+below for what differs there; everything else in this README describes the annotate host, the
+original and still-default target.
+
 ## Files & load order
 
 Each module is a versioned IIFE gated on the previous module's version flag. `console_loader.js`
-(built by `build_loader.sh`) concatenates all three, in order:
+(built by `build_loader.sh`) concatenates all four, in order:
 
-1. **rw_panelux.js** — loads first. Collapsible panel UI, and the **RW: ON/OFF** master
-   killswitch that gates every handler the later modules register (including the command line's
-   own global keystroke capture).
-2. **rw_core.js** — minimal bootstrap replacing `rw_install.js`'s scaffolding on this branch:
-   creates `window.__RW`, a bare `#rw-panel`/`#rw-list` for the command line to mount into, and
-   `RW._commitStatus` for its status-line messages. `#rw-panel` is created as a fixed bottom-center
-   overlay appended to `document.body` (positioned over the canvas by `rw_cmdline.js`'s
-   `RW._cmdRepositionOverlay`), not a side-rail box. No region/mask/annotation engine at all.
-3. **rw_cmdline.js** — the command line itself (see "Command line" below).
+1. **rw_host.js** — loads first, before anything else. Detects which host this page is
+   (`window.__RWhost = {id, canvasId}`), from the DOM (`#graph-session-root`'s presence), not the
+   URL. Everything downstream reads this instead of hardcoding the annotate page's own ids.
+2. **rw_panelux.js** — Collapsible panel UI, and the **RW: ON/OFF** master killswitch that gates
+   every handler the later modules register (including the command line's own global keystroke
+   capture) — reads `window.__RWhost.canvasId` for which element's listeners to wrap.
+3. **rw_core.js** — minimal bootstrap replacing `rw_install.js`'s scaffolding on this branch:
+   creates `window.__RW` (copying `window.__RWhost` onto `RW._host`), a bare `#rw-panel`/`#rw-list`
+   for the command line to mount into, and `RW._commitStatus` for its status-line messages.
+   `#rw-panel` is created as a fixed bottom-center overlay appended to `document.body` (positioned
+   over the canvas/stage by `rw_cmdline.js`'s `RW._cmdRepositionOverlay`), not a side-rail box. No
+   region/mask/annotation engine at all.
+4. **rw_cmdline.js** — the command line itself (see "Command line" below). Every host-specific
+   fact — the command table, per-tool settings, `#`-search, `readTool`/`readMode`, whether
+   middle-drag pan applies — branches on `RW._host.id` here.
 
 **To rebuild** after editing a source module:
 ```bash
@@ -34,10 +47,12 @@ bash build_loader.sh
 
 ## Injection
 
-1. Navigate to the Constructions Tagger annotation page.
+1. Navigate to the Constructions Tagger annotation page, or the graph session ("Duct Takeoff")
+   duct editor — either host works.
 2. Press **F12** → **Console** tab.
 3. Paste the entire contents of `console_loader.js`, press **Enter**.
-4. The command line installs automatically once the page canvas is ready (up to ~30s).
+4. The command line installs automatically once the page is ready (up to ~30s) — the console log
+   names which host it detected.
 
 Paste again after each page navigation.
 
@@ -410,6 +425,40 @@ line's global auto-capture works (it must consume a keystroke before the app's o
 it, or dispatch it there itself via a marked synthetic event). Blurring the command input is the
 only way to reach an app shortcut directly while this build is loaded.
 
+## The graph ("Duct Takeoff") host
+
+On `/graph/projects/<project>/session/?page=<page>` — a full-screen node-graph duct editor, no
+app chrome, no `annotationState` at all — the command line detects this automatically (the
+console log names it) and switches over:
+
+**Tool vocabulary** (every entry a plain one-key dispatch — **no defensive `d` draw-mode prefix**,
+this host has no draw-mode concept): `select` (`s`, the resting state), `route`/`duct` (`r`),
+`flex` (`f`), `extend` (`e`), `branch` (`b`), `transition` (`t`), `grd`/`diffuser` (`g`),
+`unit`/`equipment` (`u`), `vertical`/`riser` (`v`), `cut`/`split` (`c`), `damper` (`d`). This
+table is entirely separate from the annotate host's own — nothing above (`linear`, `wand`, tag
+digits, `pan`/`label`/`crop`/`mirror`, ...) applies here.
+
+**`#` search finds systems/networks, not tags.** There's no tag list on this host — `#fptu` (say)
+searches the live `#graph-system-select` options (e.g. "FPTU (Supply)") instead, same
+dropdown/keyboard navigation as tag search elsewhere in this file.
+
+**Tool settings drill in the same way** (`route.`, `grd.`, ...), but every tool's params live
+under one shared `graph-` id prefix rather than each tool having its own unique one — the
+inspector reveals which controls belong to the currently-armed tool by showing/hiding them, and
+the command line filters on that same visibility, so `route.` and `grd.` list genuinely different
+params even though the underlying ids all start the same way.
+
+**Space and Escape are unchanged** — Space still closes/repeats the last tool, Escape still
+returns to select. This does shadow the host's own **Space+drag pan** gesture; wheel,
+Shift+wheel, and middle-click still pan natively, and Ctrl+wheel still zooms — none of that goes
+through this command line at all.
+
+**Middle-drag pan is off on this host** (`RW._panEnabled` defaults to `false` here) — the drawing
+stage has nothing to scroll (it pans via a CSS transform instead), so the technique used on the
+annotate host can't apply; the host's own wheel/Shift+wheel/middle-click panning already covers
+it. `__RW._panEnabled = true` re-enables the console escape hatch if a future page ever does
+scroll.
+
 ## Boundaries
 
 - Nothing auto-draws or auto-submits annotations.
@@ -419,4 +468,5 @@ only way to reach an app shortcut directly while this build is loaded.
   middle-mouse pan, which writes `scrollLeft`/`scrollTop` on a page viewport element directly
   (deliberately, since dispatching the app's own pan key would switch tools, which panning must
   not do). It never touches `annotationState` or anything under it. See CLAUDE.md's Constraints
-  section for the full reasoning.
+  section for the full reasoning. Middle-mouse pan is disabled outright on the graph host, where
+  the technique can't work at all — see "The graph ('Duct Takeoff') host" above.
