@@ -302,7 +302,7 @@ function queryAllRecursive(root, selector, out){
   return out;
 }
 
-function makeStubWindow(){
+function makeStubWindow(opts){
   const byId = {};
   const body = makeElement('body', byId);
   const docListeners = {};
@@ -355,8 +355,13 @@ function makeStubWindow(){
     // contract rw_core.js now sets when it owns the panel's positioning.
     // See CLAUDE.md's load-order-independence section.
     _cmdOwnsPanelPosition: true,
+    // Default host: the annotate page, matching every test written before
+    // the dual-target host-adapter round. Pass {host: {...}} to opts (below)
+    // to point a test at the graph ("Duct Takeoff") host instead.
+    _host: { id: 'annotate', canvasId: 'annotation-canvas' },
     _commitStatus(msg){ this._lastStatus = msg; }
   };
+  if (opts && opts.host) win.__RW._host = opts.host;
   // window-level listener support (only `blur` is registered on window by
   // the real module) plus the small feature-detection surface the pan
   // container walk and mouse-fallback path read.
@@ -407,12 +412,18 @@ FakeKeyboardEvent.prototype.stopImmediatePropagation = function(){ this._immedia
 // set (so the auto-select watcher's real setInterval/setTimeout calls never
 // touch Node's real timers and every existing test stays deterministic and
 // side-effect-free); pass one explicitly to drive ticks/deferrals from a test.
-function loadModule(win, annotationState, timers){
+// `graphDebug` is the graph host's counterpart to `annotationState` —
+// window.__graphDebug, read by readTool()/readMode() only when
+// win.__RW._host.id === 'graph'; every existing (annotate-host) test omits
+// it and is unaffected, same as `typeof __graphDebug !== 'undefined'`
+// resolving to false in the real module when nothing supplies it.
+function loadModule(win, annotationState, timers, graphDebug){
   timers = timers || makeFakeTimers();
   win._timers = timers;
   const src = fs.readFileSync(path.join(__dirname, 'rw_cmdline.js'), 'utf8');
   const sandboxGlobals = {
     window: win, document: win.document, KeyboardEvent: FakeKeyboardEvent, annotationState: annotationState,
+    __graphDebug: graphDebug,
     setTimeout: timers.fakeSetTimeout, clearTimeout: timers.fakeClearTimeout,
     setInterval: timers.fakeSetInterval, clearInterval: timers.fakeClearInterval
   };
@@ -3890,6 +3901,154 @@ function loadCoreModule(win){
     win.document._fire('pointermove', mouseEvt({ target: fx.header, clientX:400, clientY:750, buttons:1 }));
     ok(fx.panel.style.left === before.left && fx.panel.style.top === before.top,
       'a drag never arms either — no style mutation from a press+move past the threshold');
+  }
+
+  /* ---------- DUAL-TARGET HOST ADAPTER: the graph ("Duct Takeoff") host ---------- */
+  // Every test above this point exercises the default (annotate) host fixture
+  // makeStubWindow() already builds — none of it changed. The tests below
+  // point win.__RW._host at the graph host instead, confirming each of the
+  // seven call sites CLAUDE.md's host-adapter round retargeted actually
+  // branches correctly, without re-testing everything the annotate host
+  // already covers. See CLAUDE.md.
+  const GRAPH_HOST = { id: 'graph', canvasId: 'graph-canvas-stage' };
+
+  /* ---------- 180. Graph host: RW._cmdTable is the graph table, disjoint from the annotate table ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdTable.some(e => e.name === 'route'), 'graph table has "route", confirmed live via opencli');
+    ok(RW._cmdTable.some(e => e.name === 'grd') && RW._cmdTable.some(e => e.name === 'damper'),
+       'graph table has the rest of the confirmed data-tool set (grd, damper, ...)');
+    ok(!RW._cmdTable.some(e => e.name === 'linear' || e.name === 'wand'),
+       'graph table does not carry annotate-host-only tool names');
+  }
+
+  /* ---------- 181. Graph host: a real tool dispatches ONLY its own key — no defensive "d" draw-mode prefix ---------- */
+  // Contrast with test 149 (annotate host): `void` there dispatches d then v,
+  // because the annotate host's own keymap documents those letters as
+  // draw-mode-only. The graph host has no such concept — confirmed live via
+  // opencli (dispatching a bare key flipped __graphDebug.activeTool directly).
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('route');
+    ok(keys.length === 1 && keys[0] === 'r', 'route dispatches exactly one key ("r"), with no leading "d"');
+    RW.runCommand('grd');
+    ok(keys[1] === 'g', 'grd dispatches its own key too, same one-key pattern');
+  }
+
+  /* ---------- 182. Graph host: `select` is a mode switch, not a repeat-tracked tool — same contract as the annotate host ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    RW.runCommand('route');
+    ok(RW._cmdLastTool === 'route', 'a real graph tool becomes the Space-repeat target, same as a draw tool on the annotate host');
+    RW.runCommand('select');
+    ok(RW._cmdToolArmed === false, 'select clears the armed flag');
+    ok(RW._cmdLastTool === 'route', 'select never overwrites the last-repeated tool, same as the annotate host\'s own select');
+  }
+
+  /* ---------- 183. Graph host: the live-diagnostic readout (and readTool/readMode generally) reads window.__graphDebug.activeTool, never annotationState ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    const gd = { activeTool: 'flex' };
+    // annotationState is deliberately left undefined — a real graph page has
+    // no such global at all; if anything here still touched it, this would
+    // either throw or silently report "undefined -> undefined" instead of
+    // the real live value below.
+    loadModule(win, undefined, null, gd);
+    const RW = win.__RW;
+    RW._cmdDispatchAppKey('r');
+    ok(RW._lastStatus.indexOf('flex') !== -1, 'the readout reports __graphDebug.activeTool ("flex"), not an annotationState field');
+  }
+
+  /* ---------- 184. Graph host: the command-bar overlay anchors to #graph-canvas-stage, not #annotation-canvas ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    win.innerHeight = 700;
+    loadModule(win, null, null, { activeTool: 'select' });
+    const panel = byId['rw-panel'] || makeElement('div', byId);
+    panel.id = 'rw-panel';
+    byId['rw-panel'] = panel;
+    win.document.body.appendChild(panel);
+    // A same-named #annotation-canvas is deliberately ALSO present, positioned
+    // so a wrong anchor would be caught immediately (a very different bottom).
+    const wrongCanvas = makeElement('canvas', byId);
+    wrongCanvas.id = 'annotation-canvas';
+    wrongCanvas._rect = { left: 0, top: 0, right: 500, bottom: 100, width: 500, height: 100 };
+    win.document.body.appendChild(wrongCanvas);
+    const stage = makeElement('div', byId);
+    stage.id = 'graph-canvas-stage';
+    stage._rect = { left: 0, top: 0, right: 500, bottom: 600, width: 500, height: 600 };
+    win.document.body.appendChild(stage);
+
+    win.__RW._cmdRepositionOverlay();
+    ok(panel.style.bottom === (700 - 600 + 16) + 'px',
+       'reposition uses #graph-canvas-stage\'s rect (bottom 600), not the decoy #annotation-canvas\'s (bottom 100) — got "' + panel.style.bottom + '"');
+  }
+
+  /* ---------- 185. Graph host: middle-drag pan is OFF by default; the annotate host is unaffected ---------- */
+  // Confirmed live: #graph-canvas-stage is overflow:hidden with nothing to
+  // scroll (this page pans via a CSS transform instead), so the
+  // scrollLeft/scrollTop technique below can never work here regardless.
+  {
+    const { win: graphWin } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(graphWin, null, null, { activeTool: 'select' });
+    ok(graphWin.__RW._panEnabled === false, 'RW._panEnabled defaults to false on the graph host');
+
+    const { win: annotateWin } = makeStubWindow();
+    loadModule(annotateWin);
+    ok(annotateWin.__RW._panEnabled === true, 'the annotate host default is unchanged (still true)');
+  }
+
+  /* ---------- 186. Graph host: "#" search auto-detects from #graph-system-select's live options ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const sysSelect = makeSelect(byId, 'graph-system-select', [['sys1','System One'],['sys2','System Two']]);
+    win.document.body.appendChild(sysSelect);
+    const RW = win.__RW;
+
+    const list = RW._cmdDetectTags();
+    ok(list && list.length === 2 && list[0].name === 'System One' && list[0].id === 'sys1',
+       'detects the two live options as {id,name} pairs');
+    ok(RW._lastStatus.indexOf('systems') !== -1, 'status names them "systems", not "tags"');
+
+    let inputFired = false, changeFired = false;
+    sysSelect.addEventListener('input', function(){ inputFired = true; });
+    sysSelect.addEventListener('change', function(){ changeFired = true; });
+    RW._cmdSelectTag(list[1]);
+    ok(sysSelect.value === 'sys2', 'selecting a system writes the real <select>\'s value');
+    ok(inputFired && changeFired, 'selection dispatches input+change, the same write-back technique RW._cmdApplySetting uses — never a plain annotationState.currentTag assignment');
+  }
+
+  /* ---------- 187. Graph host: RW._cmdToolSettingsList filters the shared "graph-" prefix by DOM visibility ---------- */
+  // Unlike wand/wrap/mline's own confirmed-unique id prefixes, every graph
+  // control shares one flat "graph-" prefix — visibility (offsetParent) is
+  // what tells "route's params" apart from "grd's params" under it, matching
+  // how the real inspector aside only shows the controls for whichever tool
+  // is currently armed.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '24';
+    width.offsetParent = {}; // visible — route's own inspector fields
+    const cfm = makeElement('input', byId);
+    cfm.id = 'graph-cfm-input'; cfm.type = 'number'; cfm.value = '400';
+    cfm.offsetParent = null; // hidden — belongs to grd, not currently armed
+    win.document.body.appendChild(width); win.document.body.appendChild(cfm);
+
+    const params = RW._cmdToolSettingsList('route');
+    ok(params.length === 1 && params[0].param === 'width-input',
+       'only the currently-visible "graph-" control is listed for route');
+    ok(!params.some(p => p.param === 'cfm-input'), 'a hidden control under the same shared prefix is excluded');
   }
 
   finish();

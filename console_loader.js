@@ -1,10 +1,17 @@
-/* Boon Command Line (native-tools-only build) — console loader.
+/* Boon Command Line (native-tools-only, dual-target build) — console loader.
  * Usage: F12 -> Console -> paste this entire block -> Enter.
- * Installs only the AutoCAD-style command line: type a native app tool's
- * name/alias (or #tag) to dispatch it. No region workbench on this build.
- * Paste again after each page navigation. */
+ * Installs the AutoCAD-style command line on either the annotate-job page or
+ * the graph session ("Duct Takeoff") duct editor: type a native app tool's
+ * name/alias (or #tag / #system) to dispatch it. No region workbench on this
+ * build. Paste again after each page navigation. */
 (async function(){
   function ready(){
+    // The graph session has no annotationState/pdf-canvas at all — detected
+    // by its own root id instead, confirmed live via opencli.
+    if (document.getElementById('graph-session-root')){
+      return document.getElementById('graph-canvas-stage')
+          && typeof __graphDebug !== 'undefined';
+    }
     return typeof annotationState !== 'undefined'
         && annotationState.annotations
         && document.getElementById('pdf-canvas')
@@ -16,12 +23,53 @@
   if (!ready()){ console.warn('[RW] app not ready after 30s — try pasting again once the page renders'); return; }
   await new Promise(r=>setTimeout(r,600)); // let the canvas settle
 
+// ===== rw_host.js =====
+// RW host detector — DUAL-TARGET BRANCH: identifies which Constructions
+// Tagger surface this loader is running on (the annotate-job page, or the
+// graph session / "Duct Takeoff" duct editor) and publishes the one fact
+// every other module needs before it can do anything host-specific: which
+// canvas/stage element to anchor the command-line overlay to.
+//
+// MUST be loaded FIRST, before rw_panelux.js — rw_panelux.js reads
+// window.__RWhost.canvasId at its own top level (to wrap that element's
+// addEventListener) BEFORE window.__RW exists, so this can't be a method on
+// RW itself; it has to be a plain window global available pre-__RW.
+//
+// Detected from the DOM (a graph-session-only root id), not the URL, so it
+// stays correct if either route ever moves. Every other host-specific fact
+// (the command table, tag/system search, readTool/readMode, per-tool
+// settings, whether middle-drag pan applies) lives in rw_cmdline.js itself,
+// branching on window.__RWhost.id — see CLAUDE.md's "dual-target host
+// adapter" round for why that split, not this file, owns those.
+(function(){
+  if (window.__RWhost) return 'host already detected: ' + window.__RWhost.id;
+
+  const isGraph = !!document.getElementById('graph-session-root');
+
+  window.__RWhost = {
+    id: isGraph ? 'graph' : 'annotate',
+    // The element RW._cmdRepositionOverlay anchors the command-bar overlay
+    // to, and rw_panelux.js's listener-gate wraps. Confirmed live via
+    // opencli: #graph-canvas-frame/#pointer-layer carry a large negative-
+    // offset CSS transform (the actual 3024x2268 drawing surface), so
+    // anchoring there would place the bar off-screen — #graph-canvas-stage
+    // is the viewport-sized box the drawing scrolls/zooms inside.
+    canvasId: isGraph ? 'graph-canvas-stage' : 'annotation-canvas'
+  };
+
+  return 'host detected: ' + window.__RWhost.id;
+})()
+
+;
 // ===== rw_panelux.js =====
 // RW v2.8 — collapsible panel + master killswitch.
 // NATIVE-TOOLS-ONLY BRANCH: trimmed to drop workbench-teardown on disable
 // (rw_install.js/rw_masktools.js/rw_brushpoly.js are gone on this branch) —
 // see CLAUDE.md's "A dedicated branch" section.
-// MUST be loaded FIRST (before rw_core). Wraps annotation-canvas's
+// DUAL-TARGET BRANCH: loaded right after rw_host.js, so window.__RWhost is
+// already set — see CLAUDE.md's host-adapter round for why detection itself
+// lives in that separate, tinier file rather than here.
+// MUST be loaded before rw_core. Wraps the host's canvas/stage element's
 // addEventListener so every handler registered by later modules auto-checks
 // RW.enabled.
 (function boot(){
@@ -32,8 +80,12 @@
   if (!window.__RWgate) window.__RWgate = { enabled: true };
   const gate = window.__RWgate;
 
-  /* ---------- auto-gate all annotation-canvas listeners ---------- */
-  const ac = document.getElementById('annotation-canvas');
+  // Falls back to the annotate-page id if rw_host.js somehow didn't run —
+  // defensive, matching this file's existing no-op-without-throwing style.
+  const canvasId = (window.__RWhost && window.__RWhost.canvasId) || 'annotation-canvas';
+
+  /* ---------- auto-gate all host-canvas listeners ---------- */
+  const ac = document.getElementById(canvasId);
   if (ac && !ac.__RWrawAdd){
     ac.__RWrawAdd = ac.addEventListener;
     ac.addEventListener = function(type, handler, options){
@@ -150,7 +202,7 @@
         btn.style.background = RW.enabled ? 'rgba(100,220,100,0.25)' : 'rgba(220,100,100,0.30)';
       }
       if (!RW.enabled){
-        const av = document.getElementById('annotation-canvas');
+        const av = document.getElementById(canvasId);
         if (av) av.style.cursor = '';
       }
     };
@@ -185,13 +237,18 @@
 // to mount into, and RW._commitStatus. No region/mask/annotation machinery —
 // see CLAUDE.md's "A dedicated branch" section for why this branch exists.
 //
-// Load after rw_panelux.js, before rw_cmdline.js.
+// Load after rw_host.js and rw_panelux.js, before rw_cmdline.js.
 (function(){
   if (window.__RW && window.__RW.vcore) return 'RW core already installed';
 
   const RW = window.__RW = window.__RW || {};
   RW.vcore = true;
   RW.enabled = (window.__RWgate ? window.__RWgate.enabled : true);
+  // Copied onto RW for rw_cmdline.js's convenience (it already aliases
+  // window.__RW to a local RW const) — falls back to the annotate-page
+  // identity if rw_host.js somehow didn't run, same defensive style as
+  // rw_panelux.js's own fallback.
+  RW._host = window.__RWhost || { id: 'annotate', canvasId: 'annotation-canvas' };
 
   // Reuse #rw-panel if the workbench's rw_install.js already built one — this
   // is meant as a minimal FALLBACK bootstrap for when the real workbench isn't
@@ -239,11 +296,19 @@
 
 ;
 // ===== rw_cmdline.js =====
-// RW vcmd — AutoCAD-style command line, NATIVE-TOOLS-ONLY BRANCH: type a
-// native app tool's name/alias (or a tag via #name) into an always-visible
-// input; autocomplete suggests matches; Enter/Space dispatches a synthetic
-// key the host app's own listeners consume. No workbench commands on this
-// branch — see CLAUDE.md.
+// RW vcmd — AutoCAD-style command line, NATIVE-TOOLS-ONLY, DUAL-TARGET
+// BRANCH: type a native app tool's name/alias (or a tag/system via #name)
+// into an always-visible input; autocomplete suggests matches; Enter/Space
+// dispatches a synthetic key the host app's own listeners consume. No
+// workbench commands on this branch — see CLAUDE.md.
+//
+// Installs on either of two hosts, detected once via RW._host (rw_host.js):
+// the annotate-job page ('annotate', RW._host.id today's default), or the
+// graph session / "Duct Takeoff" duct editor ('graph'). Every host-specific
+// fact — the command table, per-tool settings, tag/system search, and
+// whether middle-drag pan applies — branches on RW_HOST below, computed
+// once. See CLAUDE.md's host-adapter round for the live findings behind
+// each branch.
 //
 // Full design history: CLAUDE.md.
 //
@@ -253,6 +318,14 @@
   if (!RW || !RW.vcore) return 'need rw_core.js first';
   if (RW.vcmd) return 'command line already installed';
   RW.vcmd = true;
+
+  // Computed once, module-wide — falls back to the annotate-page identity if
+  // RW._host is somehow missing (rw_core.js already defends this the same
+  // way; kept here too so this file never depends on load order to avoid
+  // throwing outright).
+  const RW_HOST = (RW._host && RW._host.id) || 'annotate';
+  const RW_CANVAS_ID = (RW._host && RW._host.canvasId) || 'annotation-canvas';
+  const RW_IS_GRAPH = RW_HOST === 'graph';
 
   /* ---------- command table ---------- */
   // NATIVE-TOOLS-ONLY BRANCH: no workbench entries — only the host app's own
@@ -282,12 +355,17 @@
   // auto-detect results). Every existing call site omits it and is
   // unaffected.
   RW._cmdDispatchAppKey = function(key, quiet){
-    const as = (typeof annotationState !== 'undefined') ? annotationState : null;
-    const before = as ? as.currentTool : undefined;
+    // readTool() (defined further below) is host-aware — annotationState.currentTool
+    // on the annotate host, window.__graphDebug.activeTool on the graph host. Safe to
+    // call here despite being defined later in this file: this function is itself only
+    // ever CALLED at runtime, after the whole module (and readTool's own declaration)
+    // has finished loading — the same "safe regardless of source order" guarantee this
+    // file already relies on for RW._cmdActiveSettingsTool below.
+    const before = readTool();
     const evt = new KeyboardEvent('keydown', {key:key, bubbles:true, cancelable:true});
     evt.__rwSynthetic = true;
     document.dispatchEvent(evt);
-    const after = as ? as.currentTool : undefined;
+    const after = readTool();
     // Resync the auto-select watcher's own last-seen value to whatever this
     // deliberate dispatch produced. Without this, dispatching `pan` (which
     // clears currentTool) would look identical to a tool finishing on its
@@ -324,10 +402,23 @@
     fn.__isModeSwitch = true;
     return fn;
   }
+  // The graph host's own real tools (route, flex, grd, ...) — confirmed live
+  // via opencli to arm directly on their own key, with no separate draw-mode
+  // concept to enter first, unlike the annotate host's nativeDrawTool above.
+  // Still marked __isDrawTool (not renamed) so Space's "repeat the last real
+  // tool" logic in RW.runCommand treats them exactly like a draw tool —
+  // that flag has always meant "a real tool, not a mode switch," which is
+  // equally true here even though nothing is prefixed.
+  function nativeToolPlain(key){
+    const fn = function(){ RW._cmdDispatchAppKey(key); };
+    fn.__isDrawTool = true;
+    return fn;
+  }
 
   const NATIVE = 'native';
 
-  RW._cmdTable = [
+  // ----- annotate host: unchanged from every prior round -----
+  const ANNOTATE_TABLE = [
     // No workbench-command aliases to avoid colliding with anymore, so every
     // native tool gets its own real app-keymap letter (wand=k, pan=a,
     // select=s, polygon=r) — on the full command-line branch those four were
@@ -366,6 +457,28 @@
     { name:'crop',     kind:NATIVE, aliases:['g'],  run: nativeKey('g') },
     { name:'mirror',   kind:NATIVE, aliases:['m'],  run: nativeKey('m') },
   ];
+
+  // ----- graph ("Duct Takeoff") host: confirmed live via opencli — every
+  // data-tool value and its key hint (S R F E B T G U V C D) matched exactly,
+  // and dispatching each key from `document` flipped __graphDebug.activeTool
+  // with pageEntities/history staying at 0 throughout. `select` is this
+  // host's own resting state already, so it's a mode switch here too, same
+  // as the annotate host's `select` — everything else is a real tool.
+  const GRAPH_TABLE = [
+    { name:'select',     kind:NATIVE, aliases:['s'], run: nativeKey('s') },
+    { name:'route',      kind:NATIVE, aliases:['r','duct'],      run: nativeToolPlain('r') },
+    { name:'flex',       kind:NATIVE, aliases:['f'],             run: nativeToolPlain('f') },
+    { name:'extend',     kind:NATIVE, aliases:['e'],             run: nativeToolPlain('e') },
+    { name:'branch',     kind:NATIVE, aliases:['b'],             run: nativeToolPlain('b') },
+    { name:'transition', kind:NATIVE, aliases:['t'],             run: nativeToolPlain('t') },
+    { name:'grd',        kind:NATIVE, aliases:['g','diffuser'],  run: nativeToolPlain('g') },
+    { name:'unit',       kind:NATIVE, aliases:['u','equipment'], run: nativeToolPlain('u') },
+    { name:'vertical',   kind:NATIVE, aliases:['v','riser'],     run: nativeToolPlain('v') },
+    { name:'cut',        kind:NATIVE, aliases:['c','split'],     run: nativeToolPlain('c') },
+    { name:'damper',     kind:NATIVE, aliases:['d'],             run: nativeToolPlain('d') },
+  ];
+
+  RW._cmdTable = RW_IS_GRAPH ? GRAPH_TABLE : ANNOTATE_TABLE;
 
   /* ---------- tool settings diagnostic (read-only DOM probe) ---------- */
   // Wand, wrap, and mline are documented (README's own app keymap) as having
@@ -442,11 +555,27 @@
   // ever change, select/checkbox controls need no separate hardcoded entries, and any FUTURE
   // control that appears under a confirmed prefix (e.g. one only revealed once a checkbox is
   // toggled on) becomes usable the moment it's discoverable, with no code change here at all.
-  RW._toolSettingsMap = {
+  const ANNOTATE_SETTINGS_MAP = {
     wand:  { dataTool: 'magic_wand',  prefix: 'magic-wand-' },
     wrap:  { dataTool: 'shrink_wrap', prefix: 'shrink-wrap-' },
     mline: { dataTool: 'ribbon',      prefix: 'ribbon-' }
   };
+  // The graph host has no per-tool id prefix the way wand/wrap/mline do —
+  // every one of its ~43 inspector controls shares one flat "graph-" prefix
+  // (confirmed live), and a tool's own params are told apart from another
+  // tool's by DOM visibility instead (the inspector aside only shows the
+  // controls relevant to whatever's armed). RW._cmdToolSettingsList below
+  // applies that extra visibility filter whenever RW_IS_GRAPH is true — see
+  // its own comment. Every real tool gets an entry (even `damper`/`cut`,
+  // which may round up empty) so `<tool>.` still drills in cleanly instead
+  // of reporting "unknown tool."
+  const GRAPH_SETTINGS_PREFIX = 'graph-';
+  const GRAPH_SETTINGS_MAP = GRAPH_TABLE.reduce(function(map, entry){
+    if (entry.name !== 'select') map[entry.name] = { dataTool: entry.name, prefix: GRAPH_SETTINGS_PREFIX };
+    return map;
+  }, {});
+
+  RW._toolSettingsMap = RW_IS_GRAPH ? GRAPH_SETTINGS_MAP : ANNOTATE_SETTINGS_MAP;
 
   function cmdControlType(el){
     if (el.tagName === 'SELECT') return 'select';
@@ -473,6 +602,13 @@
     const found = [];
     cmdSweepControls().forEach(function(el){
       if (!el.id || el.id.indexOf(entry.prefix) !== 0) return;
+      // Graph-host-only: every tool shares the one "graph-" prefix, so a
+      // visibility check is what separates (say) route's width/height from
+      // grd's CFM/rotation — confirmed live: the inspector aside only shows
+      // whichever controls are relevant to the currently-armed tool. Not
+      // applied (or needed) on the annotate host, where each prefix is
+      // already unique to its own tool.
+      if (RW_IS_GRAPH && !(el.offsetParent || (el.getClientRects && el.getClientRects().length))) return;
       const param = el.id.slice(entry.prefix.length);
       const type = cmdControlType(el);
       const item = { tool: tool, param: param, id: el.id, type: type };
@@ -502,6 +638,11 @@
   RW._cmdActiveSettingsTool = function(){
     const cur = (typeof readTool === 'function') ? readTool() : null;
     if (!cur) return null;
+    // Graph host: readTool() already returns the tool's own name (e.g.
+    // "route"), the same key GRAPH_SETTINGS_MAP is built from — no separate
+    // dataTool lookup needed the way the annotate host's currentTool
+    // strings (e.g. "magic_wand") require.
+    if (RW_IS_GRAPH) return RW._toolSettingsMap[cur] ? cur : null;
     for (const name in RW._toolSettingsMap){
       if (RW._toolSettingsMap[name].dataTool === cur) return name;
     }
@@ -596,7 +737,25 @@
   // a wrong guess is visible immediately rather than silently no-op.
   RW._cmdTagList = null;
   RW._cmdTagSource = null;
+  // Graph host: there is no annotationState/tag list at all, so `#` search
+  // is repointed at the live #graph-system-select options (e.g. "FPTU
+  // (Supply)") instead — same {id,name} shape RW._cmdMatchTags/renderMenuRows
+  // already expect, so nothing downstream needs to know which host it's on.
   RW._cmdDetectTags = function(){
+    if (RW_IS_GRAPH){
+      const el = document.getElementById('graph-system-select');
+      const opts = (el && el.options) ? Array.from(el.options) : [];
+      if (opts.length){
+        RW._cmdTagList = opts.map(function(o){ return { id: o.value, name: o.text }; });
+        RW._cmdTagSource = 'graph-system-select';
+        RW._commitStatus && RW._commitStatus('detected ' + RW._cmdTagList.length + ' systems via #graph-system-select');
+        return RW._cmdTagList;
+      }
+      RW._cmdTagList = null;
+      RW._cmdTagSource = null;
+      RW._commitStatus && RW._commitStatus('could not find any systems on #graph-system-select — # search unavailable');
+      return null;
+    }
     const as = (typeof annotationState !== 'undefined') ? annotationState : null;
     const cur = as && as.currentTag;
     const candidates = ['tags', 'availableTags', 'tagList', 'allTags', 'projectTags', 'tagOptions'];
@@ -641,12 +800,28 @@
     RW._cmdSelectTagUnsafe(tag);
   };
 
-  // Directly assigns annotationState's current tag to the exact object
-  // matched by name. Not fully confirmed live: if the app needs its own
-  // setter/dispatch to notice the change rather than a plain property
-  // write, this can silently desync the app's displayed tag from what's
-  // actually used on commit.
+  // Graph host: writes the real <select>'s value plus input/change events —
+  // the identical write-back technique RW._cmdApplySetting uses for tool
+  // settings (live-confirmed against magic-wand-tolerance), not a plain
+  // property assignment. Still carries the "confirm it actually applied"
+  // hedge since this specific control (#graph-system-select) hasn't itself
+  // been individually write-tested the way that one was.
+  //
+  // Annotate host: directly assigns annotationState's current tag to the
+  // exact object matched by name. Not fully confirmed live: if the app needs
+  // its own setter/dispatch to notice the change rather than a plain
+  // property write, this can silently desync the app's displayed tag from
+  // what's actually used on commit.
   RW._cmdSelectTagUnsafe = function(tag){
+    if (RW_IS_GRAPH){
+      const el = document.getElementById('graph-system-select');
+      if (!el){ RW._commitStatus && RW._commitStatus('system: ' + tag.name + ' — #graph-system-select not found'); return; }
+      el.value = tag.id;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      RW._commitStatus && RW._commitStatus('system: ' + tag.name + ' (confirm it actually applied)');
+      return;
+    }
     if (typeof annotationState !== 'undefined') annotationState.currentTag = tag;
     RW._commitStatus && RW._commitStatus('tag: ' + tag.name + ' (direct assignment — confirm it actually applied)');
   };
@@ -798,10 +973,19 @@
   RW._cmdToolNullPending = false;
   RW._cmdAutoSelectRevertLog = [];
 
-  // undefined = unreadable (no annotationState, or no currentTool property at
-  // all) — a distinct result from a real null/empty tool, so the watcher can
-  // fail closed (no-op) rather than misreading "can't tell" as "cleared".
+  // undefined = unreadable (no annotationState/__graphDebug, or no
+  // currentTool/activeTool property at all) — a distinct result from a real
+  // null/empty tool, so the watcher can fail closed (no-op) rather than
+  // misreading "can't tell" as "cleared".
   function readTool(){
+    if (RW_IS_GRAPH){
+      // window.__graphDebug.activeTool — confirmed live via opencli (flipped
+      // route->flex->select->extend->grd->route, matching every dispatch).
+      const gd = (typeof __graphDebug !== 'undefined') ? __graphDebug : null;
+      if (!gd || !('activeTool' in gd)) return undefined;
+      const t = gd.activeTool;
+      return (t === '' || t === undefined) ? null : t;
+    }
     const as = (typeof annotationState !== 'undefined') ? annotationState : null;
     if (!as || !('currentTool' in as)) return undefined;
     const t = as.currentTool;
@@ -811,6 +995,12 @@
   // null = unreadable or not one of the known mode strings — callers treat
   // that as "don't know", not as "in select mode" or "in draw mode".
   function readMode(){
+    if (RW_IS_GRAPH){
+      // No separate mode field confirmed live on this host — select is just
+      // another tool here, not a distinct mode/currentTool pair the way the
+      // annotate host works, so "resting" is derived straight from readTool().
+      return readTool() === 'select' ? SELECT_MODE : null;
+    }
     const as = (typeof annotationState !== 'undefined') ? annotationState : null;
     const m = as && as.mode;
     return (typeof m === 'string' && KNOWN_MODES.indexOf(m) !== -1) ? m : null;
@@ -1338,7 +1528,9 @@
     inputEl.type = 'text';
     inputEl.autocomplete = 'off';
     inputEl.spellcheck = false;
-    inputEl.placeholder = 'native tool (linear, rect, pan…) or #tag — just start typing';
+    inputEl.placeholder = RW_IS_GRAPH
+      ? 'native tool (route, grd, select…) or #system — just start typing'
+      : 'native tool (linear, rect, pan…) or #tag — just start typing';
     inputEl.style.cssText = 'flex:1;font-size:11px;padding:2px 4px;'
       // Near-white text (inherited from #rw-panel's color) on the input's
       // default WHITE UA background is unreadable — give it an explicit dark
@@ -1395,7 +1587,7 @@
     // fixed — see CLAUDE.md's load-order-independence section.
     if (!RW._cmdOwnsPanelPosition) return;
     const panel = document.getElementById('rw-panel');
-    const canvas = document.getElementById('annotation-canvas');
+    const canvas = document.getElementById(RW_CANVAS_ID);
     if (!panel || !canvas) return; // no-op without throwing
     const cr = canvas.getBoundingClientRect();
     const width = Math.min(RW._cmdBarWidth, cr.width);
@@ -1433,7 +1625,7 @@
   // as RW._panDiagnose/RW._zoomDiagnose.
   RW._overlayDiagnose = function(){
     const panel = document.getElementById('rw-panel');
-    const canvas = document.getElementById('annotation-canvas');
+    const canvas = document.getElementById(RW_CANVAS_ID);
     const out = { viewport: { innerWidth: window.innerWidth, innerHeight: window.innerHeight } };
     if (panel){
       const p = panel.getBoundingClientRect ? panel.getBoundingClientRect() : null;
@@ -1778,7 +1970,14 @@
   // CLAUDE.md's amended Constraints section for why that widens this
   // project's "purely a tool-switcher" boundary, deliberately, for this one
   // feature only.
-  RW._panEnabled = true;          // subordinate to RW.enabled — disable pan alone without the killswitch
+  // Off by default on the graph host: confirmed live that its drawing stage
+  // (#graph-canvas-stage) is overflow:hidden with nothing to scroll — this
+  // page pans via a CSS transform on #graph-canvas-frame instead, which the
+  // scrollLeft/scrollTop technique below cannot drive. That host already
+  // pans natively on wheel/Shift+wheel/middle-click, so there's nothing to
+  // replace; the console escape hatch (__RW._panEnabled = true) is still
+  // available if a future page on this host ever does scroll.
+  RW._panEnabled = !RW_IS_GRAPH;  // subordinate to RW.enabled — disable pan alone without the killswitch
   RW._panInvert = false;          // flip if grab-and-drag feels backwards on a live page
   RW._panThreshold = 3;           // px (Manhattan) before it counts as a real drag, not a bare click
   RW._panStopHostEvents = true;   // stopPropagation the middle press so the host app's own canvas
@@ -1832,7 +2031,7 @@
   // and this answers it in one console call. Call it BEFORE anything else on
   // a live page.
   RW._panDiagnose = function(el){
-    el = el || document.getElementById('annotation-canvas') || document.body;
+    el = el || document.getElementById(RW_CANVAS_ID) || document.body;
     const found = [];
     let n = el, hops = 0;
     while (n && n.nodeType === 1 && hops++ < 64){
@@ -2078,7 +2277,7 @@
   // at all yet — plain scrolling still just scrolls, unchanged, until this comes
   // back with a real answer instead of a guess.
   RW._zoomDiagnose = function(el){
-    el = el || document.getElementById('annotation-canvas') || document.body;
+    el = el || document.getElementById(RW_CANVAS_ID) || document.body;
     const ancestors = [];
     let n = el, hops = 0;
     while (n && n.nodeType === 1 && hops++ < 64){
@@ -2110,12 +2309,16 @@
     return result;
   };
 
-  return 'vcmd up: command line (native tools only) — just start typing a tool name (or # for a tag), '
-    + RW._cmdTable.length + ' commands, ' + (RW._cmdTagList ? RW._cmdTagList.length + ' tags' : 'no tags detected')
-    + '. select is the resting state (Escape returns here); middle-drag pans without switching tools; '
-    + 'run __RW._zoomDiagnose() before/after zooming to find the real mechanism for wheel-zoom.';
+  const listNoun = RW_IS_GRAPH ? 'systems' : 'tags';
+  return 'vcmd up: command line (native tools only, ' + RW_HOST + ' host) — just start typing a tool name '
+    + '(or # for a ' + (RW_IS_GRAPH ? 'system' : 'tag') + '), ' + RW._cmdTable.length + ' commands, '
+    + (RW._cmdTagList ? RW._cmdTagList.length + ' ' + listNoun : 'no ' + listNoun + ' detected')
+    + '. select is the resting state (Escape returns here); '
+    + (RW_IS_GRAPH
+        ? 'this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.'
+        : 'middle-drag pans without switching tools; run __RW._zoomDiagnose() before/after zooming to find the real mechanism for wheel-zoom.');
 })()
 
 
-  console.log('[RW] command line ready: ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' tags' : 'no tags detected') + '. Type a tool name (or # for a tag) anywhere on the page. select is the resting state (Escape returns here); hold the middle mouse button to pan.');
+  console.log('[RW] command line ready (' + __RW._host.id + ' host): ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' ' + (__RW._host.id === 'graph' ? 'systems' : 'tags') : 'none detected') + '. Type a tool name (or # for a ' + (__RW._host.id === 'graph' ? 'system' : 'tag') + ') anywhere on the page. select is the resting state (Escape returns here);' + (__RW._host.id === 'graph' ? ' this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.' : ' hold the middle mouse button to pan.'));
 })()
