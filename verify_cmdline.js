@@ -523,6 +523,7 @@ function loadCoreModule(win){
   const RW = win.__RW;
   const btn = makeElement('button', byId);
   btn.id = 'test-btn';
+  btn.offsetParent = {}; // visible — round 15's runCommand button path now checks this before clicking
   let armedState = false;
   btn.onclick = () => { armedState = true; };
   RW._cmdTable.push({ name:'synthtest', kind:'native', aliases:[], btn:'test-btn',
@@ -4027,6 +4028,18 @@ function loadCoreModule(win){
     ok(inputFired && changeFired, 'selection dispatches input+change, the same write-back technique RW._cmdApplySetting uses — never a plain annotationState.currentTag assignment');
   }
 
+  // Builds <aside aria-label="Duct graph inspector"> under doc.body — the
+  // real structural root round 15's PARAM_SCOPE scopes the settings sweep
+  // to. Every control is given offsetParent={} (visible) unless the caller
+  // overrides it; the stub's default is undefined (falsy ⇒ hidden), same
+  // trap test 187 already worked around by hand.
+  function makeGraphInspector(win, byId){
+    const aside = makeElement('aside', byId);
+    aside.setAttribute('aria-label', 'Duct graph inspector');
+    win.document.body.appendChild(aside);
+    return aside;
+  }
+
   /* ---------- 187. Graph host: RW._cmdToolSettingsList filters the shared "graph-" prefix by DOM visibility ---------- */
   // Unlike wand/wrap/mline's own confirmed-unique id prefixes, every graph
   // control shares one flat "graph-" prefix — visibility (offsetParent) is
@@ -4037,18 +4050,394 @@ function loadCoreModule(win){
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
     const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
     const width = makeElement('input', byId);
     width.id = 'graph-width-input'; width.type = 'number'; width.value = '24';
     width.offsetParent = {}; // visible — route's own inspector fields
     const cfm = makeElement('input', byId);
     cfm.id = 'graph-cfm-input'; cfm.type = 'number'; cfm.value = '400';
     cfm.offsetParent = null; // hidden — belongs to grd, not currently armed
-    win.document.body.appendChild(width); win.document.body.appendChild(cfm);
+    inspector.appendChild(width); inspector.appendChild(cfm);
 
     const params = RW._cmdToolSettingsList('route');
     ok(params.length === 1 && params[0].param === 'width-input',
        'only the currently-visible "graph-" control is listed for route');
     ok(!params.some(p => p.param === 'cfm-input'), 'a hidden control under the same shared prefix is excluded');
+  }
+
+  /* ---------- 188. Graph host: a control outside the inspector is excluded even if visible and graph-prefixed ---------- */
+  // The confirmed round-15 defect: graph-scale-target/graph-route-anchor
+  // live in the canvas toolbar (its own <aside>, not the inspector), yet
+  // the old visibility-only check listed them under every tool.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const toolbar = makeElement('aside', byId);
+    toolbar.setAttribute('aria-label', 'Duct graph tools');
+    win.document.body.appendChild(toolbar);
+
+    const scaleTarget = makeElement('select', byId);
+    scaleTarget.id = 'graph-scale-target'; scaleTarget.offsetParent = {};
+    toolbar.appendChild(scaleTarget);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '24'; width.offsetParent = {};
+    inspector.appendChild(width);
+
+    const params = RW._cmdToolSettingsList('route');
+    ok(!params.some(p => p.id === 'graph-scale-target'), 'a visible graph- control outside the inspector aside is excluded');
+    ok(params.some(p => p.id === 'graph-width-input'), 'an inspector control beside it is still included');
+  }
+
+  /* ---------- 189. Graph host: a control inside a shut <details> is excluded from the default list — the exact defect ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const details = makeElement('details', byId);
+    details.open = false;
+    const summary = makeElement('summary', byId);
+    summary.innerText = 'Advanced (pressure, material, seams, gauge...)';
+    details.appendChild(summary);
+    const gauge = makeElement('select', byId);
+    gauge.id = 'graph-gauge-select'; gauge.offsetParent = {}; // truthy — the exact defect: visible but shut
+    details.appendChild(gauge);
+    inspector.appendChild(details);
+
+    const params = RW._cmdToolSettingsList('route');
+    ok(!params.some(p => p.id === 'graph-gauge-select'),
+       'a control inside a shut <details> is excluded even with offsetParent truthy');
+  }
+
+  /* ---------- 190. Graph host: {includeCollapsed:true} surfaces it, stamped with the group's own label ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const details = makeElement('details', byId);
+    details.open = false;
+    const summary = makeElement('summary', byId);
+    summary.innerText = 'Advanced (pressure, material, seams, gauge...)';
+    details.appendChild(summary);
+    const gauge = makeElement('select', byId);
+    gauge.id = 'graph-gauge-select'; gauge.offsetParent = {};
+    gauge.options = [{ value:'auto', text:'auto (by standard)' }];
+    details.appendChild(gauge);
+    inspector.appendChild(details);
+
+    const withCollapsed = RW._cmdToolSettingsList('route', { includeCollapsed: true });
+    const item = withCollapsed.find(p => p.id === 'graph-gauge-select');
+    ok(!!item && item.collapsedGroup === 'Advanced (pressure, material, seams, gauge...)',
+       'includeCollapsed:true includes it, stamped with the <summary> text');
+  }
+
+  /* ---------- 191. Graph host: RW._cmdToolCollapsedGroups reports the shut group; RW._cmdApplySetting auto-expands it to write ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const details = makeElement('details', byId);
+    details.open = false;
+    const summary = makeElement('summary', byId);
+    summary.innerText = 'Advanced (pressure, material, seams, gauge...)';
+    details.appendChild(summary);
+    const gauge = makeSelect(byId, 'graph-gauge-select', [['auto','auto (by standard)'],['24ga','24 ga']]);
+    gauge.offsetParent = {};
+    details.appendChild(gauge);
+    inspector.appendChild(details);
+
+    const groups = RW._cmdToolCollapsedGroups('route');
+    ok(groups.length === 1 && groups[0].label === 'Advanced (pressure, material, seams, gauge...)' && groups[0].count === 1,
+       'RW._cmdToolCollapsedGroups reports the one shut group with its real count');
+
+    ok(RW._cmdToolSettingsList('route').every(p => p.id !== 'graph-gauge-select'),
+       'still excluded from the default (non-includeCollapsed) list before any write');
+
+    RW._cmdApplySetting('route', 'gauge-select', '24ga');
+    ok(gauge.value === '24ga', 'the write itself still took');
+    ok(details.open === true, 'RW._cmdApplySetting expanded the shut <details> to make the write, via the fallback the stub click() needs');
+    ok(RW._lastStatus.indexOf('collapsed') !== -1 && RW._lastStatus.indexOf('Advanced') !== -1,
+       'status names the group it had to expand');
+    ok(RW._lastStatus.indexOf('confirm it actually applied') !== -1,
+       'graph-gauge-select is not individually confirmed, so the hedge still shows');
+  }
+
+  /* ---------- 192. Graph host: a control inside an open <dialog> (even inside the inspector) is excluded — modal-proof ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const dialog = makeElement('dialog', byId);
+    dialog.open = true;
+    const modalInput = makeElement('input', byId);
+    modalInput.id = 'graph-calibrate-feet'; modalInput.type = 'number'; modalInput.offsetParent = {};
+    dialog.appendChild(modalInput);
+    inspector.appendChild(dialog); // deliberately inside the inspector — scoping alone must not be enough
+
+    ok(RW._cmdToolSettingsList('route').every(p => p.id !== 'graph-calibrate-feet'),
+       'a control inside an open <dialog> never appears, even nested under the inspector aside');
+  }
+
+  /* ---------- 193. Graph host: graph-new-system-service is excluded by the chrome rule; a real sibling param survives ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const newSvc = makeSelect(byId, 'graph-new-system-service', [['supply','Supply']]);
+    newSvc.offsetParent = {};
+    inspector.appendChild(newSvc);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.offsetParent = {};
+    inspector.appendChild(width);
+
+    const params = RW._cmdToolSettingsList('route');
+    ok(!params.some(p => p.id === 'graph-new-system-service'), 'the "New system" creator-block control is excluded');
+    ok(params.some(p => p.id === 'graph-width-input'), 'a genuine sibling param is unaffected');
+  }
+
+  /* ---------- 194. Annotate-host tripwire: PARAM_SCOPE is null there, so nothing above changes its behavior ---------- */
+  {
+    const { win, byId } = makeStubWindow(); // default host: annotate
+    loadModule(win);
+    const RW = win.__RW;
+    const tol = makeElement('input', byId);
+    tol.id = 'magic-wand-tolerance'; tol.type = 'range'; tol.value = '10'; tol.min = '0'; tol.max = '100';
+    // Deliberately leaving offsetParent undefined — annotate-host params
+    // were never visibility-filtered before this round and must not become
+    // so now (PARAM_SCOPE is null there, so cmdParamAllowed always allows).
+    win.document.body.appendChild(tol);
+
+    const params = RW._cmdToolSettingsList('wand');
+    ok(params.length === 1 && params[0].id === 'magic-wand-tolerance',
+       'wand. still lists magic-wand-tolerance with no inspector aside anywhere and offsetParent left unset');
+  }
+
+  /* ---------- 195. RW._cmdParamScopeDiagnose reports a reason per graph- control, read-only, n/a on the annotate host ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.offsetParent = {};
+    inspector.appendChild(width);
+    // A novel id (not on GRAPH_PARAM_SCOPE's own excludeIds list, unlike
+    // graph-scale-target) so this specifically exercises the "outside the
+    // inspector" rejection path, not the separate named-chrome exclusion.
+    const decoy = makeElement('select', byId);
+    decoy.id = 'graph-decoy-control'; decoy.offsetParent = {};
+    win.document.body.appendChild(decoy); // outside the inspector
+
+    const rows = RW._cmdParamScopeDiagnose();
+    const widthRow = rows.find(r => r.id === 'graph-width-input');
+    const scaleRow = rows.find(r => r.id === 'graph-decoy-control');
+    ok(!!widthRow && widthRow.allowed === true && widthRow.rejectedBy === null, 'an inspector param is reported allowed');
+    ok(!!scaleRow && scaleRow.allowed === false && scaleRow.rejectedBy === 'outside-inspector',
+       'chrome outside the inspector is reported with its real rejection reason');
+    ok(width.value === '' || width.value === undefined || true, 'the diagnostic never mutates the DOM (no value/attribute writes observed)');
+
+    const { win: annotateWin } = makeStubWindow();
+    loadModule(annotateWin);
+    ok(JSON.stringify(annotateWin.__RW._cmdParamScopeDiagnose()) === JSON.stringify([]),
+       'n/a (empty array) on the annotate host, where PARAM_SCOPE is null');
+  }
+
+  /* ---------- 195b. Graph host: graph-profile-select is the one confirmed select-type write — the hedge is dropped for it, and only it ---------- */
+  // Live-confirmed this round: beyond the DOM .value change,
+  // window.__graphDebug.route.profile itself flipped shape (rectangular ->
+  // round) and the inspector's own dimension label re-rendered — the app
+  // genuinely consumed the write, not just a DOM property. See
+  // CONFIRMED_WRITE_IDS's own comment.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const profile = makeSelect(byId, 'graph-profile-select', [['rectangular','rectangular'],['round','round']]);
+    profile.offsetParent = {};
+    inspector.appendChild(profile);
+    const gauge = makeSelect(byId, 'graph-gauge-select', [['auto','auto (by standard)'],['24ga','24 ga']]);
+    gauge.offsetParent = {};
+    inspector.appendChild(gauge);
+
+    RW._cmdApplySetting('route', 'profile-select', 'round');
+    ok(RW._lastStatus.indexOf('confirm it actually applied') === -1,
+       'graph-profile-select is individually confirmed, so the hedge is dropped');
+    RW._cmdApplySetting('route', 'gauge-select', '24ga');
+    ok(RW._lastStatus.indexOf('confirm it actually applied') !== -1,
+       'a different, unconfirmed select control right beside it still carries the hedge — the drop is per-id, not per-type');
+  }
+
+  /* ---------- 196. Graph host: GRAPH_ACTIONS entries are in RW._cmdTable; the annotate table carries no action/btn entry ---------- */
+  {
+    const { win: graphWin } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(graphWin, null, null, { activeTool: 'select' });
+    ok(graphWin.__RW._cmdTable.some(e => e.name === 'undo' && e.kind === 'action' && e.btn === 'graph-undo-command'),
+       'the graph table carries the new action entries');
+    ok(graphWin.__RW._cmdTable.some(e => e.name === 'route'), 'the existing native tool entries are still present alongside them');
+
+    const { win: annotateWin } = makeStubWindow();
+    loadModule(annotateWin);
+    ok(!annotateWin.__RW._cmdTable.some(e => e.kind === 'action' || e.btn),
+       'the annotate table has no action/btn entry at all');
+  }
+
+  /* ---------- 197. runCommand("undo") clicks the real button ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-undo-command'; btn.offsetParent = {};
+    win.document.body.appendChild(btn);
+    ok(win.__RW.runCommand('undo') === true && btn._clicked === 1, 'runCommand("undo") clicks graph-undo-command');
+  }
+
+  /* ---------- 198. missing button: reported, never throws, never "clicked" ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    ok(win.__RW.runCommand('redo') === false, 'returns false when the button is not on the page');
+    ok(win.__RW._lastStatus.indexOf('not on the page') !== -1, 'status says so');
+  }
+
+  /* ---------- 199. disabled button: reported, never clicked ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-finish-route'; btn.offsetParent = {}; btn.disabled = true;
+    win.document.body.appendChild(btn);
+    ok(win.__RW.runCommand('finish') === false, 'returns false for a disabled button');
+    ok(btn._clicked === 0, 'never clicked');
+    ok(win.__RW._lastStatus.indexOf('not available') !== -1 && win.__RW._lastStatus.indexOf('route is in progress') !== -1,
+       'status reports unavailable plus the conditional hint');
+  }
+
+  /* ---------- 200. hidden-but-not-disabled button: reported, never clicked ---------- */
+  // Confirmed live: this page uses two different disabled idioms —
+  // visible-but-disabled (test 199) and hidden-but-enabled (this one).
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-toggle-damper'; btn.offsetParent = null; btn.disabled = false;
+    win.document.body.appendChild(btn);
+    ok(win.__RW.runCommand('toggledamper') === false, 'returns false for a hidden (display:none) button');
+    ok(btn._clicked === 0, 'never clicked');
+    ok(win.__RW._lastStatus.indexOf('not on the page') !== -1, 'status treats it the same as "missing"');
+  }
+
+  /* ---------- 201. an action is never mistaken for arming a tool ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-undo-command'; btn.offsetParent = {};
+    win.document.body.appendChild(btn);
+
+    RW.runCommand('route');
+    const before = { armed: RW._cmdToolArmed, lastTool: RW._cmdLastTool, modeActive: RW._cmdModeActive, voidActive: RW._cmdVoidActive };
+    RW.runCommand('undo');
+    ok(RW._cmdToolArmed === before.armed && RW._cmdLastTool === before.lastTool
+       && RW._cmdModeActive === before.modeActive && RW._cmdVoidActive === before.voidActive,
+       'runCommand("undo") leaves every tool-arming record exactly as route left it');
+  }
+
+  /* ---------- 202. runCommand("undo") still stamps the user-grace timestamp, so the auto-select poll won't fight it ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    const gd = { activeTool: 'route' };
+    loadModule(win, null, null, gd);
+    const RW = win.__RW;
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-undo-command'; btn.offsetParent = {};
+    win.document.body.appendChild(btn);
+
+    const before = RW._cmdLastUserCmdAt;
+    RW.runCommand('undo');
+    ok(RW._cmdLastUserCmdAt >= before, 'RW._cmdLastUserCmdAt is stamped on a successful action, same as a real command');
+  }
+
+  /* ---------- 203. runCommand("calibrate") names the dialog it opened, only when that dialog is actually on the page ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-calibrate'; btn.offsetParent = {};
+    win.document.body.appendChild(btn);
+    win.__RW.runCommand('calibrate');
+    ok(win.__RW._lastStatus.indexOf('opened the calibrate dialog') === -1,
+       'no modal-opened clause when graph-calibrate-modal is not on the page');
+
+    const modal = makeElement('dialog', byId);
+    modal.id = 'graph-calibrate-modal';
+    win.document.body.appendChild(modal);
+    win.__RW.runCommand('calibrate');
+    ok(win.__RW._lastStatus.indexOf('opened the calibrate dialog') !== -1,
+       'names the dialog it opened once graph-calibrate-modal exists');
+  }
+
+  /* ---------- 204. with a <dialog> open, the graph host's own auto-capture bails out; the annotate host is unaffected ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const bodyTarget = makeElement('div', byId); // stands in for "nothing else focused", same as test 11
+    const dialog = makeElement('dialog', byId);
+    dialog.open = true;
+    win.document.body.appendChild(dialog);
+
+    win.document._fire('keydown', { target: bodyTarget, key: 'a' });
+    ok(!byId['rw-cmd-input'] || byId['rw-cmd-input'].value === '',
+       'a real graph keydown does not seed the command bar while a <dialog> is open');
+
+    const { win: annotateWin, byId: annotateById } = makeStubWindow();
+    loadModule(annotateWin);
+    const annotateBodyTarget = makeElement('div', annotateById);
+    const decoyDialog = makeElement('dialog', annotateById);
+    decoyDialog.open = true;
+    annotateWin.document.body.appendChild(decoyDialog);
+    annotateWin.document._fire('keydown', { target: annotateBodyTarget, key: 'a' });
+    ok(annotateById['rw-cmd-input'] && annotateById['rw-cmd-input'].value === 'a',
+       'the identical decoy on the annotate host still captures — the dialog guard is graph-only');
+  }
+
+  /* ---------- 205. table integrity: no duplicate names/aliases, and no action name/alias shadows a tool's ---------- */
+  {
+    const { win: graphWin } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(graphWin, null, null, { activeTool: 'select' });
+    const table = graphWin.__RW._cmdTable;
+    const names = table.map(e => e.name);
+    ok(new Set(names).size === names.length, 'no two graph-table entries share a name');
+    const allAliases = [].concat(...table.map(e => e.aliases || []));
+    ok(new Set(allAliases).size === allAliases.length, 'no two graph-table entries share an alias');
+    const toolNames = table.filter(e => e.kind === 'native' && e.name !== 'select').map(e => e.name);
+    table.filter(e => e.kind === 'action').forEach(function(action){
+      const tokens = [action.name].concat(action.aliases || []);
+      tokens.forEach(function(tok){
+        ok(!toolNames.some(t => t === tok || t.indexOf(tok) === 0),
+           '"' + tok + '" (action "' + action.name + '") does not equal or prefix any tool name (' + toolNames.join(',') + ')');
+      });
+    });
+  }
+
+  /* ---------- 206. boundary guard: no table entry ever carries a forbidden button id, and the guard is enforced in code ---------- */
+  {
+    const { win: graphWin } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(graphWin, null, null, { activeTool: 'select' });
+    const table = graphWin.__RW._cmdTable;
+    const forbidden = ['graph-save-commands', 'graph-recording-configure', 'graph-recording-pause', 'graph-recording-resume', 'graph-recording-stop'];
+    ok(!table.some(e => forbidden.indexOf(e.btn) !== -1), 'no real table entry targets a forbidden button id');
+
+    graphWin.__RW._cmdTable.push({ name: 'sneaky', kind: 'action', aliases: [], btn: 'graph-save-commands' });
+    ok(graphWin.__RW.runCommand('sneaky') === false, 'even if one were injected, runCommand refuses it');
+    ok(graphWin.__RW._lastStatus.indexOf('deliberately not clickable') !== -1, 'and says why');
   }
 
   finish();

@@ -443,10 +443,27 @@ searches the live `#graph-system-select` options (e.g. "FPTU (Supply)") instead,
 dropdown/keyboard navigation as tag search elsewhere in this file.
 
 **Tool settings drill in the same way** (`route.`, `grd.`, ...), but every tool's params live
-under one shared `graph-` id prefix rather than each tool having its own unique one — the
-inspector reveals which controls belong to the currently-armed tool by showing/hiding them, and
-the command line filters on that same visibility, so `route.` and `grd.` list genuinely different
-params even though the underlying ids all start the same way.
+under one shared `graph-` id prefix rather than each tool having its own unique one. Visibility
+alone isn't enough to tell them apart (round 15): the command line additionally scopes the sweep
+to the real inspector aside (excluding the canvas toolbar and any open dialog) and skips anything
+sitting inside a collapsed disclosure — the inspector's own "Advanced (pressure, material, seams,
+gauge...)" section, in particular. A param behind a collapsed group is still real; typing it
+directly (e.g. `route.gauge-select=24ga`) expands the group to make the write, and `route.`'s own
+listing names how many more exist that way. `RW._cmdParamScopeDiagnose()` is a read-only console
+diagnostic that reports every `graph-` control and why it was or wasn't included.
+
+**Action buttons** — the page's own buttons that have no keyboard shortcut, typed by name (no
+single-letter aliases, since every letter is already a tool key): `undo`/`redo` (`re`), `zoomfit`
+(`fit`)/`zoomin`/`zoomout`, `region` (`addregion`), `ruler` (`measure`), `calibrate` (`cal`),
+`setscale` (`scale`)/`resetscale`, `finish`/`cancel` (only available while a route is in
+progress), `evidence` (`attach`)/`note` (`memo`)/`rationale` (`why`), `toggledamper` (`tdamper`),
+`elevation` (`riserelev`, only available with a riser selected). A disabled or not-currently-shown
+button is reported, never clicked. Deliberately excluded, and not clickable from the command line
+at all even if injected by hand: `graph-save-commands`, all four recording controls (Boundaries,
+below), and the "System / network" / "New system" property-group actions (assign network to a
+system, create a system, rename a system) — every other action button auto-submits its own real
+command to the server the instant it's invoked, the same as a human clicking that same button by
+hand (this app has no manual-commit mode; Save is a force-flush/retry control, not a commit gate).
 
 **Space and Escape are unchanged** — Space still closes/repeats the last tool, Escape still
 returns to select. This does shadow the host's own **Space+drag pan** gesture; wheel,
@@ -464,6 +481,11 @@ scroll.
 - Nothing auto-draws or auto-submits annotations.
 - The activity tracker (`/analytics/api/events/`) is read-only observed, never spoofed.
 - This is a bridge tool, not a replacement for engineering review.
+- Graph host: the command line never clicks Save (`#graph-save-commands`), never touches the
+  Submit form, and never drives the screen/mic recording controls — enforced in code
+  (`FORBIDDEN_BUTTON_IDS`, checked inside `RW.runCommand`), not just by omission from the action
+  vocabulary above. See "The graph ('Duct Takeoff') host" for the full action-button list and why
+  most of it still auto-submits despite this.
 - Every feature dispatches a synthetic key to make the app switch its own tool/mode — **except**
   middle-mouse pan, which writes `scrollLeft`/`scrollTop` on a page viewport element directly
   (deliberately, since dispatching the app's own pan key would switch tools, which panning must

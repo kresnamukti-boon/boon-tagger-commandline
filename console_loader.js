@@ -416,6 +416,7 @@
   }
 
   const NATIVE = 'native';
+  const ACTION = 'action'; // graph host only — a click on one of the app's own action buttons, no keyboard shortcut of its own (see GRAPH_ACTIONS below)
 
   // ----- annotate host: unchanged from every prior round -----
   const ANNOTATE_TABLE = [
@@ -478,7 +479,55 @@
     { name:'damper',     kind:NATIVE, aliases:['d'],             run: nativeToolPlain('d') },
   ];
 
-  RW._cmdTable = RW_IS_GRAPH ? GRAPH_TABLE : ANNOTATE_TABLE;
+  // Enforced in RW.runCommand's button-dispatch path, not just by omission
+  // from GRAPH_ACTIONS below — see that function's own comment. Save is a
+  // force-flush/retry control (this app has no manual-commit mode at all,
+  // confirmed live), Submit has no id to begin with (never reachable via
+  // getElementById), and recording is capture tooling this command line
+  // must never drive.
+  const FORBIDDEN_BUTTON_IDS = [
+    'graph-save-commands',
+    'graph-recording-configure', 'graph-recording-pause', 'graph-recording-resume', 'graph-recording-stop'
+  ];
+
+  // ----- graph host: action-button vocabulary (round 15) -----
+  // Buttons the graph session owns with no keyboard shortcut of their own —
+  // reuses RW.runCommand's existing (until now unused) `btn` dispatch path
+  // rather than a new mechanism (see that function). Deliberately excludes
+  // Save/Submit/recording (see FORBIDDEN_BUTTON_IDS, enforced in code, not
+  // just by omission here) and, per Kresna's own instruction this round, the
+  // "System / network" and "New system" property-group actions — assigning
+  // a network to a system, creating a system, and renaming a system all stay
+  // out of the command line's vocabulary. Every other action button on the
+  // page is included, accepting that each one auto-submits a real command to
+  // the server the instant it's invoked (confirmed live: this app has no
+  // manual-commit mode — CommandJournal flushes within 300ms-2s regardless
+  // of the Save button, which is a force-flush/retry control, not a commit
+  // gate) — exactly the same as a user clicking that same button by hand.
+  // No single-letter aliases: every one of s/r/f/e/b/t/g/u/v/c/d is already
+  // a GRAPH_TABLE tool key, so these take word names/aliases only, chosen so
+  // no name or alias collides with (or prefixes) a tool's own name/alias.
+  const GRAPH_ACTIONS = [
+    { name:'undo',         kind:ACTION, aliases:[],                       btn:'graph-undo-command' },
+    { name:'redo',         kind:ACTION, aliases:['re'],                   btn:'graph-redo-command' },
+    { name:'zoomfit',      kind:ACTION, aliases:['zf','fit'],             btn:'graph-zoom-fit' },
+    { name:'zoomin',       kind:ACTION, aliases:['zi'],                   btn:'graph-zoom-in' },
+    { name:'zoomout',      kind:ACTION, aliases:['zo'],                   btn:'graph-zoom-out' },
+    { name:'region',       kind:ACTION, aliases:['addregion'],            btn:'graph-add-region' },
+    { name:'ruler',        kind:ACTION, aliases:['measure'],              btn:'graph-ruler' },
+    { name:'calibrate',    kind:ACTION, aliases:['cal'],                  btn:'graph-calibrate',       modal:'graph-calibrate-modal' },
+    { name:'setscale',     kind:ACTION, aliases:['scale','knownscale'],   btn:'graph-set-known-scale', modal:'graph-known-scale-modal' },
+    { name:'resetscale',   kind:ACTION, aliases:['scalereset'],           btn:'graph-reset-scale' },
+    { name:'finish',       kind:ACTION, aliases:['fin'],                  btn:'graph-finish-route',    conditional:'only appears while a route is in progress' },
+    { name:'cancel',       kind:ACTION, aliases:['can'],                  btn:'graph-cancel-route',    conditional:'only appears while a route is in progress' },
+    { name:'evidence',     kind:ACTION, aliases:['attach'],               btn:'graph-attach-evidence' },
+    { name:'note',         kind:ACTION, aliases:['memo'],                 btn:'graph-attach-note' },
+    { name:'rationale',    kind:ACTION, aliases:['why'],                  btn:'graph-attach-rationale' },
+    { name:'toggledamper', kind:ACTION, aliases:['tdamper'],              btn:'graph-toggle-damper' },
+    { name:'elevation',    kind:ACTION, aliases:['riserelev'],            btn:'graph-edit-riser-elevation', conditional:'only appears with a riser selected' },
+  ];
+
+  RW._cmdTable = RW_IS_GRAPH ? GRAPH_TABLE.concat(GRAPH_ACTIONS) : ANNOTATE_TABLE;
 
   /* ---------- tool settings diagnostic (read-only DOM probe) ---------- */
   // Wand, wrap, and mline are documented (README's own app keymap) as having
@@ -577,6 +626,127 @@
 
   RW._toolSettingsMap = RW_IS_GRAPH ? GRAPH_SETTINGS_MAP : ANNOTATE_SETTINGS_MAP;
 
+  // ----- graph host: scoping the settings sweep to the real inspector (round 15) -----
+  // Confirmed live: "every graph- id that's currently visible" (the rule
+  // above) leaks chrome that happens to share the visible check but isn't
+  // any tool's own param — graph-scale-target/graph-route-anchor live in the
+  // canvas toolbar (<aside aria-label="Duct graph tools">), not the
+  // inspector (<aside aria-label="Duct graph inspector">); graph-new-
+  // system-service belongs to the inspector's own "New system" creator
+  // block, not to any tool; and all 7 controls under the collapsed
+  // "Advanced (pressure, material, seams, gauge...)" <details> passed the
+  // old visibility check even while shut, so route. listed 18 params
+  // instead of the real 8. This object is the structural fix: rootTag/
+  // rootLabel scope the sweep to the real inspector, collapsedGroupTag
+  // respects a shut <details>, excludeInsideTags keeps a <dialog>'s own
+  // inputs out even while open (six checkpoint/scale modals carry graph-*
+  // ids of their own), and the two exclude lists are the pragmatic
+  // remainder — chrome with no purely-structural discriminator available
+  // (graph-new-system-service's creator block has no id and no <details> to
+  // key off). null on the annotate host, so cmdParamAllowed no-ops there —
+  // byte-identical behavior to before this round.
+  const GRAPH_PARAM_SCOPE = {
+    rootTag: 'ASIDE',
+    rootLabel: 'Duct graph inspector',
+    excludeIds: ['graph-scale-target', 'graph-route-anchor'], // canvas toolbar — also excluded by rootTag/rootLabel; kept as documentation of the live finding
+    excludeIdPrefixes: ['graph-new-'],                         // the inspector's "New system" creator block, not a tool param
+    excludeInsideTags: ['DIALOG'],
+    collapsedGroupTag: 'DETAILS'
+  };
+  const PARAM_SCOPE = RW_IS_GRAPH ? GRAPH_PARAM_SCOPE : null;
+
+  // Extraction of the old inline visibility check — shared with the
+  // button-usability check in RW.runCommand (see GRAPH_ACTIONS).
+  function cmdIsVisible(el){
+    return !!(el.offsetParent || (el.getClientRects && el.getClientRects().length));
+  }
+
+  // Upward parentNode walk to the nearest ancestor with the given tagName.
+  // Not Element.closest(): this project's own Node test harness
+  // (verify_cmdline.js) has no closest()/contains(), only parentNode/
+  // parentElement, and this code must run unchanged against both the real
+  // DOM and that stub. Capped, matching this file's existing pan-container-
+  // walk idiom.
+  function cmdAncestorByTag(el, tagName){
+    let node = el.parentNode, hops = 0;
+    while (node && hops++ < 64){
+      if (node.tagName === tagName) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  // True if `el` is `root` or a descendant of it — again a hand-rolled
+  // parentNode walk, no .contains() available in the stub.
+  function cmdIsWithin(el, root){
+    let node = el, hops = 0;
+    while (node && hops++ < 64){
+      if (node === root) return true;
+      node = node.parentNode;
+    }
+    return false;
+  }
+
+  // The live inspector aside — re-resolved every call (it re-renders per
+  // armed tool), never cached. Selector form ('tag[attr="value"]') is
+  // supported by both a real querySelectorAll and this project's own DOM
+  // stub's matcher.
+  function cmdScopeRoots(){
+    if (!PARAM_SCOPE) return [];
+    return Array.from(document.querySelectorAll(
+      PARAM_SCOPE.rootTag.toLowerCase() + '[aria-label="' + PARAM_SCOPE.rootLabel + '"]'
+    ));
+  }
+
+  // The nearest shut disclosure ancestor, or null if `el` isn't inside one
+  // (or its disclosure is already open). `label` comes from the child
+  // <summary>'s own text, found by walking .children — not
+  // querySelector('summary'), which the stub can't do.
+  function cmdCollapsedGroup(el){
+    if (!PARAM_SCOPE) return null;
+    const details = cmdAncestorByTag(el, PARAM_SCOPE.collapsedGroupTag);
+    if (!details || details.open) return null;
+    let label = null;
+    const kids = details.children || [];
+    for (const child of kids){
+      if (child.tagName === 'SUMMARY'){ label = (child.innerText || child.textContent || '').trim() || null; break; }
+    }
+    return { details: details, label: label };
+  }
+
+  // The one predicate this round fixes: which "graph-" control is actually
+  // the currently-armed tool's own param, vs. chrome that merely shares the
+  // same visible prefix. Returns null when allowed, else a short reason
+  // token — used both by RW._cmdToolSettingsList (to filter) and
+  // RW._cmdParamScopeDiagnose (to report why each control was rejected).
+  // Annotate host: PARAM_SCOPE is null, so this always returns null —
+  // nothing here ever ran before this round, and nothing here changes now.
+  function cmdParamAllowed(el){
+    if (!PARAM_SCOPE) return null;
+    if (PARAM_SCOPE.excludeIds.indexOf(el.id) !== -1) return 'excluded-id';
+    if (PARAM_SCOPE.excludeIdPrefixes.some(function(p){ return el.id.indexOf(p) === 0; })) return 'excluded-prefix';
+    for (const tag of PARAM_SCOPE.excludeInsideTags){
+      if (cmdAncestorByTag(el, tag)) return 'inside-' + tag.toLowerCase();
+    }
+    const roots = cmdScopeRoots();
+    if (!roots.some(function(root){ return cmdIsWithin(el, root); })) return 'outside-inspector';
+    const grp = cmdCollapsedGroup(el);
+    if (grp) return 'collapsed:' + (grp.label || 'group');
+    if (!cmdIsVisible(el)) return 'hidden';
+    return null;
+  }
+
+  // Any currently-open <dialog> — graph host only, and only because this
+  // round's own action vocabulary (calibrate/setscale) is what opens these
+  // modals. Used to bail the global auto-capture keydown listener out of the
+  // way (see its own comment) while one is open, so typing reaches the
+  // app's modal instead of the command bar.
+  function cmdOpenDialogs(){
+    if (!RW_IS_GRAPH) return [];
+    return Array.from(document.querySelectorAll('dialog'))
+      .filter(function(d){ return d.open || d.hasAttribute('open'); });
+  }
+
   function cmdControlType(el){
     if (el.tagName === 'SELECT') return 'select';
     if (el.type === 'checkbox') return 'checkbox';
@@ -596,22 +766,25 @@
   // Live current value/range/options for each of a tool's params, discovered fresh every call by
   // id prefix — the settings-param menu's data source. Reads the real element's live state (same
   // discipline as RW._toolSettingsDiagnose), never a stale default.
-  RW._cmdToolSettingsList = function(tool){
+  // `opts.includeCollapsed` (default false) additionally returns params that
+  // are real but currently hidden behind a shut disclosure (e.g. graph's own
+  // "Advanced" group), stamping `item.collapsedGroup` with that group's
+  // label — see RW._cmdToolCollapsedGroups, which is what surfaces their
+  // existence without ever silently including them here by default.
+  RW._cmdToolSettingsList = function(tool, opts){
     const entry = RW._toolSettingsMap[tool];
     if (!entry) return [];
+    const includeCollapsed = !!(opts && opts.includeCollapsed);
     const found = [];
     cmdSweepControls().forEach(function(el){
       if (!el.id || el.id.indexOf(entry.prefix) !== 0) return;
-      // Graph-host-only: every tool shares the one "graph-" prefix, so a
-      // visibility check is what separates (say) route's width/height from
-      // grd's CFM/rotation — confirmed live: the inspector aside only shows
-      // whichever controls are relevant to the currently-armed tool. Not
-      // applied (or needed) on the annotate host, where each prefix is
-      // already unique to its own tool.
-      if (RW_IS_GRAPH && !(el.offsetParent || (el.getClientRects && el.getClientRects().length))) return;
+      const reason = cmdParamAllowed(el);
+      const isCollapsed = !!reason && reason.indexOf('collapsed:') === 0;
+      if (reason && !(includeCollapsed && isCollapsed)) return;
       const param = el.id.slice(entry.prefix.length);
       const type = cmdControlType(el);
       const item = { tool: tool, param: param, id: el.id, type: type };
+      if (isCollapsed) item.collapsedGroup = reason.slice('collapsed:'.length);
       if (type === 'select'){
         item.current = el.value;
         item.options = Array.from(el.options).map(function(o, i){ return { index: i + 1, value: o.value, text: o.text }; });
@@ -626,6 +799,38 @@
       found.push(item);
     });
     return found;
+  };
+
+  // Which of `tool`'s own params are currently hidden behind a shut
+  // disclosure — the sibling to the list above's default (collapsed-
+  // excluded) view. Lets a caller learn there's more without silently
+  // expanding anything itself; RW._cmdApplySetting is the thing that
+  // actually expands, and only when asked to write one of these.
+  RW._cmdToolCollapsedGroups = function(tool){
+    const withCollapsed = RW._cmdToolSettingsList(tool, { includeCollapsed: true });
+    const byLabel = {};
+    withCollapsed.forEach(function(item){
+      if (!item.collapsedGroup) return;
+      byLabel[item.collapsedGroup] = (byLabel[item.collapsedGroup] || 0) + 1;
+    });
+    return Object.keys(byLabel).map(function(label){ return { label: label, count: byLabel[label] }; });
+  };
+
+  // Read-only probe, same spirit as RW._toolSettingsDiagnose/_panDiagnose:
+  // for every "graph-"-prefixed control currently on the page, reports
+  // whether RW._cmdToolSettingsList would allow it and why not when it
+  // wouldn't. Console-only, never mutates the DOM. n/a (empty array) on the
+  // annotate host, where PARAM_SCOPE is null and this question doesn't apply.
+  RW._cmdParamScopeDiagnose = function(){
+    if (!PARAM_SCOPE){ console.log('[RW] param-scope diagnostic: n/a on this host'); return []; }
+    const rows = cmdSweepControls()
+      .filter(function(el){ return el.id && el.id.indexOf(GRAPH_SETTINGS_PREFIX) === 0; })
+      .map(function(el){
+        const reason = cmdParamAllowed(el);
+        return { id: el.id, allowed: !reason, rejectedBy: reason || null };
+      });
+    if (console.table) console.table(rows); else console.log(rows);
+    return rows;
   };
 
   // Which of our tracked tools (if any) is currently armed, by matching
@@ -681,6 +886,23 @@
   // it's now at; the "confirm it actually applied" hedge is dropped only for the one control this
   // was actually live-tested against (magic-wand-tolerance) — every other control still carries it,
   // matching this project's own convention of not overclaiming confirmation it doesn't have.
+  // Ids individually confirmed live to actually persist when written this
+  // way — the hedge below ("confirm it actually applied") is dropped only
+  // for these, everything else still carries it, matching this project's
+  // own convention of not overclaiming confirmation it doesn't have. Was a
+  // single inline comparison (number-type only) before round 15; pulled into
+  // a named set covering all three control types purely so a future round
+  // can extend it by adding an id, not by touching logic.
+  // - magic-wand-tolerance: confirmed pre-round-15 (a number/range control).
+  // - graph-profile-select: confirmed live this round — beyond the DOM
+  //   .value change, window.__graphDebug.route.profile itself flipped from
+  //   {shape:"rectangular",width_in,height_in} to {shape:"round",diameter_in}
+  //   and the inspector's own primary-dimension label re-rendered
+  //   ("Width (in)" -> "Diameter (in)"), independent confirmation the app
+  //   actually consumed the write, not just that a DOM property changed —
+  //   the first select-type control this hedge has ever been dropped for.
+  const CONFIRMED_WRITE_IDS = ['magic-wand-tolerance', 'graph-profile-select'];
+
   RW._cmdApplySetting = function(tool, param, value){
     const entry = RW._toolSettingsMap[tool];
     if (!entry){ RW._commitStatus && RW._commitStatus('unknown tool: ' + tool); return false; }
@@ -688,7 +910,26 @@
     const el = document.getElementById(id);
     if (!el){ RW._commitStatus && RW._commitStatus('"' + tool + '.' + param + '" control (#' + id + ') is not on the page right now'); return false; }
     const type = cmdControlType(el);
-    const confirmed = (id === 'magic-wand-tolerance');
+    const confirmed = CONFIRMED_WRITE_IDS.indexOf(id) !== -1;
+
+    // Graph host: a param can be real but currently hidden behind a shut
+    // disclosure (RW._cmdToolSettingsList's default view excludes it for
+    // exactly that reason). Writing to it explicitly is still allowed — the
+    // filter is a listing concern, not a write gate — but the group must be
+    // revealed first, or the write would land on a control the inspector
+    // itself isn't showing. Click-first (a real <summary> click natively
+    // toggles its parent <details>) with a direct-assign fallback, since the
+    // DOM stub's click() doesn't toggle .open.
+    let revealNote = '';
+    const grp = cmdCollapsedGroup(el);
+    if (grp){
+      let summaryEl = null;
+      const kids = grp.details.children || [];
+      for (const child of kids){ if (child.tagName === 'SUMMARY'){ summaryEl = child; break; } }
+      if (summaryEl && summaryEl.click) summaryEl.click();
+      if (!grp.details.open) grp.details.open = true;
+      revealNote = ' (was under collapsed "' + (grp.label || 'group') + '" — expanded it to set this)';
+    }
 
     if (type === 'checkbox'){
       const v = cmdParseBoolish(value);
@@ -697,7 +938,10 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       RW.runCommand(tool);
-      RW._commitStatus && RW._commitStatus(tool + '.' + param + ' set to ' + (v ? 'on' : 'off') + ' — re-armed ' + tool + ' (confirm it actually applied)');
+      RW._commitStatus && RW._commitStatus(
+        tool + '.' + param + ' set to ' + (v ? 'on' : 'off') + ' — re-armed ' + tool + revealNote
+        + (confirmed ? '' : ' (confirm it actually applied)')
+      );
       return true;
     }
 
@@ -709,7 +953,10 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       RW.runCommand(tool);
-      RW._commitStatus && RW._commitStatus(tool + '.' + param + ' set to "' + matched.text + '" — re-armed ' + tool + ' (confirm it actually applied)');
+      RW._commitStatus && RW._commitStatus(
+        tool + '.' + param + ' set to "' + matched.text + '" — re-armed ' + tool + revealNote
+        + (confirmed ? '' : ' (confirm it actually applied)')
+      );
       return true;
     }
 
@@ -722,7 +969,7 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
     RW.runCommand(tool);
     RW._commitStatus && RW._commitStatus(
-      tool + '.' + param + ' set to ' + v + ' — re-armed ' + tool
+      tool + '.' + param + ' set to ' + v + ' — re-armed ' + tool + revealNote
       + (confirmed ? '' : ' (confirm it actually applied)')
     );
     return true;
@@ -921,14 +1168,41 @@
       entry.run();
       return true;
     }
+    // Belt-and-braces, in code rather than only by omission from
+    // GRAPH_ACTIONS above: no table entry should ever carry one of these
+    // ids, but this makes AGENTS.md's "never auto-save/auto-submit" boundary
+    // self-enforcing against a future careless table edit, not just a
+    // review catch.
+    if (FORBIDDEN_BUTTON_IDS.indexOf(entry.btn) !== -1){
+      RW._commitStatus && RW._commitStatus('"' + entry.name + '" is deliberately not clickable from the command line — Save/Submit/recording are yours to click');
+      return false;
+    }
+    const hint = entry.conditional ? ' (' + entry.conditional + ')' : '';
     const btn = document.getElementById(entry.btn);
-    if (!btn){ RW._commitStatus && RW._commitStatus('"' + entry.name + '" — its button is not on the page right now'); return false; }
+    if (!btn){ RW._commitStatus && RW._commitStatus('"' + entry.name + '" — its button is not on the page right now' + hint); return false; }
     const wasArmed = entry.armed ? !!entry.armed() : false;
     if (wasArmed){
       if (entry.disarm) entry.disarm(); else btn.click();
       return true;
     }
+    // Report why a button was skipped rather than silently clicking (or not
+    // clicking) it — confirmed live, this page has two different disabled
+    // idioms: visible-but-disabled (graph-finish-route/graph-cancel-route
+    // while a route is idle) and hidden-but-not-disabled (graph-assign-
+    // network/graph-toggle-damper with nothing selected).
+    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true'){
+      RW._commitStatus && RW._commitStatus('"' + entry.name + '" is on the page but not available right now' + hint);
+      return false;
+    }
+    if (!cmdIsVisible(btn)){
+      RW._commitStatus && RW._commitStatus('"' + entry.name + '" — its button is not on the page right now' + hint);
+      return false;
+    }
     btn.click();
+    RW._commitStatus && RW._commitStatus(
+      'clicked "' + entry.name + '"'
+      + (entry.modal && document.getElementById(entry.modal) ? ' — opened the ' + entry.name + ' dialog; finish it in the app' : '')
+    );
     return true;
   };
 
@@ -1185,7 +1459,7 @@
 
   // Text color only (never the row background, which the keyboard-highlight
   // already uses) so kind stays legible regardless of which row is selected.
-  const KIND_COLOR = { native: '#a8e6a3' };
+  const KIND_COLOR = { native: '#a8e6a3', action: '#8ecae6' };
   const TAG_COLOR = '#e0c3fc';
   const SETTINGS_COLOR = '#ffd166';
 
@@ -1280,6 +1554,18 @@
         .filter(function(item){ return !q || item.param.toLowerCase().indexOf(q) === 0; });
       menuHighlight = menuItems.length ? 0 : -1;
       renderMenuRows();
+      // Graph host only (RW._cmdToolCollapsedGroups is a no-op elsewhere):
+      // surface that more params exist behind a shut disclosure, without
+      // ever listing or expanding them unasked — typing the param directly
+      // (RW._cmdApplySetting) is what expands it.
+      if (RW._cmdToolCollapsedGroups){
+        const collapsed = RW._cmdToolCollapsedGroups(dotEntry.name);
+        if (collapsed.length && RW._commitStatus){
+          RW._commitStatus(collapsed.map(function(g){
+            return '+' + g.count + ' more under collapsed "' + g.label + '" — expand it in the app, or type e.g. "' + dotEntry.name + '.<param>=<value>" to auto-expand';
+          }).join('; '));
+        }
+      }
       return;
     }
     if (v.charAt(0) === '#'){
@@ -1879,6 +2165,13 @@
   document.addEventListener('keydown', function(e){
     if (e.__rwSynthetic) return; // our own dispatch to the app (RW._cmdDispatchAppKey) — never eat it
     if (!RW.enabled) return; // respect the master RW: ON/OFF killswitch, same as every other tool
+    // Graph host only, and only because this round's own action vocabulary
+    // (calibrate/setscale) is what opens these <dialog> modals — with one
+    // open, typing must reach the app's own modal, not get captured into the
+    // command bar. A plain bail-out, not a consume (no preventDefault/
+    // stopImmediatePropagation, unlike capture's normal "always wins" below),
+    // so the app's own modal keyboard handling runs completely untouched.
+    if (cmdOpenDialogs().length) return;
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
     if (e.ctrlKey||e.metaKey||e.altKey) return;
