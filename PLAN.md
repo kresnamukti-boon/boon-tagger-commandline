@@ -1,63 +1,240 @@
-# Draggable command-line panel
+# Round 19: make each config-dialog fitting's own settings selectable/changeable from the command line
 
-## Summary
+## Context
 
-Make the `#rw-panel` command-line overlay movable by dragging its header strip with the left mouse button. Once dragged, the panel stays where the user put it (clamped fully on-screen) and window resizes no longer re-center it. Position is per-page only — each fresh paste of the loader re-pins to bottom-center. A console escape hatch (`__RW._cmdResetBar()`) re-pins on demand.
+Kresna added a real duct segment to a live test session and pointed out that clicking it (in
+Select mode, choosing "Tap in (branch)") opens a **"Branch fitting" popup** — a real `<dialog>`
+with its own fields (Fitting type, Branch shape, flush-boot glyph, Starting width, Alignment,
+Width/Height, Damper) — and none of it is reachable from the command line today: round 15
+deliberately excluded anything inside a `<dialog>` from the settings sweep, so typing `branch.`
+lists nothing useful.
 
-## Behavior changes
+Live investigation (via the opencli browser bridge) found this is one of a family of four
+identically-structured modals, one per tool, that all follow the same DOM convention already
+established for the ordinary inspector (`<label><span>Live label</span><input-or-select></label>`,
+so last round's live-label matching applies unchanged): **branch fitting**
+(`graph-branch-fitting-modal`), **change-size / transition** (`graph-checkpoint-transition-modal`),
+**GRD placement** (`graph-checkpoint-grd-modal`), and **riser elevation**
+(`graph-checkpoint-riser-modal`). Kresna confirmed (via `AskUserQuestion`) all four should get the
+same treatment, that each modal's own Choose/Cancel-equivalent buttons should become typeable
+commands too (not just its fields), and that separately, the inspector's existing "New system"
+fields (name + service, currently excluded by the same round-15 rule alongside "System / network",
+which already works) should also become selectable/typeable — but its "Add" button stays a manual
+click.
 
-- **Drag handle = the panel header strip** (the row containing the collapse caret, "Command Line" title, and RW: ON/OFF button). Dragging works from the title or empty header space; presses starting on the caret (`#rw-collapse`) or the RW button (`#rw-enable`) are left entirely to their own click handlers.
-- **Click vs. drag threshold (3px, tunable).** A sub-threshold press does nothing new — the existing click-to-collapse behavior on the header is unchanged. A real drag past the threshold moves the panel and then **swallows the one `click` that fires on release**, so dragging doesn't accidentally collapse/expand the panel.
-- **Left button only.** Middle/right presses on the header are untouched (middle-drag pan already ignores `#rw-panel` via `panInOurUi`).
-- **Anchoring conversion.** The panel is currently bottom-anchored (`left`/`bottom`/`width` from `RW._cmdRepositionOverlay`). On the first real drag it converts to top-anchored (`style.top` set from the live rect, `style.bottom` cleared) and moves via `left`/`top` deltas.
-- **Clamping.** Position is clamped to the viewport so the whole panel is always fully visible (confirmed choice).
-- **No re-centering after a move.** Once `RW._cmdBarUserMoved` is set, `RW._cmdRepositionOverlay` (load/resize/console-accessor callers) only applies `RW._cmdBarWidth` and clamps the current position back into the viewport — it never re-centers. `__RW._cmdResetBar()` clears the flag and re-pins bottom-center.
-- **No persistence** across pages/reloads (confirmed choice — no localStorage into the host app's origin).
+Two live checks resolved the design's real risk before writing any code: the dialogs are
+**not** `showModal()`-modal (`dialog.matches(':modal')` is `false`), and `#rw-cmd-input` can be
+focused and typed into while one is open — the only thing currently blocking that is this
+project's own global auto-capture bail-out (`cmdOpenDialogs().length` check), not the app. So the
+full typed UX (fields *and* the new commands) is reachable once that bail-out is narrowed.
 
-## Implementation (all in `rw_cmdline.js`, near the overlay-positioning section)
+## Live-confirmed facts (all via opencli this session)
 
-- New tunables/state: `RW._cmdBarDrag = true` (subordinate disable flag), `RW._cmdBarThreshold = 3`, `RW._cmdBarUserMoved = false`, module-private `barDragState = { active, dragging, startX, startY, rect, header, suppressClick }`.
-- New functions following the pan feature's established pointer-event idiom (document-level capture `pointermove`/`pointerup`/`pointercancel` listeners added per drag and really removed on teardown; `setPointerCapture` on the header; teardown on `lostpointercapture`, `window` `blur`, and `e.buttons` clearing the left bit): `barOnPointerDown`, `barOnPointerMove`, `barOnPointerUp`, `barOnClick` (capture-phase, on the panel), `barAddListeners`/`barRemoveListeners`, `RW._cmdClampBar`, `RW._cmdResetBar`.
-- `barOnPointerDown`: gated on `RW._cmdBarDrag`; requires `e.button === 0`; walks up from `e.target` — aborts if it hits `#rw-collapse` or `#rw-enable`; the drag target is the panel's header identified structurally (the panel's `firstChild`, no `id` — post-retrofit layout; pre-retrofit children all have ids and are excluded). Lazily sets `cursor:move` + `touch-action:none` on the header (drag affordance).
-- `barOnPointerMove`: applies deltas only past the Manhattan threshold; first crossing converts anchoring (top from rect, clear bottom) and sets header cursor to `grabbing`; writes clamped `style.left`/`style.top` each move.
-- `barOnPointerUp`/teardown: if a real drag happened, set `RW._cmdBarUserMoved = true`, set `suppressClick`, restore the header cursor; schedule a `setTimeout(0)` that clears `suppressClick` in case no click follows.
-- `barOnClick` (capture on `#rw-panel`): if `suppressClick`, `stopPropagation()` + `preventDefault()` once and clear the flag — in a real browser the capture phase runs before the header's `onclick`, so the post-drag release can't toggle collapse; sub-threshold presses never set the flag.
-- `RW._cmdRepositionOverlay` gains: (1) `panel.style.top = 'auto'` whenever it re-pins (prevents double-anchoring a previously dragged panel); (2) an early `RW._cmdBarUserMoved` branch that applies `RW._cmdBarWidth` then clamps instead of re-centering.
-- `RW._overlayDiagnose` panel style report gains `top`.
-- Attach: one delegated `pointerdown` (capture) + one `click` (capture) listener on `#rw-panel`, registered at module load right after the resize-listener registration (guarded — `#rw-panel` always exists in real usage, created by `rw_core.js`; no-op otherwise).
-- Explicitly **not** gated on `RW.enabled`: dragging the panel is the panel's own chrome, same category as the collapse toggle which already works while RW is off. Only `RW._cmdBarDrag` gates it.
-- No `annotationState` reads/writes, no synthetic key dispatches, no menu-positioning changes (the dropdown is repositioned from the input's rect on every render, so it follows the panel automatically).
+- `__graphDebug.activeTool` equals the owning tool's own `GRAPH_TABLE` name while its modal is
+  open: confirmed for `branch`, `transition`, and `grd`. Not directly confirmed for `vertical`
+  (riser) — assumed by the now-3-for-3 pattern, to be spot-checked during live verification.
+- The exact end-user action that opens the transition/GRD/riser modals wasn't found live (plain
+  clicks with those tools armed applied changes directly, no modal) — irrelevant to the
+  implementation, which only reacts to "is this recognized dialog open," never to how it got that
+  way.
+- `graph-new-system-name` carries an explicit `type="text"` attribute (so a real
+  `input[type="text"]` selector matches it) and it, together with `graph-new-system-service`, are
+  the **only** two elements under the `graph-new-` id prefix — removing that exclusion admits
+  nothing else. `graph-branch-fitting-primary-label`/`-secondary-label` are `<SPAN>`s, not inputs —
+  no risk of becoming bogus params.
+- Widening the control sweep to include `input[type="text"]` (needed for the New-system name field)
+  also incidentally makes `graph-tag-input` ("Equipment tag") reachable — a genuine existing
+  property that was simply never sweepable before; harmless bonus, worth a one-line mention in
+  README.
+- No modal contains a text input, so the widening only touches the main inspector.
 
-## Test cases (`verify_cmdline.js`, new blocks)
+## Implementation — all in `rw_cmdline.js`
 
-Harness additions needed: drag-test fixtures (`#rw-panel` with `_rect` + pinned `style.left`/`bottom` like `_cmdRepositionOverlay` would set; header with `#rw-collapse` and `#rw-enable` children; body child for the non-header-area case), attached to `doc.body`. Existing default harness (no `#rw-panel`, no canvas) keeps every current test passing — the drag attach and reposition both no-op.
+### 1. `GRAPH_TOOL_MODALS` — the tool → modal registry (new, placed after `PARAM_SCOPE`)
 
-1. Press+move past threshold sets `style.left`/`style.top` from deltas and clears `style.bottom` (bottom→top anchoring conversion).
-2. Clamping at all four viewport edges (drag far left/up clamps ≥ 0; far right/down clamps ≤ `innerWidth/Height − rect`).
-3. Sub-threshold press+release: no style mutation, the click is **not** consumed (collapse toggle unaffected).
-4. Presses starting on `#rw-collapse` or `#rw-enable`, and presses on the panel body/input area, never start a drag even with movement.
-5. `button: 1` (middle) press on the header never starts a drag.
-6. First real drag sets `RW._cmdBarUserMoved`; a subsequent `RW._cmdRepositionOverlay()` call (resize) keeps the user's position (clamped), never re-centers; `_cmdBarWidth` still applies in that branch.
-7. `RW._cmdResetBar()` clears the flag and re-pins (re-centers over canvas).
-8. Post-drag release click is consumed exactly once (`_propStopped`/`defaultPrevented` asserted on the event `_fire` returns); the next click is not consumed; with no click following, the fake-timer `setTimeout(0)` clears `suppressClick` (a later click survives).
-9. Teardown paths — `pointerup`, `pointercancel`, `lostpointercapture`, window `blur`, and a move with the left `buttons` bit cleared each end the drag, and a second drag is not double-driven (listener removal is real, matching the pan tests).
-10. `RW._cmdBarDrag = false` disables the whole feature.
-11. Regression: `RW._cmdRepositionOverlay` clears `style.top` when re-pinning (no double-anchor stretch), asserted on a previously top-anchored panel.
+```js
+const GRAPH_TOOL_MODALS = {
+  branch:     { dialogId: 'graph-branch-fitting-modal',        prefix: 'graph-branch-fitting-',        title: 'branch fitting' },
+  transition: { dialogId: 'graph-checkpoint-transition-modal', prefix: 'graph-checkpoint-transition-', title: 'change size' },
+  grd:        { dialogId: 'graph-checkpoint-grd-modal',        prefix: 'graph-checkpoint-grd-',        title: 'place GRD' },
+  vertical:   { dialogId: 'graph-checkpoint-riser-modal',      prefix: 'graph-checkpoint-riser-',      title: 'riser elevation' }
+};
+```
 
-**Verification commands:** `node --check rw_cmdline.js`; `node verify_cmdline.js` (existing 406 assertions must still pass, plus the new blocks); `bash build_loader.sh` (rebuilds `console_loader.js`, runs `node --check` on it). Spot-check at least one guard per the repo's convention (e.g. remove the `RW._cmdBarUserMoved` early-branch and confirm the resize-keeps-position test fails, then restore).
+`cmdOpenToolModal(tool)` returns `{tool, dialog, prefix, id, title}` only when that tool has an
+entry AND its dialog is genuinely open (reuses `cmdOpenDialogs`'s own open-check, don't duplicate
+it), else `null` — so "no recognized modal open" behaves byte-identically to today for every other
+tool and for these four when their modal is closed. `RW._cmdToolModal = cmdOpenToolModal` for
+console debugging, matching the project's existing `_cmd*` probe convention.
 
-## Docs
+### 2. `cmdParamAllowed(el, modal)` — thread an optional modal through, don't fork a parallel path
 
-- **README.md**: update the overlay section (draggable header, click-vs-drag threshold, clamp, stays-put-on-resize, `__RW._cmdResetBar()`, per-page reset) and the utility-key list if it enumerates panel interactions.
-- **CLAUDE.md**: add a new round entry describing the feature, the tests added, the two confirmed choices (no persistence, clamp fully on-screen), and the not-live-verified caveats.
+Add a second parameter. When a modal is passed, replace the "exclude inside DIALOG" +
+"must be inside the inspector aside" checks with a single `cmdIsWithin(el, modal.dialog)` check;
+every other rule (id excludes, collapsed-`<details>`, visibility) stays applied unchanged inside
+the modal too — which is what makes branch's already-observed conditional fields
+(`round-flush-boot`/`rect-flush-boot`, visible only for certain type+shape combos; `secondary-input`,
+hidden for round) work correctly with **zero** new logic, exactly like the existing "Advanced"
+collapsed group already does. `modal` can only ever come from `cmdOpenToolModal` against one of the
+four hardcoded ids above, so `graph-calibrate-modal`/`graph-known-scale-modal` (and any future
+dialog) keep failing on the ordinary `inside-dialog` path, unaffected — existing test 192 must keep
+passing unmodified.
 
-## Assumptions / defaults (recorded)
+### 3. `RW._cmdToolSettingsList(tool, opts)` — resolve the prefix per call
 
-- Header-strip-only drag handle; left button only; threshold 3px; `RW._cmdBarDrag = true`.
-- Not gated on `RW.enabled` (panel chrome, like the collapse toggle) — only the subordinate flag.
-- No persistence across pages (confirmed); clamp fully on-screen (confirmed).
-- Click suppression depends on real capture-phase ordering; the synthetic harness can only assert the consumption contract, not the ordering itself.
+```js
+const modal = cmdOpenToolModal(tool);
+const prefix = modal ? modal.prefix : entry.prefix;
+...
+if (!el.id || el.id.indexOf(prefix) !== 0) return;
+const reason = cmdParamAllowed(el, modal);
+...
+const param = el.id.slice(prefix.length);
+```
+Stamp `item.modal = modal.id` when present, so tests/diagnostics can tell modal params apart
+without re-deriving it.
 
-## Not live-verified (to note in CLAUDE.md)
+### 4. `RW._cmdApplySetting(tool, param, value)` — same prefix resolution; skip the re-arm while a modal is open
 
-- Real-page feel of the threshold and cursor affordances; whether touch dragging behaves (defensive `touch-action:none` included); that a drag ending on the header really doesn't collapse the panel (capture-phase suppression assumed correct, needs one live drag to confirm).
+**Load-bearing**: without resolving the same modal-aware prefix here, `entry.prefix + param` would
+reconstruct the wrong id (`graph-` + `type` = `graph-type`, which doesn't exist) the moment a param
+came from a modal listing. Resolve `modal`/`prefix` identically to Step 3 at the top of the
+function.
+
+Each of the three write branches (checkbox/select/numeric) currently ends by calling
+`RW.runCommand(tool)` to re-arm. **While a modal is open, skip that call** — dispatching the tool's
+own key into an open dialog is untested and could as easily cancel/close it as do nothing; instead
+just stamp `RW._cmdLastUserCmdAt = Date.now()` (preserving the auto-select grace window the re-arm
+used to provide) and report `'... — ' + modal.title + ' dialog still open'` instead of
+`'... — re-armed ' + tool`. None of these new ids go on `CONFIRMED_WRITE_IDS` yet, so every modal
+write keeps the existing `(confirm it actually applied)` hedge until individually live-verified —
+matching the project's own established convention.
+
+Add a `'text'` branch (new — see Step 6) alongside the existing checkbox/select/numeric ones:
+plain `.value =` + `input`/`change` dispatch, same skip-re-arm-while-modal-open rule, no
+parse/clamp (unlike numeric).
+
+### 5. `RW._cmdParamScopeDiagnose()` — resolve the modal per control, don't blanket-report `inside-dialog`
+
+Today every modal control would report `inside-dialog`, which is actively misleading once this
+round ships. Compute the (at most one) open modal each swept control actually belongs to and pass
+it into `cmdParamAllowed` the same way, stamping the reported row's `modal` field with the owning
+tool name or `null`.
+
+### 6. "New system" fields + text-input support (the widest-blast-radius piece — do this last)
+
+- `GRAPH_PARAM_SCOPE.excludeIdPrefixes`: `['graph-new-']` → `[]`. Rewrite its comment to record
+  *why*: round 15 excluded this prefix wholesale; round 19 deliberately admits
+  `graph-new-system-name`/`-service` per explicit instruction, while `graph-create-system` ("Add")
+  stays out because it's a `<button>` — `cmdSweepControls()` never sweeps buttons, so it needs no
+  exclusion rule of its own and gets no table entry.
+- `cmdSweepControls()`: add `'input[type="text"]'` to the selector list (also mirror in
+  `RW._toolSettingsDiagnose`'s own copy of the same list, so the two never silently diverge).
+- `cmdControlType(el)`: `if (el.type === 'text') return 'text';` before the existing `'number'`
+  fallback — don't touch the fallback itself.
+- `renderMenuRows`: add a `'text'` branch, e.g. `paramDisplay + ' (text, now "' + item.current +
+  '")'`.
+- The free-typed-value status message (numeric/checkbox path) needs a `'text'` case that doesn't
+  print a `min–max` range.
+
+### 7. The 8 new modal-action commands — appended to `GRAPH_ACTIONS`, no new dispatch mechanism
+
+Plain `{name, kind:ACTION, aliases:[], btn, conditional}` entries — `RW.runCommand`'s existing
+button path already handles a missing/disabled/hidden button and forbidden ids, so nothing new is
+needed there:
+
+| command | button id | only while... |
+|---|---|---|
+| `choose` | `graph-branch-fitting-submit` | branch-fitting dialog open |
+| `cancelbranch` | `graph-branch-fitting-cancel` | branch-fitting dialog open |
+| `apply` | `graph-checkpoint-transition-submit` | change-size dialog open |
+| `cancelsize` | `graph-checkpoint-transition-cancel` | change-size dialog open |
+| `place` | `graph-checkpoint-grd-submit` | GRD placement dialog open |
+| `cancelgrd` | `graph-checkpoint-grd-cancel` | GRD placement dialog open |
+| `placeriser` | `graph-checkpoint-riser-submit` | riser-elevation dialog open |
+| `cancelriser` | `graph-checkpoint-riser-cancel` | riser-elevation dialog open |
+
+The `×` close buttons are deliberately **not** exposed — Cancel is a sufficient dismiss verb per
+dialog. Cross-checked against every existing name/alias in the table (11 tools + 17 actions, all
+their aliases) — no collisions; none of the 8 button ids is in `FORBIDDEN_BUTTON_IDS`.
+
+### 8. Isolation (`GRAPH_ISOLATION_ALLOWED`) — one flat list, matching the `finish`/`cancel` precedent
+
+Append all 8 new names to the existing flat allowlist (`select, finish, cancel` today). Keep it one
+flat list rather than scoping per-tool: `finish`/`cancel` are already globally allowed despite
+being route-specific, and the same reasoning applies here — typing `place` while `route` is
+isolated is harmless, since the GRD dialog isn't open and `runCommand` already reports "button is
+not on the page right now." No change needed to `RW.runCommand`'s `entry.name !== iso` exemption —
+it stays load-bearing for every non-modal write; the modal writes bypass `RW.runCommand(tool)`
+entirely per Step 4.
+
+**Robustness for grd/vertical** (only these two have an unconfirmed `activeTool` mapping): in
+`onInput()`'s plain-command branch, change `RW._cmdActiveSettingsTool()` to
+`RW._cmdActiveSettingsTool() || cmdOpenModalTool()` (a new small helper: which tracked tool, if
+any, currently has ITS OWN modal open) so the bare-param blend still works even if `activeTool`
+turns out not to read `'grd'`/`'vertical'` while their modals are open. Do **not** feed this into
+`RW._cmdIsolatedTool()` — isolation must keep failing open off the single existing signal.
+
+### 9. Auto-capture bail-out — narrow it to exclude the four recognized modals
+
+Live-confirmed necessary and safe: the dialogs are non-modal, so only this project's own
+`cmdOpenDialogs().length` bail-out (not the app) currently blocks typing while one is open.
+Narrow the check so it still bails for any *other* open dialog (calibrate, known-scale — unaffected)
+but not for one of the four recognized ids:
+
+```js
+const GRAPH_MODAL_DIALOG_IDS = Object.keys(GRAPH_TOOL_MODALS).map(function(k){ return GRAPH_TOOL_MODALS[k].dialogId; });
+...
+if (cmdOpenDialogs().some(function(d){ return GRAPH_MODAL_DIALOG_IDS.indexOf(d.id) === -1; })) return;
+```
+
+## Test plan (`verify_cmdline.js`)
+
+New fixture next to `makeGraphInspector`/`makeGraphField`: `makeGraphModal(win, byId, id, open)` —
+a `<dialog>` appended to `doc.body` with `.open` set, reusing `makeGraphField` for its fields (same
+`<label><span>` shape `cmdControlLiveLabel` already expects). No other harness change needed —
+`queryAllRecursive`/`matchesSelector` already handle `dialog` and `input[type="text"]`.
+
+Cover: a tool's modal-open settings list surfaces only that modal's own fields, stamped with
+`item.modal`; falls back to the ordinary (today: empty) behavior when the modal is closed; a
+*different* tool's query never sees another tool's open-modal fields (still rejected via
+`inside-dialog` on the non-modal path); calibrate/known-scale stay excluded exactly as before
+(existing test 192 unmodified, plus a new loop across all 11 tools); the branch modal's
+conditionally-visible fields (`rect-flush-boot`) appear/disappear purely from `offsetParent`, no
+new logic; `RW._cmdApplySetting` on a modal param writes the real control and does **not** call
+`RW._cmdDispatchAppKey` while re-arming is skipped, but does stamp `_cmdLastUserCmdAt`; the same
+call with the modal closed fails cleanly ("not on the page"); all 8 new commands click their real
+button when present and report the conditional hint when absent; the isolation allowlist admits
+all 8 while their own tool is isolated, and one of them (e.g. `place`) is *not* refused while a
+*different* tool (`route`) is isolated — it just reports its button missing (this is the assertion
+that pins the flat-list design decision); New system's two fields now appear in `route.`/bare-param
+listings (**this reverses existing test 193**, which currently asserts the opposite — rewrite it
+in place, comment naming round 19 as the reversal); a text-type write sets the exact string with no
+numeric parsing and renders as `(text, now "…")`; `graph-create-system` never gets a table entry
+and is never reachable by any command name. If the auto-capture narrowing ships (Step 9), extend/
+verify existing test 204 still holds for calibrate while a recognized modal no longer bails.
+
+## Build & verify
+
+```bash
+node --check rw_cmdline.js
+node verify_cmdline.js
+bash build_loader.sh
+```
+
+Then live-verify via the opencli browser bridge on the same test session used for design research:
+reopen the branch-fitting modal, confirm `branch.`/bare params list its real fields with live
+labels, apply one write and confirm it lands without re-arming, run `choose`/`cancelbranch`; repeat
+for whichever of transition/GRD/riser can be triggered, specifically re-confirming `activeTool`
+for `vertical` (the one unconfirmed mapping); confirm New system's two fields are now listed and
+writable via `route.`/bare param while `graph-create-system` still isn't a command; confirm typing
+still works while a recognized modal is open and still bails for calibrate/known-scale.
+
+## Known open items (not blocking, to resolve during/after implementation)
+
+- The exact user action that opens the transition/GRD/riser modals wasn't found live — irrelevant
+  to the mechanism itself, but worth confirming so the live-verification step above can actually
+  reach them.
+- `vertical`'s `activeTool` mapping while its own modal is open is assumed, not confirmed.
+- None of the new write ids are on `CONFIRMED_WRITE_IDS` yet — every modal write keeps the
+  "confirm it actually applied" hedge until individually live-tested.

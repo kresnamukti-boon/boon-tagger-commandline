@@ -2298,6 +2298,239 @@ displaying "Diameter (in) (4, now 4)", and `height` correctly stopped matching a
 is genuinely gone in round profile, not merely relabeled). Profile was switched back to
 rectangular afterward, restoring the test project to the state it was in before this session.
 
+## Round 19: the four per-tool config-dialog modals (branch fitting, change size, GRD placement, riser elevation), their own commands, and "New system" fields
+
+Kresna added a real duct segment to the `TestNew` test session and found that clicking it (Select
+mode, "Tap in (branch)") opens a **"Branch fitting" popup** — a real `<dialog>` with its own fields
+(Fitting type, Branch shape, flush-boot glyph, Starting width, Alignment, Width/Height, Damper) —
+and none of it was reachable from the command line: round 15 deliberately excluded anything inside
+a `<dialog>` from the settings sweep, so typing `branch.` listed nothing. Live investigation (via
+the opencli browser bridge) found this is one of a family of **four identically-structured modals**,
+one per tool, all following the same `<label><span>Live label</span><control></label>` convention
+the ordinary inspector already uses — so round 18's live-label matching applies unchanged: **branch
+fitting** (`graph-branch-fitting-modal`), **change-size/transition**
+(`graph-checkpoint-transition-modal`), **GRD placement** (`graph-checkpoint-grd-modal`), and **riser
+elevation** (`graph-checkpoint-riser-modal`). Kresna confirmed via `AskUserQuestion` that all four
+should get the same treatment, that each modal's own Choose/Cancel-equivalent buttons should become
+typeable commands too, and that the inspector's existing "New system" fields (name + service,
+excluded by the same round-15 rule) should also become selectable/typeable — while its "Add" button
+stays a manual click.
+
+Two live checks resolved the design's real risk before writing any code: the dialogs are **not**
+`showModal()`-modal (`dialog.matches(':modal')` is `false`), and `#rw-cmd-input` can be focused and
+typed into while one is open — the only thing blocking that was this project's own global
+auto-capture bail-out (`cmdOpenDialogs().length`), not the app.
+
+**Mechanism**, all in `rw_cmdline.js`:
+
+- `GRAPH_TOOL_MODALS` — the new tool -> modal registry (dialog id, id prefix, human title).
+  `cmdOpenToolModal(tool)` returns `{tool, dialog, prefix, id, title}` only when that tool has an
+  entry **and** its dialog is genuinely open (reuses `cmdOpenDialogs()`'s own open-check rather than
+  duplicating it), else `null` — so "no recognized modal open" behaves byte-identically to every
+  prior round for every other tool, and for these four while closed. `cmdOpenModalTool()` is the
+  companion that returns which tracked tool (if any) currently has its own modal open, used as a
+  fallback so bare-param blending still works even where `RW._cmdActiveSettingsTool()`'s
+  `readTool()` doesn't report the modal's own owning tool.
+- `cmdParamAllowed(el, modal)` — threaded a second, optional parameter through rather than forking a
+  parallel path. When a modal is passed, the `excludeInsideTags` DIALOG check and the ordinary
+  inspector-scoping check are both replaced by one `cmdIsWithin(el, modal.dialog)` check; every
+  other rule (`excludeIds`, `excludeIdPrefixes`, `cmdCollapsedGroup`, `cmdIsVisible`) still applies
+  unchanged inside the modal too — which is what makes branch's own conditionally-visible fields
+  (flush-boot glyphs shown only for certain type+shape combos; the secondary dimension hidden for
+  round) work correctly with **zero** new logic, live-confirmed via `graph-branch-fitting-rect-
+  flush-boot` toggling purely off `offsetParent`. `modal` can only ever come from `cmdOpenToolModal`
+  against one of the four hardcoded ids, so `graph-calibrate-modal`/`graph-known-scale-modal` keep
+  failing on the ordinary inside-DIALOG path, unaffected.
+- `RW._cmdToolSettingsList`/`RW._cmdApplySetting` both resolve `modal`/`prefix` fresh per call
+  (`cmdOpenToolModal(tool)`, falling back to `entry.prefix`) — load-bearing for the apply path
+  specifically, since reconstructing the id from `entry.prefix + param` alone would produce the
+  wrong id (`graph-` + `type` = `graph-type`, which doesn't exist) the instant a param came from a
+  modal's own listing. Listed items are stamped `item.modal = modal.id` when present.
+  `RW._cmdParamScopeDiagnose` was updated the same way (a new `cmdModalForElement` helper resolves
+  the owning modal per swept control) so it stamps `modal: <tool>` per row instead of blanket-
+  reporting `inside-dialog`, which would otherwise be actively misleading for these four now.
+- **Re-arm is skipped while a modal is open.** Each of `RW._cmdApplySetting`'s write branches used
+  to end by calling `RW.runCommand(tool)` to re-arm; dispatching the tool's own key into an open
+  `<dialog>` is untested and could as easily cancel/close it as do nothing, so a new
+  `cmdArmOrNoteModal(tool, modal)` helper skips that call while a modal is open, stamping
+  `RW._cmdLastUserCmdAt` directly instead (preserving the auto-select grace window a real re-arm
+  used to provide) and reporting `'... — ' + modal.title + ' dialog still open'` in place of
+  `'... — re-armed ' + tool`. Live-confirmed: writing `branch.primary-input` left the dialog open and
+  `activeTool` unchanged, with the status naming the dialog, not "re-armed."
+- **8 new modal-action commands**, appended to `GRAPH_ACTIONS` with no new dispatch mechanism
+  (`RW.runCommand`'s existing button path already handles missing/disabled/hidden buttons): `choose`/
+  `cancelbranch` (branch fitting), `apply`/`cancelsize` (change size), `place`/`cancelgrd` (GRD
+  placement), `placeriser`/`cancelriser` (riser elevation). The `×` close buttons are deliberately
+  not exposed — Cancel is a sufficient dismiss verb per dialog. All 8 are appended flat to
+  `GRAPH_ISOLATION_ALLOWED` too, matching the existing `finish`/`cancel` precedent rather than
+  scoping per-tool: typing `place` while `route` is isolated is harmless, since the GRD dialog isn't
+  open and `RW.runCommand` just reports its button missing.
+- **"New system" fields + text-input support.** `GRAPH_PARAM_SCOPE.excludeIdPrefixes` (`['graph-
+  new-']`, round 15's wholesale exclusion) is now `[]` — `graph-new-system-name`/`-service` are
+  deliberately re-admitted, while `graph-create-system` ("Add") stays out because it's a `<button>`,
+  never swept by `cmdSweepControls` at all. `cmdSweepControls()` gained `'input[type="text"]'`
+  (mirrored in `RW._toolSettingsDiagnose`'s own copy of the same list), `cmdControlType(el)` gained a
+  `'text'` branch, and `RW._cmdApplySetting`/`renderMenuRows`/the free-typed-value status message all
+  gained a matching `'text'` case (plain `.value =` write, no parse/clamp, no min–max range printed).
+  Side effect, confirmed harmless and noted here: this also makes `graph-tag-input` ("Equipment
+  tag") reachable, a genuine existing property never sweepable before.
+- **Auto-capture bail-out narrowed** (round 15's `cmdOpenDialogs().length` blanket check) to bail
+  only for a dialog **not** one of the four `GRAPH_MODAL_DIALOG_IDS` — calibrate/known-scale still
+  bail exactly as before. **Plus a fix for a gap this round's own design surfaced**: the existing
+  focus guard skips `INPUT`/`TEXTAREA`/contenteditable but not `SELECT`, so a recognized modal's own
+  `<select>` (Fitting type, Branch shape, Alignment, Damper) having focus would otherwise have its
+  keystrokes eaten into the command bar instead of reaching it — confirmed via `AskUserQuestion` and
+  fixed with one added condition (`t.tagName==='SELECT' && cmdOpenModalTool()`), scoped narrowly so
+  the inspector's own ordinary selects are unaffected.
+- **Field ordering fix (Kresna's own feedback after first trying the branch-fitting listing live):**
+  `cmdSweepControls()` used to run five separate `querySelectorAll` passes, one per input type
+  (`range`, `number`, `checkbox`, `text`, `select`), and concatenate the results — so every listing
+  read out grouped by control type (all ranges/numbers first, then the checkbox, then any text
+  input, then every select), not in the order the fields actually appear on screen. This was invisible
+  until a real modal mixed types: branch fitting's own visual order is select, select, number,
+  select, number, number, checkbox (Fitting type, Branch shape, Starting width, Alignment, Width,
+  Height, Damper), which the old grouped sweep reordered to Starting width, Width, Height, Damper,
+  Fitting type, Branch shape, Alignment. Fixed by combining the five selectors into one comma-
+  separated `querySelectorAll` call, which returns every match in a single real document-order pass
+  — the same fix applies to every tool's listing, not just branch's, since it's a property of
+  `cmdSweepControls` itself. `RW._toolSettingsDiagnose`'s own copy of the selector list was
+  deliberately left as five separate calls — that function groups by type on purpose, for comparing
+  same-kind controls by eye in a console table dump, and isn't the thing that feeds any listing a
+  user actually types against. The synthetic test harness's own `matchesSelector` stub didn't support
+  comma-separated selector lists (real browsers do) — extended it to split on top-level commas and
+  match if any branch matches, mirroring `Element.matches()`'s own selector-list semantics, otherwise
+  every `cmdSweepControls()` caller would've silently swept nothing at all in tests.
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **706 passed, 0 failed** (624
+after the reversal below + 82 new, via a new `makeGraphModal(win, byId, id, open)` fixture reusing
+`makeGraphField`): a modal-open listing surfaces only that modal's own fields stamped with
+`item.modal`; falls back to empty once closed; a different tool's query never sees another tool's
+open-modal fields; calibrate/known-scale stay excluded from every graph tool's listing (test 192
+unmodified, plus a new loop across all 10 real tools); branch's conditional field toggles purely off
+`offsetParent`; `RW._cmdApplySetting` on a modal param writes the real control without calling
+`RW._cmdDispatchAppKey`, still stamps `_cmdLastUserCmdAt`, and names the dialog instead of "re-
+armed"; the same call fails cleanly with the modal closed; all 8 new commands click their real
+button when present and report the conditional hint when absent; the isolation allowlist admits all
+8 while their own tool is isolated, and `place` is *not* refused while a *different* tool (`route`)
+is isolated (pins the flat-list decision); a text-type write sets the exact string with no numeric
+parsing and renders as `(text, now "…")`; `graph-create-system` never gets a table entry; and the
+auto-capture/SELECT-focus tests above; plus one new test built on a realistic interleaved-type
+branch fixture (select, select, number, select, number, number, checkbox) asserting the listed
+labels come back in that exact DOM order, pinning the field-ordering fix. **Test 193 is reversed in
+place** (it used to assert `graph-new-system-service` was excluded; round 19 asserts the opposite,
+per Kresna's own instruction) with a comment naming round 19 as the reversal. Loader rebuilt (164010
+bytes).
+
+**Live-verified** via the opencli browser bridge, same `TestNew` project/session. Drew a real duct
+segment (route, two clicks, `finish`), selected it, and used the app's own real "Tap in (branch)"
+click-menu to open the branch-fitting modal for real — confirmed `__graphDebug.activeTool` reads
+`'branch'` while it's open, `branch.` lists all 7 real fields with live labels
+(`starting-width-input`/`primary-input`/`secondary-input`/`type`/`shape`/`alignment`/`damper`), a
+write via `RW._cmdApplySetting` landed on the real control without re-arming (status: "branch
+fitting dialog still open"), `choose` clicked the real submit button and closed the dialog (and,
+followed by a click on the canvas, genuinely placed the fitting — `pageEntities` went from 1 to 3),
+and `cancelbranch` closed a re-opened instance. **Also armed and placed a real riser** (`vertical`
+tool, click on canvas) — this resolves round 19's own previously-unconfirmed mapping:
+`__graphDebug.activeTool` reads exactly `'vertical'` while its modal is open, `vertical.` correctly
+lists its one real field (`elevation-input`, live label "Destination elevation (ft)"), and
+`cancelriser` closed it. Also confirmed live: `graph-new-system-name`/`-service` are real elements
+already on the page, `route.` now lists both (the name field typed `'text'`), a text write landed
+verbatim with no numeric parsing, and `graph-create-system` has no table entry; typing a real
+keydown while the branch-fitting modal was open **did** seed the command bar, the same keydown
+targeted at the modal's own `<select>` did **not**, and a non-recognized dialog (calibrate) still
+bailed exactly as before. **Not reached live this round**: the end-user action that opens the
+change-size/GRD modals — every attempt (clicking along a selected duct segment with `transition`
+armed, at several points, plain and double-click) left `__graphDebug.activeTool` on `transition`
+without ever opening `graph-checkpoint-transition-modal`, so this remains exactly the open item
+`PLAN.md`'s own design research already flagged; this doesn't bear on the mechanism itself (identical
+code path to branch/riser, both confirmed) — only on how to trigger it for a future live check. One
+live mistake, caught and undone: forcing `graph-branch-fitting-modal.open = true/false` directly via
+DOM (rather than through the app's own click-menu) left the app's internal "current placement mode"
+stuck on `'branch'`, refusing to switch tools even via a real click on the Select toolbar button —
+recovered by a genuine cache-busted reload (a same-URL "navigation" does **not** reliably clear
+`window.__RW`, per this file's own round-18 note), which also confirmed the test duct/branch/riser
+drawn during this session never actually persisted server-side (`pageEntities` was back to `0`).
+
+**Round 19 follow-up — two live-testing observations from Kresna, both fixed:**
+
+1. **Field ordering.** `cmdSweepControls()` ran five separate `querySelectorAll` passes (one per
+   input type) and concatenated the results, so every listing read out grouped by control type — all
+   ranges/numbers first, then the checkbox, then any text input, then every select — rather than in
+   the order the fields actually appear on screen. Invisible until a real modal mixed types: branch
+   fitting's own visual order is select, select, number, select, number, number, checkbox (Fitting
+   type, Branch shape, Starting width, Alignment, Width, Height, Damper), which the old grouped sweep
+   reordered to Starting width, Width, Height, Damper, Fitting type, Branch shape, Alignment. Fixed
+   by combining the five selectors into one comma-separated `querySelectorAll` call, which returns
+   every match in a single real document-order pass — applies to every tool's listing, not just
+   branch's, since it's a property of `cmdSweepControls` itself. `RW._toolSettingsDiagnose`'s own
+   copy of the selector list was deliberately left as five separate calls, since that function groups
+   by type on purpose for comparing same-kind controls by eye in a console table dump. The synthetic
+   test harness's own `matchesSelector` stub didn't support comma-separated selector lists (real
+   browsers do) — extended to split on top-level commas and match if any branch matches, mirroring
+   `Element.matches()`'s own semantics. New test (237) pins the exact order on a realistic
+   interleaved-type branch fixture.
+2. **Isolation ("only related commands") now also covers change-size/GRD.** `RW._cmdIsolatedTool()`
+   used to read only `RW._cmdActiveSettingsTool()` — which happened to already work for branch and
+   riser (both confirmed live to flip `activeTool` correctly) but left isolation off entirely for
+   change-size/GRD, whose `activeTool` mapping was never confirmed: with one of those two modals open
+   and `activeTool` unreadable, the full, unrelated command list stayed additively reachable instead
+   of narrowing to that modal's own fields/actions — the opposite of what Kresna observed (correctly)
+   for branch and wanted for every modal. Fixed with the same fallback already used for bare-param
+   blending: `RW._cmdActiveSettingsTool() || cmdOpenModalTool()`. This reverses round 19's own
+   original, more conservative call ("isolation must keep failing open off the single existing
+   signal") — but a real open `<dialog>` is at least as trustworthy a signal as `activeTool`, so this
+   isn't a weaker fail-safe, just a second way to reach the same confirmed-open state. New test (238).
+3. **Escape now confirms on the status line.** Physical Escape (`RW._cmdEscapeHandler`) called
+   `RW._cmdGoSelect('escape', true)` — `quiet=true` — so a real Escape that actually reverted an
+   armed tool only ever logged to the console, never to the command bar, unlike typing "select"
+   explicitly (which always reports its own dispatch, since `nativeKey`'s `run()` never passes
+   `quiet`). Kresna asked for the same confirmation on Escape; changed to
+   `RW._cmdGoSelect('escape', false)`. `RW._cmdGoSelect` already no-ops (no dispatch, no status) when
+   nothing was armed to begin with, so this can't spam a confirmation for an Escape that had nothing
+   to revert — pinned by new test 240 alongside the confirming case (239). The automatic poll-based
+   revert (`RW._cmdGoSelect('poll', true)`) deliberately stays quiet, since it fires on a timer, not a
+   user keypress.
+4. **The very first Space now just opens the bar, instead of dumping every command.** The global
+   auto-capture listener's Space handling has three branches — force-select-from-label, repeat the
+   last tool, close the currently-armed one — but none of them fire the very first time anyone
+   presses Space (nothing armed yet, `RW._cmdLastTool` never set). That case used to fall all the way
+   through to the generic capture path at the bottom of the listener, which inserts the literal space
+   character into the bar and immediately calls `onInput()` on it; `RW._cmdMatch(' ')` trims to `''`
+   and returns the entire `RW._cmdTable` — every tool AND action together, not just tools — which
+   Kresna reported reading as a confusing wall of unrelated commands the moment anyone hit Space to
+   get started. First attempt at a fix suppressed the dropdown outright (`mountCommandBar()` + focus,
+   nothing else) — Kresna's own follow-up ("the command list dropdown is not expanded") made clear
+   the dropdown should still pop, just scoped correctly: this is "initialize the console," a starting
+   menu of what can be armed, not the ordinary typed-query dropdown that blends tools and actions
+   together. Corrected to a fourth branch, `!RW._cmdToolArmed && !RW._cmdLastTool`: mount the bar,
+   focus it (no character inserted, so the input stays empty), then populate and render the menu
+   directly from `RW._cmdTable.filter(entry => entry.kind === NATIVE).slice(0, 8)` — the tool
+   vocabulary only, never `GRAPH_ACTIONS`' button vocabulary (undo/redo/finish/cancel/calibrate/the
+   round-19 modal actions, all `kind: ACTION`). `RW._cmdTable`'s own declared order (tool table first,
+   `GRAPH_ACTIONS` appended after) means the first 8 are always tools on both hosts, matching the same
+   8-row cap every other command-mode listing already uses. Two existing tests (110, 111b) had pinned
+   the old dump-everything behavior as a documented trade-off; both rewritten to expect the tool
+   dropdown instead. New test 241 (graph host only, since the annotate table is 100% `NATIVE` and
+   can't tell "filtered" apart from "whole table") pins that `undo` never appears in this starting
+   menu while `route` does.
+5. **The same "initialize the console" treatment while a config-dialog modal is open** ("I want that
+   behaviour also be in branch mode"). Before this, Space while e.g. the branch-fitting dialog was
+   open fell into the ordinary `RW._cmdToolArmed -> close` branch (branch is a real armed draw tool)
+   and dispatched a synthetic select keydown at the app while its own modal was still up — never
+   actually exercised against a live dialog, and not something to start depending on. Added a new
+   branch, checked ahead of both the repeat and the close branches (same reasoning as the pre-existing
+   `label` override): `if (cmdOpenModalTool())` — open the bar (no character seeded) and call
+   `onInput()` directly on the empty value, which — via `onInput`'s own pre-existing isolated-tool
+   blend — shows exactly what a typed empty query already would: that modal's own fields plus its
+   allowed action commands (`choose`/`cancelbranch` for branch, and so on for the other three).
+   Reusing `onInput()` rather than reimplementing the filter means this can never drift out of sync
+   with what typing there shows. New tests 242 (the blend appears, no key dispatched) and 243 (pins
+   that with no modal open, Space still closes the armed tool exactly as before — the new branch
+   doesn't leak beyond "a modal is actually open").
+
+`node verify_cmdline.js`: **721 passed, 0 failed**. Loader rebuilt (169044 bytes). Not yet
+live-verified on a real page.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery
@@ -2391,10 +2624,18 @@ here too, though this repo's own tools have never written annotation state direc
   genuine duplicate option texts (`"Transfer Air"` ×6 with differing services); selecting a
   different one of the duplicates took, was reverted, and a full reload confirmed nothing
   persisted server-side.
-- **(Round 15, graph host)** `RW._cmdParamScopeDiagnose`'s `excluded-prefix` rule
-  (`graph-new-` — see round 15) is a naming-convention denylist entry, not a structural one: it
-  works only because the inspector's "New system" creator block happens to share that prefix
-  today. If the app ever adds a real tool whose own params are meant to start with `graph-new-`,
-  this rule would wrongly exclude them — there is no purely-structural discriminator available
-  for that creator block (no id, no `<details>` to key off) short of one being added to the app
-  itself.
+- ~~**(Round 15, graph host)** `RW._cmdParamScopeDiagnose`'s `excluded-prefix` rule
+  (`graph-new-` — see round 15) is a naming-convention denylist entry, not a structural one~~ —
+  **moot, round 19**: the `graph-new-` exclusion is gone entirely (Kresna explicitly asked for the
+  "New system" name/service fields to become typeable); `graph-create-system` ("Add") needs no
+  exclusion rule of its own since it's a `<button>`, never swept at all.
+- **(Round 19, graph host)** The end-user action that opens the change-size/GRD-placement modals
+  wasn't found live — every attempt (clicking along a selected duct segment with the tool armed, at
+  several points, plain and double-click) applied nothing and never opened
+  `graph-checkpoint-transition-modal`/`graph-checkpoint-grd-modal`. Doesn't bear on the mechanism
+  itself (`GRAPH_TOOL_MODALS` treats all four modals identically, and branch/riser are both
+  confirmed live) — only on how to trigger these two specifically for a future live check.
+- **(Round 19)** None of the 8 new modal-action button ids or the "New system" fields are on
+  `CONFIRMED_WRITE_IDS` — every modal write and every `graph-new-*` write still carries the
+  "confirm it actually applied" hedge until individually live-tested beyond the one manual write
+  already done for `graph-branch-fitting-primary-input`.
