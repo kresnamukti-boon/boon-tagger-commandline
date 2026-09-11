@@ -227,6 +227,22 @@
     { name:'rationale',    kind:ACTION, aliases:['why'],                  btn:'graph-attach-rationale' },
     { name:'toggledamper', kind:ACTION, aliases:['tdamper'],              btn:'graph-toggle-damper' },
     { name:'elevation',    kind:ACTION, aliases:['riserelev'],            btn:'graph-edit-riser-elevation', conditional:'only appears with a riser selected' },
+
+    // ----- round 19: each config-dialog modal's own Choose/Cancel-equivalent
+    // buttons — reuses RW.runCommand's existing button-dispatch path
+    // wholesale, same as every action above. The × close buttons are
+    // deliberately not exposed — Cancel is a sufficient dismiss verb per
+    // dialog. No single-letter aliases needed here (none of these words
+    // collide with a tool name or alias — checked directly against all 11
+    // GRAPH_TABLE entries and every existing action above, see test 205).
+    { name:'choose',       kind:ACTION, aliases:[],                       btn:'graph-branch-fitting-submit',        conditional:'only while the branch fitting dialog is open' },
+    { name:'cancelbranch', kind:ACTION, aliases:[],                       btn:'graph-branch-fitting-cancel',        conditional:'only while the branch fitting dialog is open' },
+    { name:'apply',        kind:ACTION, aliases:[],                       btn:'graph-checkpoint-transition-submit', conditional:'only while the change size dialog is open' },
+    { name:'cancelsize',   kind:ACTION, aliases:[],                       btn:'graph-checkpoint-transition-cancel', conditional:'only while the change size dialog is open' },
+    { name:'place',        kind:ACTION, aliases:[],                       btn:'graph-checkpoint-grd-submit',        conditional:'only while the place GRD dialog is open' },
+    { name:'cancelgrd',    kind:ACTION, aliases:[],                       btn:'graph-checkpoint-grd-cancel',        conditional:'only while the place GRD dialog is open' },
+    { name:'placeriser',   kind:ACTION, aliases:[],                       btn:'graph-checkpoint-riser-submit',      conditional:'only while the riser elevation dialog is open' },
+    { name:'cancelriser',  kind:ACTION, aliases:[],                       btn:'graph-checkpoint-riser-cancel',      conditional:'only while the riser elevation dialog is open' },
   ];
 
   RW._cmdTable = RW_IS_GRAPH ? GRAPH_TABLE.concat(GRAPH_ACTIONS) : ANNOTATE_TABLE;
@@ -272,7 +288,9 @@
     }
 
     const controls = [];
-    const selectors = ['input[type="range"]', 'input[type="number"]', 'input[type="checkbox"]', 'select'];
+    // Kept in sync with cmdSweepControls's own copy of this list, by hand —
+    // 'input[type="text"]' added round 19 for graph-new-system-name.
+    const selectors = ['input[type="range"]', 'input[type="number"]', 'input[type="checkbox"]', 'input[type="text"]', 'select'];
     for (const sel of selectors){
       for (const el of document.querySelectorAll(sel)){
         controls.push({
@@ -351,11 +369,68 @@
     rootTag: 'ASIDE',
     rootLabel: 'Duct graph inspector',
     excludeIds: ['graph-scale-target', 'graph-route-anchor'], // canvas toolbar — also excluded by rootTag/rootLabel; kept as documentation of the live finding
-    excludeIdPrefixes: ['graph-new-'],                         // the inspector's "New system" creator block, not a tool param
+    // Round 15 excluded this prefix wholesale (the inspector's "New system"
+    // creator block, not a tool param). Round 19 deliberately re-admits
+    // graph-new-system-name/-service per explicit instruction — confirmed
+    // live those two are the ONLY elements under this prefix, and
+    // graph-create-system ("Add") is a <button>, never swept by
+    // cmdSweepControls, so it needs no exclusion rule of its own and gets no
+    // table entry. Left empty rather than removed so a future round has an
+    // obvious place to re-add an exclusion if one is ever needed.
+    excludeIdPrefixes: [],
     excludeInsideTags: ['DIALOG'],
     collapsedGroupTag: 'DETAILS'
   };
   const PARAM_SCOPE = RW_IS_GRAPH ? GRAPH_PARAM_SCOPE : null;
+
+  // ----- graph host: the four per-tool config-dialog modals (round 19) -----
+  // Confirmed live via opencli: clicking a real duct segment's "Tap in
+  // (branch)" opens a genuine <dialog> (graph-branch-fitting-modal) with its
+  // own fields, following the exact same <label><span>Live label</span>
+  // <control></label> convention the ordinary inspector already uses — so
+  // round 18's live-label matching (cmdControlLiveLabel) applies unchanged.
+  // Three siblings share the identical structure: change-size/transition,
+  // GRD placement, and riser elevation. None of these are showModal()-modal
+  // (confirmed: dialog.matches(':modal') is false) — #rw-cmd-input can be
+  // focused and typed into while one is open; the auto-capture bail-out
+  // narrowed below (see cmdOpenDialogs's own comment) was the only thing
+  // stopping that.
+  const GRAPH_TOOL_MODALS = {
+    branch:     { dialogId: 'graph-branch-fitting-modal',        prefix: 'graph-branch-fitting-',        title: 'branch fitting' },
+    transition: { dialogId: 'graph-checkpoint-transition-modal', prefix: 'graph-checkpoint-transition-', title: 'change size' },
+    grd:        { dialogId: 'graph-checkpoint-grd-modal',        prefix: 'graph-checkpoint-grd-',        title: 'place GRD' },
+    vertical:   { dialogId: 'graph-checkpoint-riser-modal',      prefix: 'graph-checkpoint-riser-',      title: 'riser elevation' }
+  };
+  const GRAPH_MODAL_DIALOG_IDS = Object.keys(GRAPH_TOOL_MODALS).map(function(k){ return GRAPH_TOOL_MODALS[k].dialogId; });
+
+  // Returns {tool, dialog, prefix, id, title} only when `tool` has a
+  // registered modal AND that modal's dialog is genuinely open right now —
+  // reuses cmdOpenDialogs's own open-check (d.open || hasAttribute('open'))
+  // rather than duplicating it, so it's also [] (and this is null) for free
+  // on the annotate host. Returns null in every other case — including for
+  // every other graph tool, and for these four while closed — so behavior
+  // stays byte-identical to before this round whenever no recognized modal
+  // is actually open.
+  function cmdOpenToolModal(tool){
+    const reg = GRAPH_TOOL_MODALS[tool];
+    if (!reg) return null;
+    const open = cmdOpenDialogs().find(function(d){ return d.id === reg.dialogId; });
+    if (!open) return null;
+    return { tool: tool, dialog: open, prefix: reg.prefix, id: reg.dialogId, title: reg.title };
+  }
+
+  // Which tracked tool (if any) currently has ITS OWN modal open — used so
+  // bare-param blending in onInput() still works even if a modal's owning
+  // tool isn't reported by RW._cmdActiveSettingsTool() (see round 19's
+  // robustness note for grd/vertical, whose activeTool mapping while their
+  // own modal is open was never individually confirmed live).
+  function cmdOpenModalTool(){
+    for (const tool in GRAPH_TOOL_MODALS){
+      if (cmdOpenToolModal(tool)) return tool;
+    }
+    return null;
+  }
+  RW._cmdToolModal = cmdOpenToolModal; // console debugging, matching this file's existing _cmd* probe convention
 
   // Extraction of the old inline visibility check — shared with the
   // button-usability check in RW.runCommand (see GRAPH_ACTIONS).
@@ -469,26 +544,49 @@
   // RW._cmdParamScopeDiagnose (to report why each control was rejected).
   // Annotate host: PARAM_SCOPE is null, so this always returns null —
   // nothing here ever ran before this round, and nothing here changes now.
-  function cmdParamAllowed(el){
+  //
+  // `modal` (round 19, optional) — when the caller already knows a
+  // recognized config-dialog modal is open for this tool (see
+  // cmdOpenToolModal above), pass it here to swap BOTH the excludeInsideTags
+  // DIALOG check and the ordinary inspector-scoping check for a single
+  // "is this element inside THAT modal's own dialog" check. Every other
+  // rule below — excludeIds, excludeIdPrefixes, cmdCollapsedGroup,
+  // cmdIsVisible — still applies unchanged inside the modal too, which is
+  // what makes branch's already-observed conditional fields (flush-boot
+  // glyphs shown only for certain type+shape combos; a secondary dimension
+  // hidden for round) work correctly with zero new logic, exactly like the
+  // existing collapsed-"Advanced" group already does. `modal` can only ever
+  // come from cmdOpenToolModal against one of the four hardcoded
+  // GRAPH_TOOL_MODALS ids, so any other dialog (graph-calibrate-modal,
+  // graph-known-scale-modal) keeps failing on the ordinary inside-DIALOG
+  // path below, unaffected.
+  function cmdParamAllowed(el, modal){
     if (!PARAM_SCOPE) return null;
     if (PARAM_SCOPE.excludeIds.indexOf(el.id) !== -1) return 'excluded-id';
     if (PARAM_SCOPE.excludeIdPrefixes.some(function(p){ return el.id.indexOf(p) === 0; })) return 'excluded-prefix';
-    for (const tag of PARAM_SCOPE.excludeInsideTags){
-      if (cmdAncestorByTag(el, tag)) return 'inside-' + tag.toLowerCase();
+    if (modal){
+      if (!cmdIsWithin(el, modal.dialog)) return 'outside-modal';
+    } else {
+      for (const tag of PARAM_SCOPE.excludeInsideTags){
+        if (cmdAncestorByTag(el, tag)) return 'inside-' + tag.toLowerCase();
+      }
+      const roots = cmdScopeRoots();
+      if (!roots.some(function(root){ return cmdIsWithin(el, root); })) return 'outside-inspector';
     }
-    const roots = cmdScopeRoots();
-    if (!roots.some(function(root){ return cmdIsWithin(el, root); })) return 'outside-inspector';
     const grp = cmdCollapsedGroup(el);
     if (grp) return 'collapsed:' + (grp.label || 'group');
     if (!cmdIsVisible(el)) return 'hidden';
     return null;
   }
 
-  // Any currently-open <dialog> — graph host only, and only because this
-  // round's own action vocabulary (calibrate/setscale) is what opens these
-  // modals. Used to bail the global auto-capture keydown listener out of the
-  // way (see its own comment) while one is open, so typing reaches the
-  // app's modal instead of the command bar.
+  // Any currently-open <dialog> — graph host only. Originally added because
+  // round 15's own action vocabulary (calibrate/setscale) opens two modals;
+  // round 19's own GRAPH_TOOL_MODALS (branch/transition/grd/vertical) opens
+  // four more, all discovered through this same sweep. Used to bail the
+  // global auto-capture keydown listener out of the way (see its own
+  // comment) while a non-recognized one is open, so typing reaches the
+  // app's modal instead of the command bar; also reused by
+  // cmdOpenToolModal above rather than re-implementing the open-check.
   function cmdOpenDialogs(){
     if (!RW_IS_GRAPH) return [];
     return Array.from(document.querySelectorAll('dialog'))
@@ -498,17 +596,32 @@
   function cmdControlType(el){
     if (el.tagName === 'SELECT') return 'select';
     if (el.type === 'checkbox') return 'checkbox';
+    if (el.type === 'text') return 'text'; // round 19: needed for graph-new-system-name
     return 'number'; // covers both range and number inputs, treated identically today
   }
 
   // The same control sweep RW._toolSettingsDiagnose uses, reused here rather than duplicated.
+  // 'input[type="text"]' added round 19 for the inspector's "New system" name
+  // field (graph-new-system-name carries an explicit type="text" attribute,
+  // confirmed live) — mirror any change here in RW._toolSettingsDiagnose's
+  // own copy of this same list so the two never silently diverge (that one
+  // groups by type on purpose, for comparing controls of the same kind by
+  // eye in the console — this one must not).
+  //
+  // Round 19 fix (Kresna's own feedback on the branch-fitting listing): the
+  // single combined selector string below returns matches in real DOM
+  // (document) order, so a modal's — or the inspector's — fields list top to
+  // bottom exactly as they're laid out on screen (Fitting, Branch shape,
+  // Starting width, Alignment, Width, Height, Damper), not grouped by input
+  // type as five separate querySelectorAll passes concatenated together
+  // would (all ranges/numbers first, then checkboxes, then text, then
+  // selects — which is what shipped originally and read out of visual
+  // order). Every caller (RW._cmdToolSettingsList, RW._cmdParamScopeDiagnose)
+  // gets this ordering for free.
   function cmdSweepControls(){
-    const out = [];
-    const selectors = ['input[type="range"]', 'input[type="number"]', 'input[type="checkbox"]', 'select'];
-    for (const sel of selectors){
-      for (const el of document.querySelectorAll(sel)) out.push(el);
-    }
-    return out;
+    return Array.from(document.querySelectorAll(
+      'input[type="range"], input[type="number"], input[type="checkbox"], input[type="text"], select'
+    ));
   }
 
   // Live current value/range/options for each of a tool's params, discovered fresh every call by
@@ -522,14 +635,21 @@
   RW._cmdToolSettingsList = function(tool, opts){
     const entry = RW._toolSettingsMap[tool];
     if (!entry) return [];
+    // Round 19: while one of this tool's own config-dialog modals is open,
+    // its params live under a different id prefix (and a different scoping
+    // root) than the ordinary inspector — resolve both fresh per call. When
+    // no recognized modal is open this is null and every line below behaves
+    // exactly as it did before this round.
+    const modal = cmdOpenToolModal(tool);
+    const prefix = modal ? modal.prefix : entry.prefix;
     const includeCollapsed = !!(opts && opts.includeCollapsed);
     const found = [];
     cmdSweepControls().forEach(function(el){
-      if (!el.id || el.id.indexOf(entry.prefix) !== 0) return;
-      const reason = cmdParamAllowed(el);
+      if (!el.id || el.id.indexOf(prefix) !== 0) return;
+      const reason = cmdParamAllowed(el, modal);
       const isCollapsed = !!reason && reason.indexOf('collapsed:') === 0;
       if (reason && !(includeCollapsed && isCollapsed)) return;
-      const param = el.id.slice(entry.prefix.length);
+      const param = el.id.slice(prefix.length);
       const type = cmdControlType(el);
       // Graph host only (round 18) — the live on-screen label ("Width (in)",
       // flipping to "Diameter (in)" the moment route's own profile switches
@@ -539,12 +659,15 @@
       // wrapping convention — scoped here rather than assumed to apply
       // everywhere.
       const item = { tool: tool, param: param, id: el.id, type: type, label: RW_IS_GRAPH ? cmdControlLiveLabel(el) : null };
+      if (modal) item.modal = modal.id; // lets callers/tests tell modal params apart without re-deriving it
       if (isCollapsed) item.collapsedGroup = reason.slice('collapsed:'.length);
       if (type === 'select'){
         item.current = el.value;
         item.options = Array.from(el.options).map(function(o, i){ return { index: i + 1, value: o.value, text: o.text }; });
       } else if (type === 'checkbox'){
         item.current = el.checked ? 'on' : 'off';
+      } else if (type === 'text'){
+        item.current = el.value; // no min/max/step — a free-typed string, not a number
       } else {
         item.min = (el.min !== '' && el.min != null) ? parseFloat(el.min) : undefined;
         item.max = (el.max !== '' && el.max != null) ? parseFloat(el.max) : undefined;
@@ -571,18 +694,36 @@
     return Object.keys(byLabel).map(function(label){ return { label: label, count: byLabel[label] }; });
   };
 
+  // The (at most one) open recognized modal `el` actually sits inside, or
+  // null — used by RW._cmdParamScopeDiagnose below so it can pass the right
+  // modal into cmdParamAllowed per control, the same way
+  // RW._cmdToolSettingsList does when it already knows which tool it's
+  // asking about.
+  function cmdModalForElement(el){
+    for (const tool in GRAPH_TOOL_MODALS){
+      const modal = cmdOpenToolModal(tool);
+      if (modal && cmdIsWithin(el, modal.dialog)) return modal;
+    }
+    return null;
+  }
+
   // Read-only probe, same spirit as RW._toolSettingsDiagnose/_panDiagnose:
   // for every "graph-"-prefixed control currently on the page, reports
   // whether RW._cmdToolSettingsList would allow it and why not when it
   // wouldn't. Console-only, never mutates the DOM. n/a (empty array) on the
   // annotate host, where PARAM_SCOPE is null and this question doesn't apply.
+  // Round 19: every modal control used to blanket-report 'inside-dialog',
+  // which is actively misleading now that these four are reachable —
+  // resolve the (at most one) owning modal per control and pass it through,
+  // stamping the reported row's `modal` field with the owning tool name.
   RW._cmdParamScopeDiagnose = function(){
     if (!PARAM_SCOPE){ console.log('[RW] param-scope diagnostic: n/a on this host'); return []; }
     const rows = cmdSweepControls()
       .filter(function(el){ return el.id && el.id.indexOf(GRAPH_SETTINGS_PREFIX) === 0; })
       .map(function(el){
-        const reason = cmdParamAllowed(el);
-        return { id: el.id, allowed: !reason, rejectedBy: reason || null };
+        const modal = cmdModalForElement(el);
+        const reason = cmdParamAllowed(el, modal);
+        return { id: el.id, allowed: !reason, rejectedBy: reason || null, modal: modal ? modal.tool : null };
       });
     if (console.table) console.table(rows); else console.log(rows);
     return rows;
@@ -617,7 +758,17 @@
   // (select/Escape/Space), and the route-lifecycle actions (finish/cancel) are
   // reachable. Everything else — other tools, other action buttons, # system search —
   // is refused with a status message rather than silently vanishing.
-  const GRAPH_ISOLATION_ALLOWED = ['select', 'finish', 'cancel'];
+  // Round 19: the 8 new modal-action commands are appended flat, matching
+  // the finish/cancel precedent above rather than scoping per-tool —
+  // finish/cancel are already globally allowed despite being route-specific,
+  // and the same reasoning applies here: typing `place` while `route` is
+  // isolated is harmless, since the GRD dialog isn't open and RW.runCommand
+  // already reports "its button is not on the page right now" (see test 205's
+  // sibling coverage of this decision).
+  const GRAPH_ISOLATION_ALLOWED = [
+    'select', 'finish', 'cancel',
+    'choose', 'cancelbranch', 'apply', 'cancelsize', 'place', 'cancelgrd', 'placeriser', 'cancelriser'
+  ];
   RW._cmdIsolateTools = true; // console escape hatch: __RW._cmdIsolateTools = false restores the old additive behavior
 
   // Returns the tool name to isolate to, or null when nothing should be restricted:
@@ -625,9 +776,19 @@
   // activeTool. Deliberately fails OPEN (null) on anything it can't confirm, so a bad
   // read can never lock the command line down — mirrors RW._cmdAutoSelect's own
   // fail-safe convention.
+  //
+  // Round 19 follow-up (Kresna's own request): fall back to cmdOpenModalTool()
+  // when activeTool doesn't resolve on its own. Branch already isolated correctly
+  // without this (its activeTool read is confirmed live), but change-size/GRD's own
+  // activeTool mapping was never confirmed, so without this fallback opening one of
+  // those two modals left isolation off entirely — the full, unrelated command list
+  // stayed reachable instead of narrowing to that modal's own fields/actions. A real
+  // open `<dialog>` (cmdOpenToolModal's own check) is at least as trustworthy a
+  // signal as activeTool, so this isn't a weaker fail-safe — just a second way to
+  // reach the same confirmed-open state.
   RW._cmdIsolatedTool = function(){
     if (!RW_IS_GRAPH || RW._cmdIsolateTools === false) return null;
-    return RW._cmdActiveSettingsTool();
+    return RW._cmdActiveSettingsTool() || cmdOpenModalTool();
   };
 
   // Shared wording for every refusal below, so the message stays consistent regardless
@@ -686,10 +847,33 @@
   //   the first select-type control this hedge has ever been dropped for.
   const CONFIRMED_WRITE_IDS = ['magic-wand-tolerance', 'graph-profile-select'];
 
+  // Round 19: re-arms the tool as before UNLESS one of its own config-dialog
+  // modals is open, in which case dispatching the tool's own key into an
+  // open <dialog> is untested and could as easily cancel/close it as do
+  // nothing — so that dispatch is skipped entirely. RW._cmdLastUserCmdAt is
+  // still stamped directly either way, preserving the auto-select watcher's
+  // grace window a real re-arm used to provide as a side effect. Returns the
+  // clause to append to the status line, so every write branch below reports
+  // consistently.
+  function cmdArmOrNoteModal(tool, modal){
+    if (modal){
+      RW._cmdLastUserCmdAt = Date.now();
+      return modal.title + ' dialog still open';
+    }
+    RW.runCommand(tool);
+    return 're-armed ' + tool;
+  }
+
   RW._cmdApplySetting = function(tool, param, value){
     const entry = RW._toolSettingsMap[tool];
     if (!entry){ RW._commitStatus && RW._commitStatus('unknown tool: ' + tool); return false; }
-    const id = entry.prefix + param;
+    // Load-bearing (round 19): without resolving the same modal-aware prefix
+    // here as RW._cmdToolSettingsList does, entry.prefix + param would
+    // reconstruct the wrong id (e.g. 'graph-' + 'type' = 'graph-type', which
+    // doesn't exist) the instant a param came from a modal's own listing.
+    const modal = cmdOpenToolModal(tool);
+    const prefix = modal ? modal.prefix : entry.prefix;
+    const id = prefix + param;
     const el = document.getElementById(id);
     if (!el){ RW._commitStatus && RW._commitStatus('"' + tool + '.' + param + '" control (#' + id + ') is not on the page right now'); return false; }
     const type = cmdControlType(el);
@@ -702,7 +886,8 @@
     // revealed first, or the write would land on a control the inspector
     // itself isn't showing. Click-first (a real <summary> click natively
     // toggles its parent <details>) with a direct-assign fallback, since the
-    // DOM stub's click() doesn't toggle .open.
+    // DOM stub's click() doesn't toggle .open. No modal contains a <details>
+    // group, so this is a no-op whenever `modal` is set.
     let revealNote = '';
     const grp = cmdCollapsedGroup(el);
     if (grp){
@@ -720,9 +905,9 @@
       el.checked = v;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      RW.runCommand(tool);
+      const armNote = cmdArmOrNoteModal(tool, modal);
       RW._commitStatus && RW._commitStatus(
-        tool + '.' + param + ' set to ' + (v ? 'on' : 'off') + ' — re-armed ' + tool + revealNote
+        tool + '.' + param + ' set to ' + (v ? 'on' : 'off') + ' — ' + armNote + revealNote
         + (confirmed ? '' : ' (confirm it actually applied)')
       );
       return true;
@@ -735,9 +920,22 @@
       el.value = matched.value;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      RW.runCommand(tool);
+      const armNote = cmdArmOrNoteModal(tool, modal);
       RW._commitStatus && RW._commitStatus(
-        tool + '.' + param + ' set to "' + matched.text + '" — re-armed ' + tool + revealNote
+        tool + '.' + param + ' set to "' + matched.text + '" — ' + armNote + revealNote
+        + (confirmed ? '' : ' (confirm it actually applied)')
+      );
+      return true;
+    }
+
+    if (type === 'text'){
+      // Plain assignment — no parse/clamp, unlike numeric below.
+      el.value = String(value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      const armNote = cmdArmOrNoteModal(tool, modal);
+      RW._commitStatus && RW._commitStatus(
+        tool + '.' + param + ' set to "' + value + '" — ' + armNote + revealNote
         + (confirmed ? '' : ' (confirm it actually applied)')
       );
       return true;
@@ -750,9 +948,9 @@
     el.value = String(v); // explicit — a real <input>.value setter stringifies internally anyway
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    RW.runCommand(tool);
+    const armNote = cmdArmOrNoteModal(tool, modal);
     RW._commitStatus && RW._commitStatus(
-      tool + '.' + param + ' set to ' + v + ' — re-armed ' + tool + revealNote
+      tool + '.' + param + ' set to ' + v + ' — ' + armNote + revealNote
       + (confirmed ? '' : ' (confirm it actually applied)')
     );
     return true;
@@ -1203,13 +1401,25 @@
   // real Escape handler always still runs. Deferred via setTimeout(...,0)
   // (not requestAnimationFrame, which can be throttled in a background tab)
   // so the app's own synchronous cancel-work finishes first.
+  //
+  // `quiet=false` (Kresna's own request, round 19 follow-up): a deliberate
+  // Escape press is exactly as much a real user action as typing "select" —
+  // which already reports its own dispatch to the status line (nativeKey's
+  // run() never passes `quiet` at all) — so Escape should read out the same
+  // way instead of only logging to the console. RW._cmdGoSelect itself
+  // already no-ops (no dispatch, no status) when nothing was armed to begin
+  // with (readMode() === SELECT_MODE short-circuits above the dispatch line),
+  // so this can't spam a confirmation for an Escape that had nothing to do.
+  // The automatic poll-based revert (RW._cmdGoSelect('poll', true) above)
+  // deliberately stays quiet — it fires on a timer, not on a user keypress,
+  // and would spam the status line if it didn't.
   RW._cmdEscapeHandler = function(e){
     if (e.__rwSynthetic) return;
     if (e.key !== 'Escape') return;
     if (!RW.enabled || !RW._cmdAutoSelect) return;
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return; // includes our own command input
-    setTimeout(function(){ RW._cmdGoSelect('escape', true); }, 0);
+    setTimeout(function(){ RW._cmdGoSelect('escape', false); }, 0);
   };
 
   /* ---------- command bar + autocomplete ---------- */
@@ -1319,6 +1529,8 @@
           label = paramDisplay + ' (toggle, now ' + item.current + ')';
         } else if (item.type === 'select'){
           label = paramDisplay + ' (' + (item.options ? item.options.length : 0) + ' options, now ' + item.current + ')';
+        } else if (item.type === 'text'){
+          label = paramDisplay + ' (text, now "' + item.current + '")';
         } else {
           label = paramDisplay + ' (' + (item.min != null ? item.min : '') + (item.max != null ? '-' + item.max : '')
             + ', now ' + item.current + ')';
@@ -1418,7 +1630,16 @@
       }
     } else {
       menuMode = 'command';
-      const activeTool = RW._cmdActiveSettingsTool();
+      // Round 19 robustness: || cmdOpenModalTool() so bare-param blending still
+      // works even if activeTool's own readTool() doesn't report 'grd'/'vertical'
+      // while their own modal is open (the one part of the now-3-for-3 activeTool
+      // pattern never individually confirmed live — see GRAPH_TOOL_MODALS's own
+      // comment). RW._cmdIsolatedTool() now falls back the same way (round 19
+      // follow-up), so `isolatedTool` above already covers this whenever isolation
+      // is actually in force; this local read stays independent of that so bare-
+      // param blending keeps working even with the console hatch
+      // (RW._cmdIsolateTools = false) turned off.
+      const activeTool = RW._cmdActiveSettingsTool() || cmdOpenModalTool();
       const paramItems = activeTool
         ? RW._cmdToolSettingsList(activeTool).filter(function(p){ return cmdParamMatchesQuery(p, v.toLowerCase()); })
         : [];
@@ -1517,8 +1738,11 @@
       inputEl.focus();
       if (inputEl.setSelectionRange) inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
       RW._commitStatus && RW._commitStatus(
-        item.tool + '.' + item.param + ': ' + (item.min != null ? item.min : '') + '–' + (item.max != null ? item.max : '')
-        + ', currently ' + item.current + ' — type a new value and press Enter'
+        item.type === 'text'
+          // No min–max range for a free-typed string — unlike numeric below.
+          ? item.tool + '.' + item.param + ': currently "' + item.current + '" — type a new value and press Enter'
+          : item.tool + '.' + item.param + ': ' + (item.min != null ? item.min : '') + '–' + (item.max != null ? item.max : '')
+            + ', currently ' + item.current + ' — type a new value and press Enter'
       );
       return;
     }
@@ -2021,15 +2245,28 @@
   document.addEventListener('keydown', function(e){
     if (e.__rwSynthetic) return; // our own dispatch to the app (RW._cmdDispatchAppKey) — never eat it
     if (!RW.enabled) return; // respect the master RW: ON/OFF killswitch, same as every other tool
-    // Graph host only, and only because this round's own action vocabulary
-    // (calibrate/setscale) is what opens these <dialog> modals — with one
+    // Graph host only, and originally added because round 15's own action
+    // vocabulary (calibrate/setscale) opens two <dialog> modals — with one
     // open, typing must reach the app's own modal, not get captured into the
     // command bar. A plain bail-out, not a consume (no preventDefault/
     // stopImmediatePropagation, unlike capture's normal "always wins" below),
     // so the app's own modal keyboard handling runs completely untouched.
-    if (cmdOpenDialogs().length) return;
+    // Round 19 narrows this: the four GRAPH_TOOL_MODALS dialogs are NOT
+    // showModal()-modal (confirmed live: dialog.matches(':modal') is false)
+    // and #rw-cmd-input can be focused/typed into while one is open — the
+    // only thing stopping that was this blanket bail-out, not the app. So it
+    // still bails for any OTHER open dialog (calibrate, known-scale —
+    // unaffected) but not for one of the four recognized ids.
+    if (cmdOpenDialogs().some(function(d){ return GRAPH_MODAL_DIALOG_IDS.indexOf(d.id) === -1; })) return;
     const t = e.target;
     if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
+    // Round 19: the focus guard above skips INPUT/TEXTAREA/contenteditable
+    // but not SELECT — so once a recognized modal's own <select> (Fitting
+    // type, Branch shape, Alignment, Damper) has focus, keystrokes would
+    // otherwise be eaten into the command bar instead of reaching it.
+    // Scoped to "a recognized modal is actually open" so the inspector's own
+    // ordinary selects are completely unaffected.
+    if (t && t.tagName==='SELECT' && cmdOpenModalTool()) return;
     if (e.ctrlKey||e.metaKey||e.altKey) return;
     if (e.key.length !== 1) return; // printable characters only
     // AutoCAD's own convention, extended into a toggle: Space with nothing typed
@@ -2059,6 +2296,30 @@
         RW._cmdGoSelect('space', true, true); // bypass the auto-trigger suppression window, same as the close branch below
         return;
       }
+      // Round 19 follow-up (Kresna's own request: "I want that behaviour also
+      // be in branch mode" — the just-fixed "initialize the console" starting
+      // menu, while one of the four config-dialog modals is open). Checked
+      // ahead of both the repeat and the close branches below, for the same
+      // reason as the label override above: without it, Space while e.g. the
+      // branch-fitting dialog is open would fall into "RW._cmdToolArmed ->
+      // close" and dispatch a synthetic select keydown at the app while its
+      // own modal is still up — a raw key dispatch this project has never
+      // actually needed to make work against a live dialog, and isn't going
+      // to start relying on now. Instead, treat it exactly like the
+      // nothing-armed case: open the bar (no character seeded) and show
+      // what's actually usable while isolated to this modal's own tool —
+      // its own fields (bare-param blend) plus the allowed action commands
+      // (choose/cancelbranch and siblings) — by simply calling onInput() on
+      // the empty bar, the same isolated-tool blend a typed query already
+      // produces (see onInput's own `isolatedTool` branch), so this can't
+      // drift out of sync with what typing there shows.
+      if (cmdOpenModalTool()){
+        e.preventDefault(); e.stopImmediatePropagation();
+        mountCommandBar();
+        if (inputEl) inputEl.focus();
+        onInput();
+        return;
+      }
       if (!RW._cmdToolArmed && RW._cmdLastTool){
         e.preventDefault(); e.stopImmediatePropagation();
         RW.runCommand(RW._cmdLastTool);
@@ -2067,6 +2328,34 @@
       if (RW._cmdToolArmed){
         e.preventDefault(); e.stopImmediatePropagation();
         RW._cmdGoSelect('space', true, true); // bypass the auto-trigger suppression window — see its own comment
+        return;
+      }
+      // Round 19 follow-up (Kresna's own report): the very first Space —
+      // nothing armed yet, and no RW._cmdLastTool to repeat — used to fall
+      // all the way through to the generic capture path below, which inserts
+      // a literal space into the bar and immediately runs onInput() on it;
+      // RW._cmdMatch(' ') trims to '' and returns the ENTIRE command table
+      // (every tool AND action together), which read as a confusing wall of
+      // unrelated commands the moment anyone hit Space just to get started.
+      // With truly nothing to repeat or close, Space should open the bar,
+      // focused and empty (no literal space character seeded), and pop the
+      // dropdown straight to the tool list (kind === NATIVE only — never the
+      // action-button vocabulary in GRAPH_ACTIONS, e.g. undo/redo/finish/
+      // cancel/calibrate/the round-19 modal actions) — this is "initialize
+      // the console," a starting menu of what can be armed, not the ordinary
+      // typed-query dropdown blending tools and actions together. Capped to
+      // the same 8 rows every other command-mode listing already caps at
+      // (RW._cmdTable's own declared order — GRAPH_TABLE/ANNOTATE_TABLE
+      // first, GRAPH_ACTIONS appended after — so the first 8 are always
+      // tools on both hosts; typing further still reaches everything else).
+      if (!RW._cmdToolArmed && !RW._cmdLastTool){
+        e.preventDefault(); e.stopImmediatePropagation();
+        mountCommandBar();
+        if (inputEl) inputEl.focus();
+        menuMode = 'command';
+        menuItems = RW._cmdTable.filter(function(entry){ return entry.kind === NATIVE; }).slice(0, 8);
+        menuHighlight = menuItems.length ? 0 : -1;
+        renderMenuRows();
         return;
       }
     }

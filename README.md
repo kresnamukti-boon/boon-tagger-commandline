@@ -227,10 +227,16 @@ Space/Enter with an empty command line repeats the last command), extended into 
   it, Space would fall into the plain repeat-from-idle rule above and resume the prior tool
   directly, which is what leaving `label` used to do and is not what's wanted here. Switching to
   `pan`/`crop`/`mirror` still uses that plain repeat-from-idle behavior, unaffected.
+- **One of the four config-dialog modals (branch fitting, change size, GRD placement, riser
+  elevation) is currently open** (graph host only) → Space does **not** try to close the armed tool
+  behind it — that would dispatch a synthetic select keypress at the app while its own dialog is
+  still up. Instead it does the same "initialize the console" thing described below: opens the bar
+  and drops into a dropdown of what's actually usable while isolated to it — that modal's own
+  fields plus its own Choose/Cancel-equivalent commands.
 
-Both only fire when the command bar is genuinely empty (nothing mid-typed) and neither opens the
-command bar or dropdown — they're direct actions, not a search. Whether a tool is "currently armed"
-is tracked ourselves (not re-read from the app each press), so closing then repeating in a fast
+The close/repeat toggle only fires when the command bar is genuinely empty (nothing mid-typed) and
+never opens the command bar or dropdown — it's a direct action, not a search. Whether a tool is
+"currently armed" is tracked ourselves (not re-read from the app each press), so closing then repeating in a fast
 loop — press Space, press Space again right away, again, again — reliably keeps alternating between
 the tool and select every time, with no dead cycle where a press silently does nothing. It keeps
 remembering the same tool across as many close/repeat cycles as you like, until you explicitly use
@@ -239,7 +245,11 @@ a different one, at which point *that* becomes what Space repeats instead.
 One accepted trade-off from tracking this ourselves: if a tool gets armed some other way — clicking
 the app's own toolbar directly, bypassing this command line — Space won't know to close it, since
 nothing here ever saw it arm. If nothing has been run through the command line yet at all, Space
-falls through to ordinary typing instead (opening the full command list, same as any other letter).
+just **initializes the console**: it opens the bar (nothing seeded into it — the bar stays empty,
+not "s" and not a literal space) and drops straight into its tool dropdown, the same up/down-arrow-
+and-Enter list every other query narrows, pre-filtered to real tools only — never the action-button
+vocabulary (undo/redo/finish/cancel/calibrate/...). Typing from there narrows it or reaches anything
+else, exactly like typing the first letter of a command always has.
 
 **Void workflow awareness**: the app's native void flow (draw a void area over previously-drawn
 content, then the area and its contents are deleted) auto-reverts to whatever drawing tool was
@@ -481,6 +491,26 @@ other. The dropdown row itself displays whichever live label was found ("Diamete
 4)"), falling back to the id-derived param name only when no label is discoverable — so a row
 picked by typing "diameter" never confusingly reads "width-input". This is graph-host only; the
 annotate host's wand/wrap/mline params are unaffected.
+
+**Four config-dialog modals are reachable too, on the same tool-prefix pattern** — branch fitting
+(`branch.`), change size (`transition.`), GRD placement (`grd.`), and riser elevation
+(`vertical.`). While one of these tools' own modal is open, its listing switches from the ordinary
+inspector to that dialog's own fields (live-labeled the same way), and a write lands on the real
+control without re-arming the tool — dispatching the tool's own key into an open dialog is untested,
+so the status names the dialog instead (`"... — branch fitting dialog still open"`). Each modal's
+own Choose/Cancel-equivalent buttons are their own commands: `choose`/`cancelbranch` (branch
+fitting), `apply`/`cancelsize` (change size), `place`/`cancelgrd` (GRD placement),
+`placeriser`/`cancelriser` (riser elevation) — the `×` close button is deliberately not exposed,
+Cancel is enough. All 8 stay reachable even while a *different* tool is isolated (round 17), the
+same way `finish`/`cancel` already do. Typing still reaches the command bar while one of these four
+is open (they aren't `showModal()`-modal) — a modal's own `<select>` keeps its native type-ahead
+while focused, everything else still seeds the command bar as usual; any *other* dialog (calibrate,
+known-scale) still blocks the command bar entirely, unchanged.
+
+**The inspector's "New system" name/service fields are typeable too** (`route.new-system-name`/
+`-service` or bare `name`/`service`) — the "Add" button (`graph-create-system`) stays a manual click
+only. Widening the sweep to include text inputs for this also incidentally makes `graph-tag-input`
+("Equipment tag") reachable, a genuine existing property that was simply never sweepable before.
 
 **Action buttons** — the page's own buttons that have no keyboard shortcut, typed by name (no
 single-letter aliases, since every letter is already a tool key): `undo`/`redo` (`re`), `zoomfit`

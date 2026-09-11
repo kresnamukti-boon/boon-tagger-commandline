@@ -273,6 +273,14 @@ function makeFakeTimers(){
 // double-quoted value ('input[type="range"]'), and a bare tag name
 // ('select'). Not intended to support anything beyond these three forms.
 function matchesSelector(el, selector){
+  // Round 19: cmdSweepControls now passes a single comma-separated selector
+  // list (so real querySelectorAll returns every match in one document-order
+  // pass, instead of type-grouped chunks from separate calls) — split it the
+  // same way Element.matches() does for a selector list: match if any
+  // comma-branch matches, real leading/trailing whitespace trimmed per branch.
+  if (selector.indexOf(',') !== -1){
+    return selector.split(',').some(function(s){ return matchesSelector(el, s.trim()); });
+  }
   let m;
   if ((m = /^\[([a-zA-Z0-9-]+)\]$/.exec(selector))){
     return el.hasAttribute ? el.hasAttribute(m[1]) : false;
@@ -2473,13 +2481,27 @@ function loadCoreModule(win){
     ok(byId['rw-cmd-input'].value === '', 'the command input is never seeded/opened for this — it\'s a direct repeat, not a search');
   }
 
-  /* ---------- 110. Space falls through to the ordinary dropdown when no tool has been run yet ---------- */
+  /* ---------- 110. Space opens the bar AND its tool dropdown when no tool has been run yet, without seeding a literal space character (Kresna's own report, corrected) ---------- */
+  // Originally this fell through to the ordinary capture path, which seeded the
+  // bar with a literal space and immediately ran onInput() on it —
+  // RW._cmdMatch(' ') trims to '' and returns the entire command table (every
+  // tool AND action together), which read as a wall of unrelated commands the
+  // moment anyone hit Space just to get started. A first attempt at a fix
+  // suppressed the dropdown entirely, but Kresna's own follow-up made clear
+  // the dropdown should still expand — just scoped to the tool list (kind
+  // NATIVE), the same starting menu "initializing the console" implies,
+  // never GRAPH_ACTIONS' button vocabulary (undo/redo/finish/cancel/...).
   {
     const { win, byId, doc } = makeStubWindow();
     loadModule(win);
     const bodyTarget = makeElement('div', byId);
     doc._fire('keydown', { target: bodyTarget, key: ' ' });
-    ok(byId['rw-cmd-input'].value === ' ', 'with no RW._cmdLastTool recorded, Space is captured normally, same as any other character');
+    ok(byId['rw-cmd-input'] && byId['rw-cmd-input'].value === '',
+       'with no RW._cmdLastTool recorded, Space opens the bar without seeding it with a space character');
+    const rows = byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children;
+    ok(rows && rows.length > 0, 'the tool dropdown DOES expand — this is "initialize the console," not a no-op');
+    ok(rows && rows.some(function(r){ return r.innerText.indexOf('linear') === 0; }),
+       'a real tool (linear) is offered right away, with nothing typed');
   }
 
   /* ---------- 111. Space is a toggle: while RW._cmdToolArmed is true, it CLOSES that tool instead of repeating ---------- */
@@ -2519,7 +2541,8 @@ function loadCoreModule(win){
     doc._fire('keydown', { target: bodyTarget, key: ' ' });
 
     ok(keys.length === 0, 'RW._cmdToolArmed stays false since nothing ran through RW.runCommand — Space does not close');
-    ok(byId['rw-cmd-input'].value === ' ', 'falls through to the ordinary capture instead');
+    ok(byId['rw-cmd-input'] && byId['rw-cmd-input'].value === '',
+       'falls through to the "nothing to repeat" branch instead — the bar opens empty, not seeded with a space character');
   }
 
   /* ---------- 111c. Running a mode switch (pan/select/etc) clears RW._cmdToolArmed too, so Space repeats instead of closing ---------- */
@@ -4183,7 +4206,11 @@ function loadCoreModule(win){
        'a control inside an open <dialog> never appears, even nested under the inspector aside');
   }
 
-  /* ---------- 193. Graph host: graph-new-system-service is excluded by the chrome rule; a real sibling param survives ---------- */
+  /* ---------- 193. Graph host: round 19 REVERSES this — graph-new-system-service is now admitted, per explicit instruction; a real sibling param is unaffected ---------- */
+  // Was: "graph-new-system-service is excluded by the chrome rule." Round 15's
+  // wholesale graph-new- exclusion is gone (Kresna explicitly asked for the
+  // "New system" name/service fields to become typeable, while graph-create-system
+  // stays out because it's a <button>, never swept at all).
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
@@ -4197,7 +4224,7 @@ function loadCoreModule(win){
     inspector.appendChild(width);
 
     const params = RW._cmdToolSettingsList('route');
-    ok(!params.some(p => p.id === 'graph-new-system-service'), 'the "New system" creator-block control is excluded');
+    ok(params.some(p => p.id === 'graph-new-system-service'), 'round 19: the "New system" service control is now admitted (was excluded before this round)');
     ok(params.some(p => p.id === 'graph-width-input'), 'a genuine sibling param is unaffected');
   }
 
@@ -4641,6 +4668,22 @@ function loadCoreModule(win){
     return label;
   }
 
+  // A <dialog> fixture for one of the round-19 config-dialog modals
+  // (branch-fitting, change-size, GRD placement, riser elevation) — reuses
+  // makeGraphField for its own fields, the same <label><span> shape
+  // cmdControlLiveLabel already expects. Appended to doc.body directly, NOT
+  // to makeGraphInspector's <aside> — confirmed live these dialogs are their
+  // own top-level element, not nested inside the inspector aside. `open`
+  // (default true) sets the dialog's own .open flag, matching cmdOpenDialogs's
+  // own check (`d.open || d.hasAttribute('open')`).
+  function makeGraphModal(win, byId, id, open){
+    const dialog = makeElement('dialog', byId);
+    dialog.id = id;
+    dialog.open = open !== false;
+    win.document.body.appendChild(dialog);
+    return dialog;
+  }
+
   /* ---------- 218. round profile flips route's own width control's live label to "Diameter (in)" — "diameter" now matches it, "width" still does too ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
@@ -4738,6 +4781,452 @@ function loadCoreModule(win){
     inp.dispatchEvent({ type: 'input' });
     ok(!byId['rw-cmd-menu'] || byId['rw-cmd-menu']._children.every(r => !isSettingsRow(r)),
        '"diameter" does not match wand\'s tolerance control via the decoy label — label-matching never applies on the annotate host');
+  }
+
+  /* =====================================================================
+   * Round 19: the four per-tool config-dialog modals (branch fitting,
+   * change size, GRD placement, riser elevation), their 8 new commands,
+   * and the "New system" fields + text-input support.
+   * ===================================================================== */
+
+  /* ---------- 222. with the branch-fitting modal open, branch.'s settings list surfaces only the modal's own fields, stamped with item.modal ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap'], ['wye', 'Wye']]);
+    typeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+    const widthInput = makeElement('input', byId);
+    widthInput.id = 'graph-branch-fitting-width-input'; widthInput.type = 'number'; widthInput.value = '6'; widthInput.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Width (in)', widthInput));
+    // An ordinary inspector field under branch's own flat "graph-" prefix — must NOT appear.
+    const inspector = makeGraphInspector(win, byId);
+    const decoy = makeElement('input', byId);
+    decoy.id = 'graph-not-a-modal-field'; decoy.type = 'number'; decoy.offsetParent = {};
+    inspector.appendChild(decoy);
+
+    const params = RW._cmdToolSettingsList('branch');
+    ok(params.length === 2, 'only the modal\'s own two fields are listed while it is open');
+    ok(params.every(p => p.modal === 'graph-branch-fitting-modal'), 'every listed item is stamped with the owning modal id');
+    ok(params.some(p => p.param === 'type-select' && p.label === 'Fitting type'), 'the type select is listed with its live label');
+    ok(!params.some(p => p.id === 'graph-not-a-modal-field'), 'an ordinary inspector field under the same flat prefix is excluded while the modal is open');
+  }
+
+  /* ---------- 223. the same query falls back to the ordinary (today: empty) behavior once the modal is closed ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal', false); // closed
+    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap']]);
+    typeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+
+    const params = RW._cmdToolSettingsList('branch');
+    ok(params.length === 0, 'with the modal closed, branch.\'s listing is empty exactly as before this round (a closed dialog\'s fields are rejected via the ordinary inside-DIALOG path)');
+  }
+
+  /* ---------- 224. a different tool's query never sees another tool's open-modal fields ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap']]);
+    typeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+
+    const routeParams = RW._cmdToolSettingsList('route');
+    ok(!routeParams.some(p => p.id === 'graph-branch-fitting-type-select'),
+       "route's own query never sees branch's open-modal field — rejected via the ordinary inside-dialog path, since route has no modal of its own open");
+  }
+
+  /* ---------- 225. calibrate/known-scale (non-recognized) modal controls stay excluded from EVERY graph tool's listing, not just route's (test 192's own tool) ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const dialog = makeElement('dialog', byId);
+    dialog.open = true;
+    const calInput = makeElement('input', byId);
+    calInput.id = 'graph-calibrate-feet'; calInput.type = 'number'; calInput.offsetParent = {};
+    dialog.appendChild(calInput);
+    inspector.appendChild(dialog); // deliberately inside the inspector, same as test 192
+
+    const tools = RW._cmdTable.filter(e => e.kind === 'native' && e.name !== 'select').map(e => e.name);
+    ok(tools.length === 10, 'sanity: 10 real graph tools besides select');
+    tools.forEach(function(tool){
+      const params = RW._cmdToolSettingsList(tool);
+      ok(params.every(p => p.id !== 'graph-calibrate-feet'), tool + '. never lists a control inside the non-recognized calibrate dialog');
+    });
+  }
+
+  /* ---------- 226. branch's conditionally-visible modal field appears/disappears purely from offsetParent — zero new logic needed ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const flushBoot = makeElement('input', byId);
+    flushBoot.id = 'graph-branch-fitting-rect-flush-boot'; flushBoot.type = 'checkbox'; flushBoot.offsetParent = null; // hidden — e.g. round profile
+    modal.appendChild(makeGraphField(byId, 'Flush boot', flushBoot));
+
+    ok(!RW._cmdToolSettingsList('branch').some(p => p.param === 'rect-flush-boot'),
+       'hidden while offsetParent is null — excluded exactly like every other hidden control, no modal-specific logic');
+
+    flushBoot.offsetParent = {}; // e.g. switched to rectangular
+    ok(RW._cmdToolSettingsList('branch').some(p => p.param === 'rect-flush-boot'),
+       'visible once offsetParent is set — same plain visibility check, inside the modal too');
+  }
+
+  /* ---------- 227. RW._cmdApplySetting on a modal param writes the real control, skips the re-arm (no RW._cmdDispatchAppKey call), but still stamps _cmdLastUserCmdAt, and names the dialog instead of "re-armed" ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const widthInput = makeElement('input', byId);
+    widthInput.id = 'graph-branch-fitting-width-input'; widthInput.type = 'number'; widthInput.value = '6'; widthInput.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Width (in)', widthInput));
+
+    let dispatchCalls = 0;
+    const realDispatch = RW._cmdDispatchAppKey;
+    RW._cmdDispatchAppKey = function(){ dispatchCalls++; return realDispatch.apply(this, arguments); };
+    const before = RW._cmdLastUserCmdAt;
+
+    const wrote = RW._cmdApplySetting('branch', 'width-input', '8');
+    ok(wrote === true, 'the write itself succeeds');
+    ok(widthInput.value === '8', 'the real control was actually written');
+    ok(dispatchCalls === 0, 'RW._cmdDispatchAppKey is never called while the modal is open — the re-arm is skipped');
+    ok(RW._cmdLastUserCmdAt !== before, '_cmdLastUserCmdAt is still stamped directly, preserving the auto-select grace window a real re-arm used to provide');
+    ok(RW._lastStatus.indexOf('branch fitting dialog still open') !== -1, 'status names the dialog instead of "re-armed"');
+    ok(RW._lastStatus.indexOf('re-armed') === -1, 'the "re-armed" wording never appears for a modal write');
+  }
+
+  /* ---------- 228. the same call with the modal closed fails cleanly ("not on the page") ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    ok(RW._cmdApplySetting('branch', 'width-input', '8') === false, 'fails when no modal is open and no ordinary control exists under branch\'s own prefix either');
+    ok(RW._lastStatus.indexOf('is not on the page right now') !== -1, 'status reports the control is not on the page');
+  }
+
+  /* ---------- 229. all 8 new modal-action commands click their real button when present, and report the conditional hint when absent ---------- */
+  {
+    const MODAL_ACTIONS = [
+      ['choose', 'graph-branch-fitting-submit', 'branch fitting'],
+      ['cancelbranch', 'graph-branch-fitting-cancel', 'branch fitting'],
+      ['apply', 'graph-checkpoint-transition-submit', 'change size'],
+      ['cancelsize', 'graph-checkpoint-transition-cancel', 'change size'],
+      ['place', 'graph-checkpoint-grd-submit', 'place GRD'],
+      ['cancelgrd', 'graph-checkpoint-grd-cancel', 'place GRD'],
+      ['placeriser', 'graph-checkpoint-riser-submit', 'riser elevation'],
+      ['cancelriser', 'graph-checkpoint-riser-cancel', 'riser elevation']
+    ];
+    MODAL_ACTIONS.forEach(function(row){
+      const name = row[0], btnId = row[1], hint = row[2];
+      {
+        const { win } = makeStubWindow({ host: GRAPH_HOST });
+        loadModule(win, null, null, { activeTool: 'select' });
+        ok(win.__RW.runCommand(name) === false, name + ': returns false when its button is not on the page');
+        ok(win.__RW._lastStatus.indexOf(hint) !== -1, name + ': status names the dialog it is conditional on (' + hint + ')');
+      }
+      {
+        const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+        loadModule(win, null, null, { activeTool: 'select' });
+        const btn = makeElement('button', byId);
+        btn.id = btnId; btn.offsetParent = {};
+        win.document.body.appendChild(btn);
+        ok(win.__RW.runCommand(name) === true && btn._clicked === 1, name + ': clicks ' + btnId + ' when present');
+      }
+    });
+  }
+
+  /* ---------- 230. isolation admits all 8 new commands while their own tool is isolated, and never refuses one merely because a DIFFERENT tool is isolated (pins the flat-list design decision) ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' }); // isolated to branch
+    const RW = win.__RW;
+    ['choose', 'cancelbranch', 'apply', 'cancelsize', 'place', 'cancelgrd', 'placeriser', 'cancelriser'].forEach(function(name){
+      ok(RW.runCommand(name) === false, name + ': its button is missing, but isolation never refuses it');
+      ok(RW._lastStatus.indexOf('is active') === -1, name + ': the failure is "not on the page," never the isolation message');
+    });
+
+    const { win: win2 } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win2, null, null, { activeTool: 'route' }); // isolated to a DIFFERENT tool
+    ok(win2.__RW.runCommand('place') === false, '"place" still fails while route (not grd) is isolated');
+    ok(win2.__RW._lastStatus.indexOf('is active') === -1, 'but not because isolation refused it');
+    ok(win2.__RW._lastStatus.indexOf('not on the page') !== -1, 'the actual reason is simply that the GRD dialog is not open');
+  }
+
+  /* ---------- 231. a text-type write (graph-new-system-name) sets the exact string with no numeric parsing, and renders as (text, now "…") ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const nameInput = makeElement('input', byId);
+    nameInput.id = 'graph-new-system-name'; nameInput.type = 'text'; nameInput.value = ''; nameInput.offsetParent = {};
+    inspector.appendChild(nameInput);
+
+    const params = RW._cmdToolSettingsList('route');
+    const item = params.find(p => p.id === 'graph-new-system-name');
+    ok(!!item && item.type === 'text', 'graph-new-system-name is listed and typed "text"');
+
+    ok(RW._cmdApplySetting('route', 'new-system-name', '12 Supply') === true, 'the write succeeds');
+    ok(nameInput.value === '12 Supply', 'the exact string is set with no numeric parsing (the numeric path would have produced NaN)');
+    ok(RW._lastStatus.indexOf('set to "12 Supply"') !== -1, 'status quotes the exact string');
+
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route.new';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('(text, now "12 Supply")') !== -1),
+       'the dropdown row renders the text branch, not a min–max numeric range');
+  }
+
+  /* ---------- 232. graph-create-system ("Add") never gets a table entry and is never reachable by any command name ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(!RW._cmdTable.some(e => e.btn === 'graph-create-system'), 'no table entry references graph-create-system as its button');
+  }
+
+  /* ---------- 233. Step 9: typing still works while a RECOGNIZED modal (branch-fitting) is open ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const bodyTarget = makeElement('div', byId);
+    makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+
+    win.document._fire('keydown', { target: bodyTarget, key: 'a' });
+    ok(byId['rw-cmd-input'] && byId['rw-cmd-input'].value === 'a',
+       'a real keydown DOES seed the command bar while the recognized branch-fitting modal is open');
+  }
+
+  /* ---------- 234. a NON-recognized modal (calibrate) still bails, even after the round-19 narrowing (test 204's own guarantee, re-pinned here by id rather than by dialog count) ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const bodyTarget = makeElement('div', byId);
+    const dialog = makeElement('dialog', byId);
+    dialog.id = 'graph-calibrate-modal';
+    dialog.open = true;
+    win.document.body.appendChild(dialog);
+
+    win.document._fire('keydown', { target: bodyTarget, key: 'a' });
+    ok(!byId['rw-cmd-input'] || byId['rw-cmd-input'].value === '',
+       'calibrate (not one of the four recognized modals) still bails exactly as before this round');
+  }
+
+  /* ---------- 235. a focused <select> inside a recognized open modal does not get its keystroke eaten into the command bar ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap'], ['wye', 'Wye']]);
+    modal.appendChild(typeSel);
+
+    win.document._fire('keydown', { target: typeSel, key: 'w' });
+    ok(!byId['rw-cmd-input'] || byId['rw-cmd-input'].value === '',
+       'a keydown targeting a <select> inside a recognized open modal is left alone for the select\'s own native type-ahead');
+  }
+
+  /* ---------- 236. the same recognized-modal-open state still seeds the bar for a plain, non-select target — the SELECT guard is scoped narrowly ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const bodyTarget = makeElement('div', byId);
+
+    win.document._fire('keydown', { target: bodyTarget, key: 'c' });
+    ok(byId['rw-cmd-input'] && byId['rw-cmd-input'].value === 'c',
+       'a plain div target still seeds the command bar, even with the same modal open');
+  }
+
+  /* ---------- 237. branch.'s settings list is ordered top-to-bottom by real DOM position, not grouped by control type (Kresna's own feedback) ---------- */
+  // cmdSweepControls originally ran five separate querySelectorAll passes (one
+  // per input type) and concatenated the results, so every listing read out
+  // grouped by type — all ranges/numbers first, then checkboxes, then text,
+  // then selects — regardless of how the fields are actually laid out on
+  // screen. Round 19's real branch-fitting modal interleaves types (select,
+  // select, number, select, number, number, checkbox), which made that
+  // grouping visibly wrong the first time a real multi-type modal existed.
+  // This fixture reproduces that exact shape and pins the fix: a single
+  // combined selector, returned in one document-order pass.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+
+    const fittingSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap'], ['wye', 'Wye']]);
+    fittingSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Fitting type', fittingSel));
+
+    const shapeSel = makeSelect(byId, 'graph-branch-fitting-shape-select', [['round', 'Round'], ['rect', 'Rectangular']]);
+    shapeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Branch shape', shapeSel));
+
+    const startWidth = makeElement('input', byId);
+    startWidth.id = 'graph-branch-fitting-starting-width-input'; startWidth.type = 'number'; startWidth.value = '12'; startWidth.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Starting width (in)', startWidth));
+
+    const alignSel = makeSelect(byId, 'graph-branch-fitting-alignment-select', [['center', 'Center'], ['top', 'Top']]);
+    alignSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Alignment', alignSel));
+
+    const width = makeElement('input', byId);
+    width.id = 'graph-branch-fitting-width-input'; width.type = 'number'; width.value = '6'; width.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Width (in)', width));
+
+    const height = makeElement('input', byId);
+    height.id = 'graph-branch-fitting-height-input'; height.type = 'number'; height.value = '4'; height.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Height (in)', height));
+
+    const damper = makeElement('input', byId);
+    damper.id = 'graph-branch-fitting-damper-checkbox'; damper.type = 'checkbox'; damper.checked = true; damper.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Damper', damper));
+
+    const params = RW._cmdToolSettingsList('branch');
+    ok(params.length === 7, 'all seven of branch\'s interleaved-type fields are found');
+    const labels = params.map(p => p.label);
+    ok(JSON.stringify(labels) === JSON.stringify([
+      'Fitting type', 'Branch shape', 'Starting width (in)', 'Alignment', 'Width (in)', 'Height (in)', 'Damper'
+    ]), 'the list reads top to bottom in real DOM order — Fitting, Branch shape, Starting width, Alignment, Width, Height, Damper — not grouped by control type (was: numbers/ranges first, then the checkbox, then the selects)');
+  }
+
+  /* ---------- 238. RW._cmdIsolatedTool() falls back to cmdOpenModalTool() so a modal isolates the command line even when activeTool doesn't confirm it (Kresna's own request) ---------- */
+  // Change-size/GRD's own activeTool mapping was never confirmed live (unlike
+  // branch/vertical) — before this fix, opening one of those two modals with
+  // activeTool unreadable left isolation off entirely, so the full, unrelated
+  // command list stayed reachable instead of narrowing to just that modal's
+  // own fields/actions.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: null }); // simulates the unconfirmed grd/transition mapping
+    const RW = win.__RW;
+    makeGraphModal(win, byId, 'graph-checkpoint-grd-modal');
+
+    ok(RW._cmdIsolatedTool() === 'grd',
+       'an open, recognized modal isolates the command line to its own tool even when activeTool itself reads null');
+
+    RW._lastStatus = '';
+    const ok1 = RW.runCommand('route');
+    ok(ok1 === false && RW._lastStatus.indexOf('grd is active') !== -1,
+       'a command unrelated to the open modal is refused, same as ordinary activeTool-driven isolation');
+
+    const ok2 = RW.runCommand('place'); // one of GRD's own allowlisted commands — its button isn't on the page in this fixture
+    ok(ok2 === false && RW._lastStatus.indexOf('grd is active') === -1,
+       '"place" itself is never refused as a tool switch — it just reports its own button missing');
+  }
+
+  /* ---------- 239. Escape reverting an armed tool now reports a confirming status message, matching typing "select" explicitly (Kresna's own request) ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTool: 'linear', mode: 'draw' };
+    const timers = makeFakeTimers();
+    loadModule(win, as, timers);
+    const RW = win.__RW;
+    RW._lastStatus = '';
+
+    win.document._fire('keydown', { target: makeElement('div', byId), key: 'Escape' });
+    timers.runTimeouts();
+    ok(RW._lastStatus.indexOf('currentTool') !== -1,
+       'a real Escape that actually reverts an armed tool now writes a confirming message to the status line, not just console.log');
+  }
+
+  /* ---------- 240. Escape still reports nothing when there was no tool to revert from — no spurious confirmation ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    const as = { currentTool: null, mode: 'select' }; // already resting
+    const timers = makeFakeTimers();
+    loadModule(win, as, timers);
+    const RW = win.__RW;
+    RW._lastStatus = '';
+
+    win.document._fire('keydown', { target: makeElement('div', byId), key: 'Escape' });
+    timers.runTimeouts();
+    ok(RW._lastStatus === '',
+       'Escape with nothing armed stays silent — RW._cmdGoSelect short-circuits before ever dispatching or reporting anything');
+  }
+
+  /* ---------- 241. on the graph host, the very-first-Space tool dropdown excludes every GRAPH_ACTIONS entry — pins "tools, not commands" ---------- */
+  // The annotate host's own table is 100% kind:NATIVE, so test 110 alone can't
+  // tell "filtered to tools" apart from "just showing the whole table" — the
+  // graph host is where GRAPH_ACTIONS (undo/redo/finish/cancel/calibrate/the
+  // round-19 modal actions, all kind:ACTION) actually mixes into RW._cmdTable,
+  // so it's the one case that can prove those are excluded.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: null });
+
+    win.document._fire('keydown', { target: makeElement('div', byId), key: ' ' });
+    const rows = byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children;
+    ok(rows && rows.length > 0, 'the tool dropdown expands on the graph host too');
+    ok(rows && rows.some(function(r){ return r.innerText.indexOf('route') === 0; }),
+       'a real graph tool (route) is offered');
+    ok(rows && !rows.some(function(r){ return r.innerText.indexOf('undo') === 0; }),
+       'undo — an action, not a tool — is never offered in this starting menu');
+  }
+
+  /* ---------- 242. Space also "initializes the console" while a config-dialog modal is open — no synthetic key dispatch, just its own dropdown (Kresna: "I want that behaviour also be in branch mode") ---------- */
+  // Before this fix, Space here fell into the ordinary "RW._cmdToolArmed ->
+  // close" branch (branch is a real armed draw tool) and dispatched a
+  // synthetic select keydown at the app while the branch-fitting dialog was
+  // still open — never actually exercised against a live dialog, and not
+  // something to start relying on. Now it's treated like the nothing-armed
+  // case: open the bar and call onInput() on the empty value, which (via the
+  // existing isolated-tool blend) shows branch's own fields plus its allowed
+  // actions (choose/cancelbranch).
+  {
+    const { win, byId, doc } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW.runCommand('branch'); // arms branch for real: RW._cmdToolArmed=true, RW._cmdLastTool='branch'
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap']]);
+    typeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+
+    const keys = [];
+    const origDispatch = RW._cmdDispatchAppKey;
+    RW._cmdDispatchAppKey = function(k, q){ keys.push(k); return origDispatch(k, q); };
+
+    const bodyTarget = makeElement('div', byId);
+    doc._fire('keydown', { target: bodyTarget, key: ' ' });
+
+    ok(keys.length === 0,
+       'Space while the branch-fitting modal is open never dispatches a synthetic key — it does not try to close the tool');
+    ok(byId['rw-cmd-input'] && byId['rw-cmd-input'].value === '', 'the bar opens empty, no character seeded');
+    const rows = byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children;
+    ok(rows && rows.some(function(r){ return r.innerText.indexOf('Fitting type') === 0; }),
+       "branch's own field (Fitting type) is offered");
+    ok(rows && rows.some(function(r){ return r.innerText.indexOf('choose') === 0; }),
+       '"choose" — branch\'s own submit action — is offered too, the same blend a typed query already shows');
+  }
+
+  /* ---------- 243. once the modal closes, Space goes back to its ordinary close-the-armed-tool behavior — the new branch does not leak beyond "a modal is actually open" ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW.runCommand('branch');
+    // No modal fixture this time — cmdOpenModalTool() has nothing to find.
+
+    const keys = [];
+    const origDispatch = RW._cmdDispatchAppKey;
+    RW._cmdDispatchAppKey = function(k, q){ keys.push(k); return origDispatch(k, q); };
+
+    const bodyTarget = makeElement('div', byId);
+    doc._fire('keydown', { target: bodyTarget, key: ' ' });
+
+    ok(keys.length === 1 && keys[0] === 's',
+       'with no modal open, Space closes the armed tool exactly as before this round');
   }
 
   finish();
