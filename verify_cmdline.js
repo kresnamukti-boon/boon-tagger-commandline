@@ -4440,6 +4440,42 @@ function loadCoreModule(win){
     ok(graphWin.__RW._lastStatus.indexOf('deliberately not clickable') !== -1, 'and says why');
   }
 
+  /* ---------- 207. reported live: a tool-switch dispatched while #rw-cmd-input is still focused is blurred first ---------- */
+  // The real graph app refuses to switch tools while document.activeElement
+  // is an INPUT/SELECT/TEXTAREA (confirmed live by Kresna: route/flex never
+  // armed, while undo/redo — a plain click, never gated on focus — worked
+  // fine). This harness doesn't model document.activeElement, so the
+  // regression this guards is really "RW.runCommand blurs the input BEFORE
+  // dispatching, not after" — checked here by inspecting focus state from
+  // inside the dispatch callback itself, at the exact moment a real app
+  // handler would also be checking it.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    const inputEl = byId['rw-cmd-input'];
+    inputEl.focus();
+    ok(inputEl._focused === true, 'sanity: the command input starts focused, simulating mid-typed/confirmed entry');
+    let focusedAtDispatch = null;
+    RW._cmdDispatchAppKey = function(){ focusedAtDispatch = inputEl._focused; };
+    RW.runCommand('route');
+    ok(focusedAtDispatch === false, 'the input was already blurred by the time the tool-switch key was dispatched');
+    ok(inputEl._focused === false, 'and stays blurred afterward');
+  }
+
+  /* ---------- 208. the same blur-before-dispatch is harmless (and a no-op) on the annotate host ---------- */
+  {
+    const { win, byId } = makeStubWindow(); // default host: annotate
+    loadModule(win);
+    const RW = win.__RW;
+    const inputEl = byId['rw-cmd-input'];
+    inputEl.focus();
+    let focusedAtDispatch = null;
+    RW._cmdDispatchAppKey = function(){ focusedAtDispatch = inputEl._focused; };
+    RW.runCommand('mirror');
+    ok(focusedAtDispatch === false, 'blurred before dispatch here too — no regression, same fix applies to both hosts');
+  }
+
   finish();
 })();
 

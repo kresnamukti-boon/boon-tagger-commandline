@@ -1108,6 +1108,26 @@
   RW.runCommand = function(name){
     const entry = findEntry(name);
     if (!entry){ RW._commitStatus && RW._commitStatus('unknown command: ' + name); return false; }
+    // Reported live (round 16): on the graph host, tool-switch commands
+    // (route, flex, ...) silently failed to arm while action commands
+    // (undo, redo, ...) worked fine. Root cause: the graph app's own
+    // keydown handler refuses to switch tools whenever
+    // `document.activeElement` is an INPUT/SELECT/TEXTAREA (its own guard
+    // against hijacking a real form field) — and #rw-cmd-input, this
+    // project's own command bar, is exactly that while a command is being
+    // typed/confirmed. Every call site (runAndClear, the Space-repeat
+    // listener, ...) used to blur the input only AFTER calling
+    // RW.runCommand, which was too late: the synthetic keydown a tool-switch
+    // dispatches had already been read and ignored by the app's handler by
+    // then. Blurring HERE, before any dispatch (key or click) happens,
+    // fixes every call site at once instead of reordering each one
+    // individually. Unconditional rather than checking
+    // `document.activeElement === inputEl` first, since that global isn't
+    // something this project's own DOM test stub models — blur() is a
+    // harmless no-op when the input isn't focused, in both a real browser
+    // and the stub. No observed effect on the annotate host or on action
+    // commands (clicking a button never depended on focus).
+    if (inputEl && inputEl.blur) inputEl.blur();
     // Stamped on every successful run — the auto-select watcher's user-grace
     // window (see below) reads this so a deliberately-run command like `pan`
     // isn't immediately fought back to select.

@@ -2112,6 +2112,40 @@ but deliberately **not** clicked live on this page, since each auto-submits a re
 real project data — the harness coverage was judged sufficient without exercising that against a live
 job.
 
+## Round 16: reported live — tool-switch commands silently failed to arm; action commands worked fine
+
+Kresna live-tested round 15's build themselves and reported: `route`/`flex` (and, by inspection, every
+other native tool-switch command) did not activate, while `undo`/`redo` (and, by inspection, every
+other action command) worked. This pointed straight at the one structural difference between the two
+command kinds — a synthetic keydown dispatch vs. a real button click — rather than at anything
+specific to any one tool or action.
+
+**Root cause.** The graph app's own keydown handler refuses to switch tools whenever
+`document.activeElement` is an `INPUT`/`SELECT`/`TEXTAREA` — its own guard against a real typed
+shortcut hijacking a form field the user is typing into (found in the graph session's own JS bundle
+during round 15's read of it, `graph-entry.js`'s main shortcut handler). `#rw-cmd-input`, this
+project's own command bar, is exactly that kind of element while a command is being typed or
+confirmed. Every call site that runs a command (`runAndClear`, the Space-repeat listener, ...) blurred
+the input **after** calling `RW.runCommand()` — by which point a tool-switch entry had already
+dispatched its synthetic keydown and been silently ignored, while an action entry's plain `btn.click()`
+never depended on focus at all, so it kept working regardless.
+
+**Fix.** `RW.runCommand` now blurs `inputEl` unconditionally as its first action, before dispatching
+anything (key or click) — one change covers every call site, rather than reordering each one
+individually. Unconditional rather than gated on `document.activeElement === inputEl`, since
+`document.activeElement` isn't something this project's own Node test harness models; `blur()` is a
+harmless no-op when the input isn't focused, in both a real browser and the harness stub.
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **582 passed, 0 failed** (578 before
+this round + 4 new — a graph-host test asserting the input is already blurred at the exact moment a
+tool-switch key is dispatched, checked from inside the dispatch callback itself since the harness has
+no `document.activeElement`; an annotate-host counterpart confirming the same fix is a harmless no-op
+there). Loader rebuilt (142104 bytes). **Live-verified** on the round-15 URL, after a genuinely fresh
+page load (see round 15's own operational finding about same-URL "reload" not clearing
+`window.__RW`): focused `#rw-cmd-input`, then ran `flex` while it was still focused —
+`__graphDebug.activeTool` flipped from `route` to `flex` (previously: no-op) — then reverted to
+`route`. `pageEntities`/`history` stayed `0` and `#graph-save-status` read "Synced" throughout.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery
