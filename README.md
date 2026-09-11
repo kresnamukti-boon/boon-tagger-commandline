@@ -347,10 +347,12 @@ same prefix becomes usable automatically, no update needed here:
   value (and range, for numeric ones).
 - **Or just type the param name bare** (e.g. `tolerance`, no `wand.` prefix) whenever that tool is
   already the one currently armed — it's blended straight into the ordinary autocomplete
-  (highlighted in the same settings color), right alongside every other command. This is
-  **additive, not exclusive**: everything else you could already type — switching to a totally
-  different tool, tag search, anything — still works exactly the same while a tool with settings
-  is active. Nothing is blocked; the active tool's own params are just an extra, faster option.
+  (highlighted in the same settings color), right alongside every other command. **On this host
+  (annotate)** this is **additive, not exclusive**: everything else you could already type —
+  switching to a totally different tool, tag search, anything — still works exactly the same while
+  a tool with settings is active. Nothing is blocked; the active tool's own params are just an
+  extra, faster option. The graph host's own duct tools work the opposite way — see "Tool
+  isolation" under "The graph ('Duct Takeoff') host" below.
 
 **What happens next depends on the param's type:**
 
@@ -451,6 +453,34 @@ gauge...)" section, in particular. A param behind a collapsed group is still rea
 directly (e.g. `route.gauge-select=24ga`) expands the group to make the write, and `route.`'s own
 listing names how many more exist that way. `RW._cmdParamScopeDiagnose()` is a read-only console
 diagnostic that reports every `graph-` control and why it was or wasn't included.
+
+**Tool isolation: the command line is modal on this host while a duct tool is armed** — the
+opposite of the annotate host's "additive, not exclusive" behavior above (confirmed via
+`AskUserQuestion`). Once `route`/`flex`/`extend`/... is armed, only three things still match:
+that tool's own properties (bare, or via `route.`), the ways out (`select`, Escape, Space), and
+the route-lifecycle actions `finish`/`cancel`. Everything else — every other tool name, every
+other action button (`undo`, `zoomfit`, ...), and `#` system search — matches nothing, and the
+status line says why (e.g. `route is active — press Escape or type "select" first to switch
+tools`), so a blocked query never reads as a silent typo. This is enforced twice: the dropdown
+itself never lists a blocked entry, and `RW.runCommand` refuses one directly too (the same
+belt-and-suspenders precedent `FORBIDDEN_BUTTON_IDS` set), so a direct console call can't bypass
+it either. `route.gauge-select=24ga` and friends still work exactly as above — isolation
+restricts *other* tools, never the armed one's own properties, and a property write's own re-arm
+(`RW._cmdApplySetting` calling `RW.runCommand(route)` after every write) is explicitly exempted
+from its own guard. `__RW._cmdIsolateTools = false` in the console turns this off, restoring the
+old additive behavior on this host too.
+
+**Properties match by what the app is showing right now, not just their fixed DOM id** — every
+inspector field's live on-screen label is read fresh each time (confirmed live: every field wraps
+its control in a `<label>`, whose own leading `<span>` holds the text), so `system`/`network` both
+match route's system field ("System / network"), and `diameter` matches route's own width control
+*only* once its profile is actually `round` — the same element the app itself relabels from
+"Width (in)" to "Diameter (in)" on screen, with no id change at all. `width` keeps matching that
+same control by id regardless of profile; the two are additive, never a replacement for each
+other. The dropdown row itself displays whichever live label was found ("Diameter (in) (4, now
+4)"), falling back to the id-derived param name only when no label is discoverable — so a row
+picked by typing "diameter" never confusingly reads "width-input". This is graph-host only; the
+annotate host's wand/wrap/mline params are unaffected.
 
 **Action buttons** — the page's own buttons that have no keyboard shortcut, typed by name (no
 single-letter aliases, since every letter is already a tool key): `undo`/`redo` (`re`), `zoomfit`

@@ -4476,6 +4476,270 @@ function loadCoreModule(win){
     ok(focusedAtDispatch === false, 'blurred before dispatch here too — no regression, same fix applies to both hosts');
   }
 
+  /* ---------- 209. RW._cmdIsolatedTool(): the armed tool on the graph host, null for select/unreadable/annotate ---------- */
+  {
+    const { win: routeWin } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(routeWin, null, null, { activeTool: 'route' });
+    ok(routeWin.__RW._cmdIsolatedTool() === 'route', 'returns the armed tool\'s own name');
+
+    const { win: selectWin } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(selectWin, null, null, { activeTool: 'select' });
+    ok(selectWin.__RW._cmdIsolatedTool() === null, 'null while resting in select — nothing to isolate to');
+
+    const { win: unreadableWin } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(unreadableWin, null, null, {}); // no activeTool property at all
+    ok(unreadableWin.__RW._cmdIsolatedTool() === null, 'fails open (null) when activeTool is unreadable');
+
+    const { win: annotateWin } = makeStubWindow();
+    loadModule(annotateWin, { currentTool: 'magic_wand' });
+    ok(annotateWin.__RW._cmdIsolatedTool() === null, 'always null on the annotate host, regardless of what is armed');
+  }
+
+  /* ---------- 210. isolated: typing a different tool's name matches nothing and reports why ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'flex';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || byId['rw-cmd-menu']._children.length === 0,
+       'typing a blocked tool name while route is armed matches nothing');
+    ok(win.__RW._lastStatus.indexOf('route is active') !== -1 && win.__RW._lastStatus.indexOf('switch tools') !== -1,
+       'status explains why, naming the active tool');
+  }
+
+  /* ---------- 211. isolated: the active tool's own params still match bare, and via "route." ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '24'; width.offsetParent = {};
+    inspector.appendChild(width);
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'width';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => isSettingsRow(r) && r.innerText.indexOf('width-input') === 0),
+       'route\'s own param still matches bare while isolated — isolation restricts other tools, not the active one\'s params');
+
+    inp.value = 'route.';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('width-input') === 0),
+       '"route." still drills into its own properties while isolated');
+
+    inp.value = 'grd.';
+    inp.dispatchEvent({ type: 'input' });
+    // Checked via style.display, not children.length: the menu DOM element already
+    // exists with "route."'s own rows from just above, and clearing to a genuinely
+    // empty menuItems list hides it (menuEl.style.display = 'none') rather than
+    // clearing its stale _children — same convention the rest of this file's
+    // no-match assertions use (see the innerHTML setter's own comment).
+    ok(byId['rw-cmd-menu'].style.display === 'none',
+       '"grd." (a different tool\'s properties) is refused while route is isolated');
+    ok(win.__RW._lastStatus.indexOf('route is active') !== -1, 'and reports why');
+  }
+
+  /* ---------- 212. isolated: select/finish/cancel still match — the allowed escapes and route-lifecycle actions ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inp = byId['rw-cmd-input'];
+    ['select', 'finish', 'cancel'].forEach(function(name){
+      inp.value = name;
+      inp.dispatchEvent({ type: 'input' });
+      ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf(name) === 0),
+         '"' + name + '" still matches while route is isolated');
+    });
+  }
+
+  /* ---------- 213. isolated: # system search is refused too ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const sysSelect = makeSelect(byId, 'graph-system-select', [['sys1', 'FPTU (Supply)']]);
+    win.document.body.appendChild(sysSelect);
+    const inp = byId['rw-cmd-input'];
+    inp.value = '#fp';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || byId['rw-cmd-menu']._children.length === 0,
+       '# system search matches nothing while route is isolated');
+    ok(win.__RW._lastStatus.indexOf('route is active') !== -1 && win.__RW._lastStatus.indexOf('search systems') !== -1,
+       'status explains why');
+  }
+
+  /* ---------- 214. isolated: RW.runCommand refuses a blocked tool in code, not just via the dropdown; the tool's own re-arm is exempted ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+
+    ok(RW.runCommand('flex') === false, 'runCommand refuses a different tool directly, bypassing the dropdown entirely');
+    ok(JSON.stringify(keys) === JSON.stringify([]), 'no key is dispatched for the refused command');
+    ok(RW._lastStatus.indexOf('route is active') !== -1, 'status names the active tool');
+
+    ok(RW.runCommand('route') === true, 'runCommand still allows re-arming the SAME tool that is isolated');
+    ok(JSON.stringify(keys) === JSON.stringify(['r']), 'and it actually dispatches — the exemption RW._cmdApplySetting\'s re-arm depends on');
+  }
+
+  /* ---------- 215. isolated: RW._cmdApplySetting's own re-arm still works end-to-end under isolation ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '24'; width.offsetParent = {};
+    inspector.appendChild(width);
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+
+    RW._cmdApplySetting('route', 'width-input', '14');
+    ok(width.value === '14', 'the write itself still takes effect under isolation');
+    ok(JSON.stringify(keys) === JSON.stringify(['r']), 'and re-arming route (its own RW.runCommand("route") call) is not refused by its own guard');
+  }
+
+  /* ---------- 216. isolated: Escape and Space both still reach select — neither goes through RW.runCommand's gate ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW._cmdToolArmed = true; // simulate route having been armed via the command line
+
+    RW._cmdGoSelect('escape', true, true);
+    ok(keys.indexOf('s') !== -1, 'RW._cmdGoSelect (what Escape drives) still dispatches select while route is isolated');
+  }
+
+  /* ---------- 217. __RW._cmdIsolateTools = false restores the old additive behavior on the graph host ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    RW._cmdIsolateTools = false;
+    ok(RW._cmdIsolatedTool() === null, 'the hatch turns isolation off entirely');
+
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'flex';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('flex') === 0),
+       'with the hatch off, a different tool matches again, same as before this round');
+  }
+
+  // Builds the real inspector field markup confirmed live: <label><span>LABEL
+  // TEXT</span>CONTROL</label>. Used by the round-18 live-label tests below —
+  // cmdControlLiveLabel walks up to this exact structure.
+  function makeGraphField(byId, labelText, control){
+    const label = makeElement('label', byId);
+    const span = makeElement('span', byId);
+    span.innerText = labelText;
+    label.appendChild(span);
+    label.appendChild(control);
+    return label;
+  }
+
+  /* ---------- 218. round profile flips route's own width control's live label to "Diameter (in)" — "diameter" now matches it, "width" still does too ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '4'; width.offsetParent = {};
+    const field = makeGraphField(byId, 'Width (in)', width);
+    inspector.appendChild(field);
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'diameter';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || byId['rw-cmd-menu']._children.length === 0 || byId['rw-cmd-menu'].style.display === 'none',
+       'while rectangular ("Width (in)"), "diameter" does not match — it genuinely is not a diameter field right now');
+
+    inp.value = 'width';
+    inp.dispatchEvent({ type: 'input' });
+    // Displays as "Width (in)...", not "width-input...": a live label, once found,
+    // is what the row shows (round 18) — "width" still finding this row at all is
+    // what proves the id-based match is unaffected, not the row's own display text.
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('Width (in)') === 0),
+       '"width" still matches by id, unaffected — row displays the live label "Width (in)"');
+
+    // The app itself relabels the SAME element once profile flips to round —
+    // confirmed live via opencli; simulated here by changing only the live
+    // label span's text, not the control's id, matching what was observed.
+    span_of(field).innerText = 'Diameter (in)';
+
+    inp.value = 'diameter';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('Diameter (in)') === 0),
+       '"diameter" now matches the very same control once its live label reads "Diameter (in)" — and the row itself displays that live label, not "width-input"');
+
+    inp.value = 'width';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('Diameter (in)') === 0),
+       '"width" still matches it too, by id — label-matching is additive, never a replacement for id-matching');
+  }
+
+  function span_of(label){ return label.children.find(c => c.tagName === 'SPAN'); }
+
+  /* ---------- 219. "network" matches the system field by its own second label word; "system" still matches by id ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inspector = makeGraphInspector(win, byId);
+    const sys = makeSelect(byId, 'graph-system-select', [['sys1', 'Supply Air (Supply)']]);
+    sys.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'System / network', sys));
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'network';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('System / network') === 0),
+       '"network" matches the system field by the second word of its live label, not just its first');
+
+    inp.value = 'system';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('System / network') === 0),
+       '"system" still matches it too — by id (system-select) and by the label\'s first word alike');
+  }
+
+  /* ---------- 220. a graph control with no <label> wrapper falls back to its id-derived param name for both matching and display ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inspector = makeGraphInspector(win, byId);
+    const hanger = makeElement('input', byId);
+    hanger.id = 'graph-hanger-spacing-input'; hanger.type = 'number'; hanger.value = '8'; hanger.offsetParent = {};
+    inspector.appendChild(hanger); // no <label> ancestor at all
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'hanger';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('hanger-spacing-input') === 0),
+       'with no live label discoverable, matching and display both fall back to the id-derived param name, unchanged from before this round');
+  }
+
+  /* ---------- 221. annotate-host tripwire: item.label stays null there even behind an identical <label><span> wrapper — the round-18 addition is graph-only ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow(); // default host: annotate
+    loadModule(win, { currentTool: 'magic_wand' });
+    const RW = win.__RW;
+    const tolerance = makeElement('input', byId);
+    tolerance.id = 'magic-wand-tolerance'; tolerance.type = 'range'; tolerance.value = '40';
+    doc.body.appendChild(makeGraphField(byId, 'Diameter (in)', tolerance)); // decoy label — must be ignored on this host
+
+    const items = RW._cmdToolSettingsList('wand');
+    ok(items.length === 1 && items[0].label === null,
+       'item.label is always null on the annotate host, regardless of what DOM surrounds the control');
+
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'diameter';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || byId['rw-cmd-menu']._children.every(r => !isSettingsRow(r)),
+       '"diameter" does not match wand\'s tolerance control via the decoy label — label-matching never applies on the annotate host');
+  }
+
   finish();
 })();
 

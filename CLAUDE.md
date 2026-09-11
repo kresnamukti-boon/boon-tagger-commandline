@@ -2146,6 +2146,158 @@ page load (see round 15's own operational finding about same-URL "reload" not cl
 `__graphDebug.activeTool` flipped from `route` to `flex` (previously: no-op) — then reverted to
 `route`. `pageEntities`/`history` stayed `0` and `#graph-save-status` read "Synced" throughout.
 
+## Round 17: isolating the command line to the armed tool — graph host only, reverses round 5b there
+
+Kresna asked that route/flex/extend/and-friends stop being freely switchable while one is already
+armed: "we are still given the option to select and edit other tools. I want it to be isolated to
+only able to select and edit properties." Round 5b (above) had deliberately decided the opposite —
+"additive, not exclusive" — for the annotate host's wand/wrap/mline, confirmed by `AskUserQuestion`
+at the time. This round reverses that decision, but **only on the graph host**; the annotate host's
+own settings-blend behavior is untouched.
+
+Three follow-up questions, all confirmed via `AskUserQuestion`: (1) while a duct tool is armed, what
+should still be reachable besides its own properties — the answer was the active tool's properties,
+the ways out (`select`/Escape/Space), **and** the route-lifecycle actions `finish`/`cancel`, but
+nothing else (no other action buttons, no `#` search); (2) which host — graph only, not annotate;
+(3) what happens if a blocked tool's name is typed anyway — refuse it with a status message, not a
+silent no-match.
+
+**Mechanism**, all in `rw_cmdline.js`:
+
+- `RW._cmdIsolatedTool()` — returns the armed tool's own name when isolation should apply (graph
+  host, hatch on, something other than `select` armed and readable), else `null`. Reuses
+  `RW._cmdActiveSettingsTool()` rather than re-deriving anything from `readTool()`. Fails open
+  (`null`) on anything it can't confirm — an unreadable `activeTool`, the annotate host, or the new
+  `RW._cmdIsolateTools = false` console escape hatch — the same fail-safe convention
+  `RW._cmdAutoSelect` already established, so a bad read can never lock the command line down.
+- `GRAPH_ISOLATION_ALLOWED = ['select', 'finish', 'cancel']` — the fixed allowlist, checked in three
+  places in `onInput()` (the plain-command branch, the `#` branch, and the `<tool>.` drill-in
+  branch) and once more in `RW.runCommand` itself as the enforcement floor — following the same
+  precedent `FORBIDDEN_BUTTON_IDS` set: refuse in code, not just by omitting it from what the
+  dropdown lists, so a direct console call to `RW.runCommand()` can't bypass it either.
+- The one load-bearing exemption: `entry.name !== iso` in `RW.runCommand`'s new guard. Without it,
+  `RW._cmdApplySetting`'s own re-arm (`RW.runCommand(tool)`, called after every property write)
+  would be refused by the very guard meant to isolate that same tool — every property edit would
+  silently stop re-arming the tool it just edited.
+- The refusal status message only fires once something's actually been typed (`v` non-empty) in the
+  plain-command branch — an empty query (e.g. backspacing the bar back to empty) still renders the
+  allowed rows quietly rather than re-announcing the refusal on every keystroke.
+- Nothing needed to change for Escape/Space: both close via `RW._cmdGoSelect`, which dispatches
+  `select` directly through `RW._cmdDispatchAppKey` and never goes through `RW.runCommand` at all —
+  confirmed by reading the code, not assumed.
+- **Accepted edge**, same shape as round 5b's own accepted edge: isolation reads the app's real
+  `__graphDebug.activeTool`, while Space-repeat still branches on the command line's own
+  `RW._cmdToolArmed` belief. If a tool was armed by clicking the app's own toolbar directly (the
+  existing documented blind spot), Space-repeating a *different* remembered tool is now refused
+  instead of silently switching — which is the isolation behavior asked for, not a new bug; the
+  refusal's status message explains it either way.
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **607 passed, 0 failed** (582
+before this round + 25 new): `RW._cmdIsolatedTool()` for the armed tool, `select`, an unreadable
+`activeTool`, and the annotate host; a blocked tool name matching nothing with the refusal status;
+the isolated tool's own bare params and `route.` drill-in still working while a different tool's
+`grd.` drill-in is refused; `select`/`finish`/`cancel` still matching; `#` search refused;
+`RW.runCommand` refusing a blocked tool directly (no key dispatched) while still allowing the
+isolated tool's own re-arm; `RW._cmdApplySetting`'s real write-and-rearm still working end-to-end
+under isolation; Escape/Space still reaching select; and `__RW._cmdIsolateTools = false` restoring
+the old additive behavior. Every pre-existing test, including round 5b's own annotate-host additive
+proof, passed unchanged. Loader rebuilt (146432 bytes).
+
+**Live-verified** via the opencli browser bridge, on a real graph session (`TestNew` project, a
+page with `route` already armed on load). The rebuilt loader was too large for `opencli eval`'s
+own argument-length limit to paste directly (~146KB hit "Argument list too long" past roughly
+60–140KB, well under the OS `ARG_MAX` — an `opencli`-side limit, not a shell one); worked around by
+base64-chunking it into `window.__loaderB64` across four `eval` calls, then decoding
+(`atob` + `TextDecoder('utf-8')`, needed because the source's own em dashes are multi-byte UTF-8)
+and `eval`-ing the reassembled source in one final call. Confirmed live: `RW._cmdIsolatedTool()`
+returned `'route'`; typing `flex` matched nothing and the real `#rw-commit-status` element read
+`route is active — press Escape or type "select" first to switch tools`; `route.` still listed all
+8 of route's real live params (width/height/elevation/system/profile/level/insulation/liner);
+`select`/`finish`/`cancel` still matched; `grd.` and `#` were both refused with the analogous
+messages ("...to reach grd's properties" / "...to search systems"); `RW.runCommand('flex')`
+returned `false` and left `__graphDebug.activeTool` at `'route'`; `RW._cmdGoSelect` still flipped
+it to `'select'`; and re-arming `route` then applying `route.width-input = 24` (its own already-current
+value, chosen deliberately so the live write-test made no real change to this shared test project)
+went through end-to-end — the control's value stayed `24`, `__graphDebug.activeTool` stayed
+`'route'`, and the status line read `route.width-input set to 24 — re-armed route (confirm it
+actually applied)`, all under isolation.
+
+## Round 18: choosing system/network, profile, diameter, elevation while a duct tool is armed
+
+Immediate follow-up to round 17. Kresna asked to be able to "choose the system/network, profile,
+diameter, elevation" while a tool is active — a request that, live-tested first rather than
+assumed, turned out to be already three-quarters true: round 17's isolation restricts *other*
+tools/actions/`#` search, never the armed tool's own properties, and `system-select`,
+`profile-select`, and `elevation-input` were all already reachable bare or via `route.` (confirmed
+live before writing any code — `RW._cmdToolSettingsList('route')` already listed all three).
+`AskUserQuestion` narrowed the real gap down to one thing: typing the literal word "diameter"
+matched nothing, because route's own diameter field is the *same* DOM element as its width field
+(`graph-width-input`) — the real app just relabels it live, on screen, from "Width (in)" to
+"Diameter (in)" the instant the route's profile is switched to round (confirmed via opencli
+inspection of the real markup: `<label><span>Width (in)</span><input id="graph-width-input">
+</label>`, the span's text flipping with no id change at all) — and this project's param matching
+has only ever kept the fixed id-derived name (`width-input`), never the label. Kresna's own
+follow-up note ("dont forget height") pointed at the right-shaped fix: not a `diameter` special
+case bolted onto `width`, but a general mechanism that reads whatever the app is *currently*
+showing, which then naturally covers "network" (route's system field's own live label reads
+"System / network", so the second word needed matching too, not just "system") and "height" (already
+covered by the pre-existing id match, must not be disturbed by the new one) alike.
+
+**Mechanism**, all in `rw_cmdline.js`:
+
+- `cmdControlLiveLabel(el)` — walks up to the nearest `<LABEL>` ancestor (`cmdAncestorByTag`,
+  already used by round 15's collapsed-group detection) and returns its first child `<SPAN>`'s
+  text, read fresh every call, never cached — confirmed live this is the real markup convention
+  for every inspector field, not just the dimension ones. Manual `.children` walking, not
+  `.querySelector('span')`: the Node test stub's `querySelector` only supports a plain `#id`
+  selector, and this must run unchanged against both.
+- `cmdLabelWords(label)` — splits a label into lowercase words ("System / network" ->
+  `['system','network']`) so a query can prefix-match any one of them, not just match the whole
+  string as one unit.
+- `cmdParamMatchesQuery(item, q)` — the one predicate now shared by both places a query was
+  matched against a settings item (the `<tool>.` drill-in filter and the bare-param blend in
+  `onInput()`, previously two near-identical inline `.indexOf(q) === 0` checks on `item.param`
+  alone): matches the id-derived `param` (unchanged) **or** any word of the live `label` (new).
+  Purely additive — nothing that matched before stops matching.
+- `RW._cmdToolSettingsList` now stamps every item with `item.label = RW_IS_GRAPH ?
+  cmdControlLiveLabel(el) : null` — deliberately `null` on the annotate host rather than assumed
+  to apply there too, since wand/wrap/mline were never confirmed to share this same
+  `<label><span>` convention.
+- `renderMenuRows` now displays `item.label || item.param` for a settings row, not `item.param`
+  alone — so a row reached by typing "diameter" reads "Diameter (in) (4, now 4)", never the
+  internal "width-input" that would read as a mismatch/bug even though it was functionally
+  correct. `item.param` itself is untouched and still the one thing `RW._cmdApplySetting`/Tab-fill
+  key off of — the live label is a display and matching alias only, never a new identifier.
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **616 passed, 0 failed** (607
+before this round + 9 new, via a new `makeGraphField(byId, labelText, control)` test helper
+building the real `<label><span>...</span>CONTROL</label>` structure): "diameter" not matching
+route's width control while its live label reads "Width (in)", matching once the label is changed
+to "Diameter (in)" (simulating the app's own real relabel) with "width" still matching the same
+control by id either way, and the row displaying the live label rather than the id; "network"
+matching the system field by its label's second word with "system" still matching by id too; a
+control with no `<label>` ancestor at all falling back to its id-derived name for both matching
+and display, unchanged from before this round; and an annotate-host tripwire proving `item.label`
+stays `null` there even behind an identical decoy `<label><span>` wrapper, so "diameter" cannot
+accidentally match wand's tolerance control. Loader rebuilt (149952 bytes).
+
+**Live-verified** via the opencli browser bridge, same `TestNew` project/session as round 17. One
+operational snag reused from round 16's own documented caveat, now hit directly rather than just
+cited: re-running `eval` of the freshly rebuilt loader against the *same, not-yet-reloaded* page
+silently kept the OLD code running — `rw_cmdline.js`'s own `if (RW.vcmd) return 'command line
+already installed';` version-gate (every module has one) refused to reinstall over an existing
+`window.__RW`, so the first re-verification attempt showed no change at all. Fixed by
+`location.reload()` in the page (a genuine browser-level reload, not a same-URL SPA
+"navigation," which this project's own docs already note does not reliably clear `window.__RW`)
+before re-uploading, which produced a truly fresh `window.__RW` and the real behavior. Confirmed
+live: with route armed and profile rectangular, `network`/`system` both matched and displayed
+"System / network", `diameter` matched nothing, `width`/`height` matched and displayed "Width
+(in)"/"Height (in)"; after switching profile to round (via the pre-existing `route.profile-select`
+mechanism, itself unaffected by this round), `diameter` and `width` both matched the same control
+displaying "Diameter (in) (4, now 4)", and `height` correctly stopped matching anything (the field
+is genuinely gone in round profile, not merely relabeled). Profile was switched back to
+rectangular afterward, restoring the test project to the state it was in before this session.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery

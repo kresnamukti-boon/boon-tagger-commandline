@@ -416,6 +416,52 @@
     return { details: details, label: label };
   }
 
+  // Graph host only (round 18): the live, human-readable label the app itself is
+  // currently showing next to a control — confirmed live: every inspector field
+  // wraps its control in a <label>, whose own first child <span> holds the
+  // on-screen text. Crucially this can flip without the control's id ever
+  // changing — route's own `graph-width-input` reads "Width (in)" while its
+  // profile is rectangular and "Diameter (in)" the instant it's switched to
+  // round, confirmed via opencli — so this is read fresh every call, never
+  // cached alongside `param` (which stays the fixed DOM id suffix on purpose,
+  // the one stable identifier RW._cmdApplySetting/Tab-fill key off of). Walks
+  // `.children` by hand rather than querySelector('span') — same reason
+  // cmdCollapsedGroup does above: the Node test stub has no querySelector
+  // beyond a plain #id lookup, and this must run unchanged against both.
+  function cmdControlLiveLabel(el){
+    const label = cmdAncestorByTag(el, 'LABEL');
+    if (!label) return null;
+    const kids = label.children || [];
+    for (const child of kids){
+      if (child.tagName === 'SPAN'){
+        const text = (child.innerText || child.textContent || '').trim();
+        return text || null;
+      }
+    }
+    return null;
+  }
+
+  // Splits a live label into lowercase words a bare query can prefix-match
+  // against individually — e.g. "Width (in)" -> ['width','in'], "System /
+  // network" -> ['system','network'] — so typing "network" matches the
+  // system field by its second word, not just its first, and "diameter"
+  // matches the very same width control once its label has flipped under a
+  // round profile. Never treated as a stable identifier the way `param` is;
+  // purely an extra, live-read alias for matching.
+  function cmdLabelWords(label){
+    return label ? label.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean) : [];
+  }
+
+  // Shared match predicate for both the "<tool>." drill-in list and the bare-
+  // param blend below: a query matches a settings item if it prefixes the
+  // item's own id-derived param name (unchanged, pre-round-18 behavior) OR
+  // prefixes any word of its live on-screen label (round 18's addition).
+  function cmdParamMatchesQuery(item, q){
+    if (!q) return true;
+    if (item.param.toLowerCase().indexOf(q) === 0) return true;
+    return cmdLabelWords(item.label).some(function(w){ return w.indexOf(q) === 0; });
+  }
+
   // The one predicate this round fixes: which "graph-" control is actually
   // the currently-armed tool's own param, vs. chrome that merely shares the
   // same visible prefix. Returns null when allowed, else a short reason
@@ -485,7 +531,14 @@
       if (reason && !(includeCollapsed && isCollapsed)) return;
       const param = el.id.slice(entry.prefix.length);
       const type = cmdControlType(el);
-      const item = { tool: tool, param: param, id: el.id, type: type };
+      // Graph host only (round 18) — the live on-screen label ("Width (in)",
+      // flipping to "Diameter (in)" the moment route's own profile switches
+      // to round), an extra alias cmdParamMatchesQuery matches queries
+      // against alongside `param`. Left null on the annotate host, where
+      // wand/wrap/mline were never confirmed to have this same <label>-
+      // wrapping convention — scoped here rather than assumed to apply
+      // everywhere.
+      const item = { tool: tool, param: param, id: el.id, type: type, label: RW_IS_GRAPH ? cmdControlLiveLabel(el) : null };
       if (isCollapsed) item.collapsedGroup = reason.slice('collapsed:'.length);
       if (type === 'select'){
         item.current = el.value;
@@ -555,6 +608,34 @@
     }
     return null;
   };
+
+  // ----- graph host only: isolate the command line to the armed tool (round 17) -----
+  // Confirmed via AskUserQuestion: reverses round 5b's "additive, not exclusive"
+  // decision, but only on the graph host — the annotate host's wand/wrap/mline stay
+  // additive, unchanged below. While a duct tool (route, flex, ...) is armed, the
+  // command line becomes modal: only that tool's own properties, the ways out
+  // (select/Escape/Space), and the route-lifecycle actions (finish/cancel) are
+  // reachable. Everything else — other tools, other action buttons, # system search —
+  // is refused with a status message rather than silently vanishing.
+  const GRAPH_ISOLATION_ALLOWED = ['select', 'finish', 'cancel'];
+  RW._cmdIsolateTools = true; // console escape hatch: __RW._cmdIsolateTools = false restores the old additive behavior
+
+  // Returns the tool name to isolate to, or null when nothing should be restricted:
+  // annotate host, the hatch turned off, resting in select, or an unreadable
+  // activeTool. Deliberately fails OPEN (null) on anything it can't confirm, so a bad
+  // read can never lock the command line down — mirrors RW._cmdAutoSelect's own
+  // fail-safe convention.
+  RW._cmdIsolatedTool = function(){
+    if (!RW_IS_GRAPH || RW._cmdIsolateTools === false) return null;
+    return RW._cmdActiveSettingsTool();
+  };
+
+  // Shared wording for every refusal below, so the message stays consistent regardless
+  // of which onInput()/runCommand branch triggered it.
+  function cmdIsolationRefuse(tool, what){
+    RW._commitStatus && RW._commitStatus(
+      tool + ' is active — press Escape or type "select" first' + (what ? ' to ' + what : ''));
+  }
 
   // Accepts on/off/true/false/1/0/yes/no, case-insensitive. Returns null (not a boolean) for
   // anything else, so a genuinely invalid value can be told apart from a real "off".
@@ -810,6 +891,20 @@
   RW.runCommand = function(name){
     const entry = findEntry(name);
     if (!entry){ RW._commitStatus && RW._commitStatus('unknown command: ' + name); return false; }
+    // Isolation enforcement floor (round 17) — the menuItems filtering in onInput()
+    // already keeps a blocked command from ever being highlighted/run through the
+    // dropdown, but this follows the same precedent FORBIDDEN_BUTTON_IDS set below:
+    // refuse in code, not just by omission, so a direct RW.runCommand() call from the
+    // console (or any future call site) can't bypass it either.
+    // `entry.name !== iso` is load-bearing, not a formality: RW._cmdApplySetting
+    // re-arms the isolated tool itself via RW.runCommand(tool) after every property
+    // write, so without this exemption every property edit would be refused by its
+    // own guard the instant isolation is in force.
+    const iso = RW._cmdIsolatedTool();
+    if (iso && entry.name !== iso && GRAPH_ISOLATION_ALLOWED.indexOf(entry.name) === -1){
+      cmdIsolationRefuse(iso, 'run "' + entry.name + '"');
+      return false;
+    }
     // Reported live (round 16): on the graph host, tool-switch commands
     // (route, flex, ...) silently failed to arm while action commands
     // (undo, redo, ...) worked fine. Root cause: the graph app's own
@@ -1212,12 +1307,20 @@
         label = item.optionIndex + '. ' + item.optionText;
         color = SETTINGS_COLOR;
       } else if (isSettingsItem(item)){
+        // Prefer the control's own live on-screen label (round 18, graph host
+        // only) over its fixed DOM-id-derived param name — so a row picked by
+        // typing "diameter" actually reads "Diameter (in)", not the
+        // internal "width-input" that only cmdParamMatchesQuery/Tab-fill/
+        // RW._cmdApplySetting still key off of. Falls back to `param` when
+        // no live label was found (every annotate-host item, and any graph
+        // control this round's <label> convention doesn't cover).
+        const paramDisplay = item.label || item.param;
         if (item.type === 'checkbox'){
-          label = item.param + ' (toggle, now ' + item.current + ')';
+          label = paramDisplay + ' (toggle, now ' + item.current + ')';
         } else if (item.type === 'select'){
-          label = item.param + ' (' + (item.options ? item.options.length : 0) + ' options, now ' + item.current + ')';
+          label = paramDisplay + ' (' + (item.options ? item.options.length : 0) + ' options, now ' + item.current + ')';
         } else {
-          label = item.param + ' (' + (item.min != null ? item.min : '') + (item.max != null ? '-' + item.max : '')
+          label = paramDisplay + ' (' + (item.min != null ? item.min : '') + (item.max != null ? '-' + item.max : '')
             + ', now ' + item.current + ')';
         }
         color = SETTINGS_COLOR;
@@ -1269,11 +1372,22 @@
     }
     const dotMatch = /^([A-Za-z0-9]+)\.(.*)$/.exec(v);
     const dotEntry = dotMatch ? findEntry(dotMatch[1]) : null;
+    const isolatedTool = RW._cmdIsolatedTool();
+    if (dotEntry && RW._toolSettingsMap[dotEntry.name] && isolatedTool && dotEntry.name !== isolatedTool){
+      // Isolated to a different tool's properties — refuse the drill-in rather than
+      // showing another tool's params while this one is armed.
+      menuMode = 'settings-param';
+      menuItems = [];
+      menuHighlight = -1;
+      renderMenuRows();
+      cmdIsolationRefuse(isolatedTool, "reach " + dotEntry.name + "'s properties");
+      return;
+    }
     if (dotEntry && RW._toolSettingsMap[dotEntry.name]){
       const q = (dotMatch[2] || '').toLowerCase();
       menuMode = 'settings-param';
       menuItems = RW._cmdToolSettingsList(dotEntry.name)
-        .filter(function(item){ return !q || item.param.toLowerCase().indexOf(q) === 0; });
+        .filter(function(item){ return cmdParamMatchesQuery(item, q); });
       menuHighlight = menuItems.length ? 0 : -1;
       renderMenuRows();
       // Graph host only (RW._cmdToolCollapsedGroups is a no-op elsewhere):
@@ -1291,23 +1405,43 @@
       return;
     }
     if (v.charAt(0) === '#'){
-      if (!RW._cmdTagList) RW._cmdDetectTags();
-      menuMode = 'tag';
-      menuItems = RW._cmdMatchTags(v.slice(1)).slice(0, 8);
+      if (isolatedTool){
+        // Graph host, tool isolated: # system search is one of the things
+        // deliberately not reachable while a duct tool is armed.
+        menuMode = 'tag';
+        menuItems = [];
+        cmdIsolationRefuse(isolatedTool, 'search systems');
+      } else {
+        if (!RW._cmdTagList) RW._cmdDetectTags();
+        menuMode = 'tag';
+        menuItems = RW._cmdMatchTags(v.slice(1)).slice(0, 8);
+      }
     } else {
       menuMode = 'command';
-      let items = RW._cmdMatch(v);
-      // Additive, not exclusive (confirmed via AskUserQuestion): whatever
-      // tool is currently armed has its own param names typable bare, with
-      // no "tool." prefix needed, blended ahead of the ordinary command
-      // matches — every other command (switching tools included) keeps
-      // working exactly as it does today, unaffected by this.
       const activeTool = RW._cmdActiveSettingsTool();
-      if (activeTool){
-        const q = v.toLowerCase();
-        const paramItems = RW._cmdToolSettingsList(activeTool)
-          .filter(function(p){ return p.param.toLowerCase().indexOf(q) === 0; });
-        items = paramItems.concat(items);
+      const paramItems = activeTool
+        ? RW._cmdToolSettingsList(activeTool).filter(function(p){ return cmdParamMatchesQuery(p, v.toLowerCase()); })
+        : [];
+      let items;
+      if (isolatedTool){
+        // Modal: only the isolated tool's own params (already filtered above) plus
+        // the allowlisted escapes/actions (select, finish, cancel) — everything
+        // else RW._cmdMatch(v) would have matched is deliberately dropped, not
+        // blended, and reported so it doesn't read as a silent typo. The refusal
+        // message only fires once something's actually typed (v non-empty) — an
+        // empty query (e.g. backspacing the bar clear) still shows the allowed
+        // rows quietly, matching every other empty-query case in this file.
+        const allMatches = RW._cmdMatch(v);
+        const allowed = allMatches.filter(function(e){ return GRAPH_ISOLATION_ALLOWED.indexOf(e.name) !== -1; });
+        if (v && allMatches.length > allowed.length) cmdIsolationRefuse(isolatedTool, 'switch tools');
+        items = paramItems.concat(allowed);
+      } else {
+        // Additive, not exclusive (confirmed via AskUserQuestion): whatever
+        // tool is currently armed has its own param names typable bare, with
+        // no "tool." prefix needed, blended ahead of the ordinary command
+        // matches — every other command (switching tools included) keeps
+        // working exactly as it does today, unaffected by this.
+        items = paramItems.concat(RW._cmdMatch(v));
       }
       menuItems = items.slice(0, 8);
     }
