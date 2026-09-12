@@ -4700,9 +4700,18 @@ function loadCoreModule(win){
   }
 
   /* ---------- 212. isolated: select/finish/cancel still match — the allowed escapes and route-lifecycle actions ---------- */
+  // finish/cancel are genuinely usable here (present, visible, not disabled) —
+  // a route actually in progress, not just armed — since round 24 also drops
+  // an allowed-but-currently-unusable action from the list (see its own test
+  // 262 below for that case on its own).
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
+    ['graph-finish-route', 'graph-cancel-route'].forEach(function(id){
+      const btn = makeElement('button', byId);
+      btn.id = id; btn.offsetParent = {};
+      win.document.body.appendChild(btn);
+    });
     const inp = byId['rw-cmd-input'];
     ['select', 'finish', 'cancel'].forEach(function(name){
       inp.value = name;
@@ -5324,6 +5333,12 @@ function loadCoreModule(win){
     const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap']]);
     typeSel.offsetParent = {};
     modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+    // A real, usable submit button — round 24 also drops an unusable action
+    // from the list, so "choose" needs a genuine graph-branch-fitting-submit
+    // present/visible/enabled to still be offered here.
+    const chooseBtn = makeElement('button', byId);
+    chooseBtn.id = 'graph-branch-fitting-submit'; chooseBtn.offsetParent = {};
+    modal.appendChild(chooseBtn);
 
     const keys = [];
     const origDispatch = RW._cmdDispatchAppKey;
@@ -5768,6 +5783,85 @@ function loadCoreModule(win){
     doc._fire('keydown', { target: bodyTarget, key: '3', preventDefault(){ defaultPrevented = true; } });
     ok(defaultPrevented, 'the console escape hatch restores capture on the graph host too');
     ok(byId['rw-cmd-input'].value === '3', 'and the digit seeds the bar exactly as it did before this round');
+  }
+
+  /* ---------- 262. round 24: an action with no button on the page at all is not offered in the dropdown ---------- */
+  // Kresna's own request: "command that didn't applicable for a specific
+  // state, its best not to include in the dropdown list" — instead of
+  // listing it and refusing it after the fact (the pre-round-24 behavior,
+  // still true for a direct RW.runCommand() console call).
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'elevation';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || !byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('elevation') === 0),
+       '"elevation" is not offered — graph-edit-riser-elevation is not on the page (no riser selected)');
+  }
+
+  /* ---------- 263. round 24: a visible-but-disabled action's button is not offered either ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-finish-route'; btn.offsetParent = {}; btn.disabled = true; // idle idiom, per test 199
+    win.document.body.appendChild(btn);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'finish';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || !byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('finish') === 0),
+       '"finish" is on the page but disabled (no route in progress) — not offered');
+  }
+
+  /* ---------- 264. round 24: a hidden-but-not-disabled action's button is not offered either ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-toggle-damper'; btn.offsetParent = null; // hidden idiom, per test 200
+    win.document.body.appendChild(btn);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'toggledamper';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || !byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('toggledamper') === 0),
+       '"toggledamper" is on the page but hidden (nothing selected) — not offered');
+  }
+
+  /* ---------- 265. round 24: once genuinely usable, the same action IS offered — this isn't a blanket removal ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-finish-route'; btn.offsetParent = {}; // present, visible, enabled
+    win.document.body.appendChild(btn);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'finish';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('finish') === 0),
+       '"finish" is offered once its button is genuinely present, visible, and enabled');
+  }
+
+  /* ---------- 266. round 24: native tool entries (no `.btn` at all) are never gated by this — untouched ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('route') === 0),
+       'a plain native tool (route) is still offered with no button/DOM state to check at all');
+  }
+
+  /* ---------- 267. round 24: the annotate host is unaffected — it has no button-backed action entries at all ---------- */
+  {
+    const { win, byId } = makeStubWindow(); // annotate host
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'pan';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('pan') === 0),
+       'the annotate host\'s own vocabulary is untouched by a graph-only gate');
   }
 
   finish();

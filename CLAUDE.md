@@ -2862,6 +2862,55 @@ non-null → `null` `activeTool` edge the auto-select watcher (polled every `AUT
 reverts to `select` on — if the app's numbered prompt turns out to depend on the tool still being
 armed, that watcher, not this change, could end up fighting it.
 
+## Round 24: an unusable action is left out of the dropdown, not listed and refused (graph host)
+
+Kresna's own request, stated as a general design preference: "command that didn't applicable for
+a specific state, its best not to include in the dropdown list." Before this round, `RW.runCommand`
+already resolved whether a `GRAPH_ACTIONS` entry's own button was actually clickable right now —
+present on the page, visible, and not disabled — but only at the moment you tried to run it; the
+dropdown itself listed every action name unconditionally regardless of that state, and only
+reported "not available right now" (or "its button is not on the page right now") after you'd
+already picked it.
+
+**Fix**: a new `cmdActionUsable(entry)` predicate, a read-only mirror of `RW.runCommand`'s own
+button-resolution steps (existence, `FORBIDDEN_BUTTON_IDS`, `.disabled`/`aria-disabled`,
+`cmdIsVisible`) — it never clicks anything, it only answers "would running this entry actually do
+something right now." `onInput()`'s command-mode branch now filters both the isolated-tool
+allowlist (`allowed`) and the ordinary blended match list (`RW._cmdMatch(v)`) through it before
+building `menuItems`, in both cases *after* the isolation accounting (`GRAPH_ISOLATION_ALLOWED`)
+so an allowed-but-currently-unusable action (e.g. `finish` while isolated to `route` but no route
+is actually in progress yet) is dropped quietly, without being counted as something isolation
+itself blocked (that would misfire the "switch tools" refusal message for the wrong reason).
+Entries with no `.btn` at all — every native tool (`route`, `flex`, …), and `dimension`, which has
+its own separate isolation exemption — always return `true`: this only ever gates the button-backed
+action vocabulary. `RW.runCommand`'s own inline checks are deliberately left untouched (not
+refactored to call the new predicate) — they still need to distinguish *why* an action failed
+(missing vs. disabled vs. hidden) for a direct console call's status message, which a single
+boolean can't express; the duplication between the two is small and each side is commented as a
+mirror of the other, matching this file's existing tolerance for read-only diagnostic mirrors of
+live logic elsewhere (e.g. `RW._cmdParamScopeDiagnose`).
+
+**Tests.** Three existing fixtures assumed `finish`/`cancel`/`choose` always match regardless of
+button state (tests 212 and 242) — updated to add a genuine present/visible/enabled button (a real
+"route actually in progress" / "dialog with its own submit button" state) so they keep testing what
+they were meant to (the isolation allowlist), not this round's new gate. Six new tests (262-267,
+782 → 788): an action with no button on the page at all is not offered; a visible-but-disabled
+button is not offered either; a hidden-but-not-disabled button is not offered either (this page's
+two confirmed disabled idioms, per round 15/19's own account); the same action IS offered once
+genuinely usable (not a blanket removal); a native tool entry (no `.btn`) is completely untouched;
+the annotate host is unaffected (it has no button-backed action entries at all — round 15's own
+account is where both disabled idioms were first confirmed live). **Confirmed as a
+genuine catch, not tautological**: reverting only the two `.filter(cmdActionUsable)` call sites
+fails exactly the 3 expected assertions (785 passed, 3 failed) — restoring passes clean at 788.
+Loader rebuilt (187206 bytes).
+
+**Not live-verified this round** (synthetic-only, standing caveat) — the exact live behavior of
+`finish`/`cancel`'s "visible-but-disabled" idiom and `elevation`/`toggledamper`'s "hidden-but-not-
+disabled" idiom were themselves already confirmed live in round 15; what's new this round is only
+that the dropdown now reads the same signal earlier, before you pick something — worth a quick live
+pass to confirm the dropdown genuinely hides these at the right moments rather than just in the
+synthetic fixtures above.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery
@@ -3000,3 +3049,13 @@ here too, though this repo's own tools have never written annotation state direc
   Round 23's own account for the mechanism and the auto-select-watcher interaction to watch for.
   This is a naming-convention argument, not a structural one: it would need revisiting if a
   digit-leading tool name, alias, or param is ever added to this host.
+- **(Round 24)** `cmdActionUsable`'s gate is unconfirmed live end-to-end — round 15 already
+  confirmed the two disabled idioms it reads (`finish`/`cancel` visible-but-disabled,
+  `elevation`/`toggledamper` hidden-but-not-disabled) exist on the real page, but not specifically
+  that the DROPDOWN now reacts to them correctly moment-to-moment as a route starts/finishes or a
+  riser gets selected/deselected — only the synthetic fixtures in Round 24's own account exercise
+  that. `RW.runCommand`'s own inline checks were deliberately left un-refactored (kept separate from
+  `cmdActionUsable`, which only returns a boolean) — if the two ever drift apart, the dropdown and a
+  direct console call could disagree about whether something is usable; there is no test guarding
+  against that drift specifically, only that each currently agrees on the handful of entries this
+  round's tests cover.

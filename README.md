@@ -556,6 +556,15 @@ system, create a system, rename a system) — every other action button auto-sub
 command to the server the instant it's invoked, the same as a human clicking that same button by
 hand (this app has no manual-commit mode; Save is a force-flush/retry control, not a commit gate).
 
+**An action that isn't currently usable is left out of the dropdown entirely, not listed and then
+refused.** `finish`/`cancel` while no route is in progress, `elevation` with no riser selected,
+`choose`/`apply`/`place`/`placeriser` (and their Cancel-equivalents) while their own dialog isn't
+open, and so on — none of these appear in the dropdown, or match a typed query, until they're
+genuinely runnable (their button present, visible, and not disabled). Typing the name straight into
+`RW.runCommand()` from the console still reports the specific reason (missing/disabled/hidden) —
+this only changes what the dropdown offers, not what a direct call reports. Every native tool
+(`route`, `flex`, `select`, …) has no such gate at all and is unaffected.
+
 **Space and Escape are unchanged** — Space still closes/repeats the last tool, Escape still
 returns to select. This does shadow the host's own **Space+drag pan** gesture; wheel,
 Shift+wheel, and middle-click still pan natively, and Ctrl+wheel still zooms — none of that goes

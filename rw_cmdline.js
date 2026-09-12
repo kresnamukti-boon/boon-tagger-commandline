@@ -444,6 +444,30 @@
     return !!(el.offsetParent || (el.getClientRects && el.getClientRects().length));
   }
 
+  // ----- Round 24: is a GRAPH_ACTIONS entry actually runnable RIGHT NOW? -----
+  // Read-only mirror of RW.runCommand's own button-resolution steps (never
+  // clicks anything) — extracted so the dropdown can hide an action that
+  // would just be refused if picked, instead of listing it and only reporting
+  // "not available right now" after the fact (Kresna's own request: "command
+  // that didn't applicable for a specific state, its best not to include in
+  // the dropdown list"). Confirmed live (see RW.runCommand's own comment):
+  // this page uses two different disabled idioms — visible-but-disabled
+  // (finish/cancel while a route is idle) and hidden-but-not-disabled
+  // (assign-network/toggle-damper with nothing selected) — both covered here
+  // the same way runCommand already covers them. Entries with no `.btn` at
+  // all (every native tool, and `dimension`, which has its own dedicated
+  // isolation exemption) always return true — this only ever gates the
+  // button-backed GRAPH_ACTIONS vocabulary, never a tool switch.
+  function cmdActionUsable(entry){
+    if (!entry.btn) return true;
+    if (FORBIDDEN_BUTTON_IDS.indexOf(entry.btn) !== -1) return false;
+    const btn = document.getElementById(entry.btn);
+    if (!btn) return false;
+    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return false;
+    if (!cmdIsVisible(btn)) return false;
+    return true;
+  }
+
   // Upward parentNode walk to the nearest ancestor with the given tagName.
   // Not Element.closest(): this project's own Node test harness
   // (verify_cmdline.js) has no closest()/contains(), only parentNode/
@@ -1787,14 +1811,23 @@
         const allMatches = RW._cmdMatch(v);
         const allowed = allMatches.filter(function(e){ return GRAPH_ISOLATION_ALLOWED.indexOf(e.name) !== -1; });
         if (v && allMatches.length > allowed.length) cmdIsolationRefuse(isolatedTool, 'switch tools');
-        items = paramItems.concat(allowed);
+        // Usability is filtered SEPARATELY from the isolation accounting just
+        // above (round 24) — an allowed-but-currently-unusable action (e.g.
+        // "finish" while isolated to route but no route is actually in
+        // progress yet) is dropped from the LIST quietly here, without being
+        // counted as something isolation itself blocked.
+        items = paramItems.concat(allowed.filter(cmdActionUsable));
       } else {
         // Additive, not exclusive (confirmed via AskUserQuestion): whatever
         // tool is currently armed has its own param names typable bare, with
         // no "tool." prefix needed, blended ahead of the ordinary command
         // matches — every other command (switching tools included) keeps
         // working exactly as it does today, unaffected by this.
-        items = paramItems.concat(RW._cmdMatch(v));
+        // Round 24: also drops any GRAPH_ACTIONS match that isn't actually
+        // usable right now (its button missing, disabled, or hidden) — see
+        // cmdActionUsable's own comment. Native tool entries have no `.btn`
+        // at all, so they're never affected by this.
+        items = paramItems.concat(RW._cmdMatch(v).filter(cmdActionUsable));
       }
       menuItems = items.slice(0, 8);
     }
