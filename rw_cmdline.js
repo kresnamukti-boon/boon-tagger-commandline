@@ -1054,7 +1054,14 @@
   }
   RW._cmdModalMemory = RW_IS_GRAPH ? cmdModalMemoryLoad() : {}; // {tool: {param: 'on'/'off'/<select value>}} — console-inspectable
   RW._cmdModalMemoryEnabled = true; // console escape hatch: __RW._cmdModalMemoryEnabled = false stops both remembering and auto-filling
+  // Round 26 follow-up: branch fitting's own memory moved to a dedicated standalone repo
+  // (boon-duct-workbench, ~/Projects/boon-projects/) — no dependency in either direction, but
+  // this is now the ONE place branch's own fields are remembered, so this repo excludes it
+  // entirely rather than keep two independent copies of the same idea that could drift apart.
+  // change size/GRD/riser (transition/grd/vertical) are unaffected.
+  const MODAL_MEMORY_EXCLUDED_TOOLS = ['branch'];
   // Console helper: clears one tool's remembered values, or everything with no argument.
+  // Clearing 'branch' is a documented no-op now — nothing is ever recorded there to begin with.
   RW._cmdModalMemoryClear = function(tool){
     if (tool) delete RW._cmdModalMemory[tool]; else RW._cmdModalMemory = {};
     cmdModalMemorySave();
@@ -1063,10 +1070,12 @@
   // Called from RW._cmdApplySetting's own checkbox/select branches right after a real write —
   // `modal` is only truthy when that write happened while the tool's OWN config-dialog modal was
   // open (RW._cmdApplySetting already resolves this fresh per call), which is exactly what scopes
-  // remembering to "branch/change-size/GRD/riser windows" and not the ordinary always-visible
-  // inspector — a write to route's own `gauge-select`, say, is never remembered by this.
+  // remembering to "change-size/GRD/riser windows" and not the ordinary always-visible inspector —
+  // a write to route's own `gauge-select`, say, is never remembered by this. `branch` is excluded
+  // here too (see MODAL_MEMORY_EXCLUDED_TOOLS above).
   function cmdRememberModalValue(tool, modal, param, value){
     if (!modal || !RW._cmdModalMemoryEnabled) return;
+    if (MODAL_MEMORY_EXCLUDED_TOOLS.indexOf(tool) !== -1) return;
     RW._cmdModalMemory[tool] = RW._cmdModalMemory[tool] || {};
     RW._cmdModalMemory[tool][param] = value;
     cmdModalMemorySave();
@@ -1089,6 +1098,7 @@
   // log — see rw_core.js).
   function cmdAutoFillModalMemory(tool){
     if (!RW._cmdModalMemoryEnabled) return;
+    if (MODAL_MEMORY_EXCLUDED_TOOLS.indexOf(tool) !== -1) return; // branch — see its own dedicated repo instead
     const remembered = RW._cmdModalMemory[tool];
     if (!remembered) return;
     const filled = [];

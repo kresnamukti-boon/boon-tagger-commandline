@@ -3056,6 +3056,30 @@ whether change-size/GRD/riser's own real fields are actually select/checkbox-sha
 fitting's are — if any of those three turn out to be all-numeric, this feature would have nothing
 to remember for them, which wouldn't be a bug, just nothing to see.
 
+## Round 26 follow-up: branch fitting's own memory carved out into a dedicated repo
+
+Kresna asked to split this feature apart: a new, standalone repo (`boon-duct-workbench`,
+`~/Projects/boon-projects/`) that covers only branch fitting's own fields, loads and works
+completely independently of this repo (no dependency in either direction), and — once it
+exists — becomes the *only* place branch's fields are remembered, so this repo doesn't keep a
+second, potentially-drifting copy of the same idea.
+
+**Fix**: `MODAL_MEMORY_EXCLUDED_TOOLS = ['branch']`, checked in both `cmdRememberModalValue` and
+`cmdAutoFillModalMemory` — branch is now excluded from both directions entirely.
+`RW._cmdModalMemoryClear('branch')` is a documented no-op (there's nothing to clear there
+anymore); `transition`/`grd`/`vertical` are unaffected.
+
+**Tests.** The existing round-26 tests that specifically exercised `branch` (268, 269, 271-273,
+275, 276) were re-pointed to `transition` instead, via a new `makeTransitionFixture()` sibling to
+`makeBranchFittingFixture()` — `transition`'s own real field shapes were never individually
+confirmed live either (same still-open item as grd/vertical), so this is exactly as speculative a
+fixture as branch's own always was, just now the one carrying the mechanism's test coverage. One
+new test (277) proves branch is now excluded in both directions, including a manually-seeded
+value (standing in for old data written before this round) never getting auto-filled either.
+**Confirmed non-tautological**: reverting the `MODAL_MEMORY_EXCLUDED_TOOLS` guard in both
+functions fails exactly the 3 new assertions (810 passed, 3 failed) — restoring passes clean at
+813. Loader rebuilt (196440 bytes).
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery

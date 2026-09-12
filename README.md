@@ -528,18 +528,22 @@ is open (they aren't `showModal()`-modal) — a modal's own `<select>` keeps its
 while focused, everything else still seeds the command bar as usual; any *other* dialog (calibrate,
 known-scale) still blocks the command bar entirely, unchanged.
 
-**Each modal remembers its own select/checkbox fields and auto-fills them the next time it opens**
-— no re-typing the same values duct after duct. Only fields likely to *repeat* are remembered
-(select/checkbox — e.g. branch fitting's own Fitting type/Branch shape/Alignment/Damper), never a
-number or text field (Width, Height, Starting width, …), since those are more likely to differ from
-one duct to the next. The moment a recognized modal is detected open, any remembered value that
-differs from the field's current one is applied straight to the real control (not just typed into
-the bar), and the status line reports what got filled in. Remembered values survive a page
-reload/re-paste (stored in `localStorage`, not just for the rest of this page) — write one value,
-close the loader, come back later, and it's still there. `__RW._cmdModalMemory` is a plain
-console-inspectable object (`{tool: {param: value}}`); `__RW._cmdModalMemoryClear(tool)` forgets one
-tool's remembered values, or everything with no argument; `__RW._cmdModalMemoryEnabled = false`
-turns the whole feature off (stops both remembering new values and auto-filling old ones).
+**Three of the four modals (change size, GRD placement, riser elevation) remember their own
+select/checkbox fields and auto-fill them the next time they open** — no re-typing the same values
+duct after duct. Only fields likely to *repeat* are remembered (select/checkbox — e.g. a size
+category or diffuser type), never a number or text field (a dimension, an elevation value), since
+those are more likely to differ from one duct to the next. The moment a recognized modal is
+detected open, any remembered value that differs from the field's current one is applied straight
+to the real control (not just typed into the bar), and the status line reports what got filled in.
+Remembered values survive a page reload/re-paste (stored in `localStorage`, not just for the rest
+of this page) — write one value, close the loader, come back later, and it's still there.
+`__RW._cmdModalMemory` is a plain console-inspectable object (`{tool: {param: value}}`);
+`__RW._cmdModalMemoryClear(tool)` forgets one tool's remembered values, or everything with no
+argument; `__RW._cmdModalMemoryEnabled = false` turns the whole feature off (stops both
+remembering new values and auto-filling old ones). **Branch fitting is deliberately excluded** —
+its own version of this now lives in a separate, standalone repo
+(`boon-duct-workbench`, `~/Projects/boon-projects/`) with no dependency on this one in either
+direction; paste that loader too if you want branch fitting covered as well.
 
 **The inspector's "New system" name/service fields are typeable too** (`route.new-system-name`/
 `-service` or bare `name`/`service`) — the "Add" button (`graph-create-system`) stays a manual click

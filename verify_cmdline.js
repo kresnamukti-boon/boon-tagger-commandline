@@ -4873,6 +4873,24 @@ function loadCoreModule(win){
     return { modal: modal, typeSel: typeSel, startWidth: startWidth };
   }
 
+  // Round 26 follow-up: branch fitting's own modal memory was carved out into a dedicated
+  // standalone repo (boon-duct-workbench) — every remaining round-26 test that needs a live
+  // categorical field now exercises `transition` (change size) instead, via this sibling fixture.
+  // transition's own real field shapes were never individually confirmed live (same still-open
+  // item as grd/vertical), so this mirrors branch fitting's fixture shape rather than a
+  // live-confirmed one — fine, since RW._cmdModalMemory's own remember/auto-fill rule reads each
+  // control's live TYPE, never a specific id.
+  function makeTransitionFixture(win, byId){
+    const modal = makeGraphModal(win, byId, 'graph-checkpoint-transition-modal');
+    const sizeSel = makeSelect(byId, 'graph-checkpoint-transition-size-select', [['reducer', 'Reducer'], ['increaser', 'Increaser']]);
+    sizeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Change type', sizeSel));
+    const newWidth = makeElement('input', byId);
+    newWidth.id = 'graph-checkpoint-transition-new-width-input'; newWidth.type = 'number'; newWidth.value = '10'; newWidth.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'New width (in)', newWidth));
+    return { modal: modal, sizeSel: sizeSel, newWidth: newWidth };
+  }
+
   /* ---------- 218. round profile flips route's own width control's live label to "Diameter (in)" — "diameter" now matches it, "width" still does too ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
@@ -5912,21 +5930,24 @@ function loadCoreModule(win){
        'the annotate host\'s own vocabulary is untouched by a graph-only gate');
   }
 
-  /* ---------- 268. round 26: writing a SELECT field inside branch's own open modal is remembered (in-memory and persisted) ---------- */
+  /* ---------- 268. round 26: writing a SELECT field inside transition's own open modal is remembered (in-memory and persisted) ---------- */
+  // Round 26 follow-up: was branch fitting's own modal — branch was carved out into a dedicated
+  // standalone repo (boon-duct-workbench), so this and its siblings below now exercise
+  // `transition` (change size) instead. See test 277 for branch's own exclusion.
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     const fakeLS = makeFakeLocalStorage();
     win.localStorage = fakeLS;
-    loadModule(win, null, null, { activeTool: 'branch' });
+    loadModule(win, null, null, { activeTool: 'transition' });
     const RW = win.__RW;
-    makeBranchFittingFixture(win, byId);
+    makeTransitionFixture(win, byId);
 
-    RW._cmdApplySetting('branch', 'type-select', 'wye');
-    ok(RW._cmdModalMemory.branch && RW._cmdModalMemory.branch['type-select'] === 'wye',
+    RW._cmdApplySetting('transition', 'size-select', 'increaser');
+    ok(RW._cmdModalMemory.transition && RW._cmdModalMemory.transition['size-select'] === 'increaser',
        'the select write is remembered in RW._cmdModalMemory, keyed by tool and param');
     const rawPersisted = fakeLS.getItem('rw_graph_modal_memory_v1');
     const persisted = rawPersisted ? JSON.parse(rawPersisted) : null;
-    ok(!!persisted && !!persisted.branch && persisted.branch['type-select'] === 'wye',
+    ok(!!persisted && !!persisted.transition && persisted.transition['size-select'] === 'increaser',
        'and persisted to localStorage under the same shape');
   }
 
@@ -5934,12 +5955,12 @@ function loadCoreModule(win){
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'branch' });
+    loadModule(win, null, null, { activeTool: 'transition' });
     const RW = win.__RW;
-    makeBranchFittingFixture(win, byId);
+    makeTransitionFixture(win, byId);
 
-    RW._cmdApplySetting('branch', 'starting-width-input', '20');
-    ok(!RW._cmdModalMemory.branch || RW._cmdModalMemory.branch['starting-width-input'] === undefined,
+    RW._cmdApplySetting('transition', 'new-width-input', '20');
+    ok(!RW._cmdModalMemory.transition || RW._cmdModalMemory.transition['new-width-input'] === undefined,
        'a numeric field — more likely to differ duct to duct — is never remembered');
   }
 
@@ -5963,15 +5984,15 @@ function loadCoreModule(win){
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'branch' });
+    loadModule(win, null, null, { activeTool: 'transition' });
     const RW = win.__RW;
-    RW._cmdModalMemory = { branch: { 'type-select': 'wye' } };
-    const fixture = makeBranchFittingFixture(win, byId);
-    ok(fixture.typeSel.value === 'tap', 'sanity: the field starts on its own default, not the remembered value');
+    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
+    const fixture = makeTransitionFixture(win, byId);
+    ok(fixture.sizeSel.value === 'reducer', 'sanity: the field starts on its own default, not the remembered value');
 
     RW._cmdModalMemoryTick();
-    ok(fixture.typeSel.value === 'wye', 'the remembered value was applied to the real control the moment the modal was detected open');
-    ok(RW._lastStatus.indexOf('branch') !== -1 && RW._lastStatus.indexOf('auto-filled') !== -1 && RW._lastStatus.indexOf('Fitting type') !== -1,
+    ok(fixture.sizeSel.value === 'increaser', 'the remembered value was applied to the real control the moment the modal was detected open');
+    ok(RW._lastStatus.indexOf('transition') !== -1 && RW._lastStatus.indexOf('auto-filled') !== -1 && RW._lastStatus.indexOf('Change type') !== -1,
        'one combined status names the tool and the field(s) that were filled in');
   }
 
@@ -5979,16 +6000,16 @@ function loadCoreModule(win){
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'branch' });
+    loadModule(win, null, null, { activeTool: 'transition' });
     const RW = win.__RW;
-    RW._cmdModalMemory = { branch: { 'type-select': 'wye' } };
-    const fixture = makeBranchFittingFixture(win, byId);
+    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
+    const fixture = makeTransitionFixture(win, byId);
 
     RW._cmdModalMemoryTick();
-    fixture.typeSel.value = 'tap'; // simulate the user changing it back by hand after the auto-fill
+    fixture.sizeSel.value = 'reducer'; // simulate the user changing it back by hand after the auto-fill
     RW._lastStatus = '';
     RW._cmdModalMemoryTick(); // still open — must NOT re-apply over the user's own change
-    ok(fixture.typeSel.value === 'tap', 'a second tick while the SAME modal stays open does not re-apply the remembered value');
+    ok(fixture.sizeSel.value === 'reducer', 'a second tick while the SAME modal stays open does not re-apply the remembered value');
     ok(RW._lastStatus === '', 'and does not re-report the auto-fill status either');
   }
 
@@ -5996,17 +6017,17 @@ function loadCoreModule(win){
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'branch' });
+    loadModule(win, null, null, { activeTool: 'transition' });
     const RW = win.__RW;
     RW._cmdModalMemoryEnabled = false;
-    RW._cmdModalMemory = { branch: { 'type-select': 'wye' } };
-    const fixture = makeBranchFittingFixture(win, byId);
+    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
+    const fixture = makeTransitionFixture(win, byId);
 
     RW._cmdModalMemoryTick();
-    ok(fixture.typeSel.value === 'tap', 'auto-fill is skipped entirely with the hatch off');
+    ok(fixture.sizeSel.value === 'reducer', 'auto-fill is skipped entirely with the hatch off');
 
-    RW._cmdApplySetting('branch', 'type-select', 'wye');
-    ok(RW._cmdModalMemory.branch['type-select'] === undefined || Object.keys(RW._cmdModalMemory.branch || {}).length === 1,
+    RW._cmdApplySetting('transition', 'size-select', 'increaser');
+    ok(RW._cmdModalMemory.transition['size-select'] === undefined || Object.keys(RW._cmdModalMemory.transition || {}).length === 1,
        'and a fresh write is not (re-)remembered either — the pre-seeded value above is untouched, nothing new is added');
   }
 
@@ -6015,14 +6036,14 @@ function loadCoreModule(win){
     const { win } = makeStubWindow({ host: GRAPH_HOST });
     const fakeLS = makeFakeLocalStorage();
     win.localStorage = fakeLS;
-    loadModule(win, null, null, { activeTool: 'branch' });
+    loadModule(win, null, null, { activeTool: 'transition' });
     const RW = win.__RW;
-    RW._cmdModalMemory = { branch: { 'type-select': 'wye' }, transition: { 'size-select': 'large' } };
+    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' }, grd: { 'type-select': 'ceiling' } };
 
-    RW._cmdModalMemoryClear('branch');
-    ok(!RW._cmdModalMemory.branch, '"branch" alone is cleared');
-    ok(!!RW._cmdModalMemory.transition, 'a different tool\'s memory is untouched');
-    ok(JSON.parse(fakeLS.getItem('rw_graph_modal_memory_v1')).branch === undefined, 'the clear is persisted too');
+    RW._cmdModalMemoryClear('transition');
+    ok(!RW._cmdModalMemory.transition, '"transition" alone is cleared');
+    ok(!!RW._cmdModalMemory.grd, 'a different tool\'s memory is untouched');
+    ok(JSON.parse(fakeLS.getItem('rw_graph_modal_memory_v1')).transition === undefined, 'the clear is persisted too');
 
     RW._cmdModalMemoryClear();
     ok(Object.keys(RW._cmdModalMemory).length === 0, 'no argument clears everything');
@@ -6036,19 +6057,19 @@ function loadCoreModule(win){
 
     const { win: winA, byId: byIdA } = makeStubWindow({ host: GRAPH_HOST });
     winA.localStorage = sharedLS;
-    loadModule(winA, null, null, { activeTool: 'branch' });
-    makeBranchFittingFixture(winA, byIdA);
-    winA.__RW._cmdApplySetting('branch', 'type-select', 'wye');
+    loadModule(winA, null, null, { activeTool: 'transition' });
+    makeTransitionFixture(winA, byIdA);
+    winA.__RW._cmdApplySetting('transition', 'size-select', 'increaser');
 
     const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
     winB.localStorage = sharedLS; // "the same browser" — reload/re-paste, not a fresh browser profile
-    loadModule(winB, null, null, { activeTool: 'branch' });
-    ok(winB.__RW._cmdModalMemory.branch && winB.__RW._cmdModalMemory.branch['type-select'] === 'wye',
+    loadModule(winB, null, null, { activeTool: 'transition' });
+    ok(winB.__RW._cmdModalMemory.transition && winB.__RW._cmdModalMemory.transition['size-select'] === 'increaser',
        'the freshly-loaded instance already has the remembered value on startup, before anything is typed');
 
-    const fixtureB = makeBranchFittingFixture(winB, byIdB);
+    const fixtureB = makeTransitionFixture(winB, byIdB);
     winB.__RW._cmdModalMemoryTick();
-    ok(fixtureB.typeSel.value === 'wye', 'and auto-fills it into the real control once its own modal is detected open — no re-typing needed');
+    ok(fixtureB.sizeSel.value === 'increaser', 'and auto-fills it into the real control once its own modal is detected open — no re-typing needed');
   }
 
   /* ---------- 276. round 26: no localStorage available — remembering/loading never throws, falls back to in-memory only ---------- */
@@ -6057,14 +6078,34 @@ function loadCoreModule(win){
     let threw = false;
     let RW;
     try {
-      loadModule(win, null, null, { activeTool: 'branch' });
+      loadModule(win, null, null, { activeTool: 'transition' });
       RW = win.__RW;
-      makeBranchFittingFixture(win, byId);
-      RW._cmdApplySetting('branch', 'type-select', 'wye');
+      makeTransitionFixture(win, byId);
+      RW._cmdApplySetting('transition', 'size-select', 'increaser');
     } catch (e) { threw = true; }
     ok(!threw, 'no localStorage on the page never throws, on load or on write');
-    ok(RW._cmdModalMemory.branch && RW._cmdModalMemory.branch['type-select'] === 'wye',
+    ok(RW._cmdModalMemory.transition && RW._cmdModalMemory.transition['size-select'] === 'increaser',
        'the value is still remembered in-memory for the rest of this page — it just will not survive a reload');
+  }
+
+  /* ---------- 277. round 26 follow-up: branch fitting's own memory is EXCLUDED — carved out into a dedicated standalone repo (boon-duct-workbench) ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    const fakeLS = makeFakeLocalStorage();
+    win.localStorage = fakeLS;
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fixture = makeBranchFittingFixture(win, byId);
+
+    RW._cmdApplySetting('branch', 'type-select', 'wye');
+    ok(!RW._cmdModalMemory.branch, 'a select write inside branch\'s own modal is no longer remembered at all');
+    const rawPersisted = fakeLS.getItem('rw_graph_modal_memory_v1');
+    ok(!rawPersisted || !JSON.parse(rawPersisted).branch, 'nor persisted');
+
+    RW._cmdModalMemory = { branch: { 'type-select': 'wye' } }; // even a manually-seeded value (e.g. old data from before this round)
+    fixture.typeSel.value = 'tap';
+    RW._cmdModalMemoryTick();
+    ok(fixture.typeSel.value === 'tap', 'is never auto-filled either — branch\'s own dedicated repo is the only place this now lives');
   }
 
   finish();
