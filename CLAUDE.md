@@ -2786,6 +2786,82 @@ clean again. Loader rebuilt (181399 bytes).
 the rebuilt loader live again before this two-layer fix (round 22 + this follow-up) is treated as
 fully closed.
 
+## Round 23: dropdown auto-scroll + digit passthrough (graph host)
+
+Three defects reported together this round; one was deferred at Kresna's own request after a
+diagnosis check ruled out the obvious theory. Recorded here in order.
+
+**1. Deferred: properties blending into the dropdown while resting in `select`.** The initial
+report ("dropdown not persistent when cycling... this also applied to new system, profile" from
+round 22) was actually a different, still-open bug: typing after returning to `select` shows
+tool *property* rows, not just tool names. Read closely, the code says this shouldn't be possible —
+`onInput()`'s command-mode branch only builds `paramItems` when `RW._cmdActiveSettingsTool()` is
+truthy (`rw_cmdline.js` — the bare-param blend gate), and that function returns `null` for
+`'select'` specifically, because `GRAPH_SETTINGS_MAP` deliberately excludes it. Before guessing at
+a fix, `AskUserQuestion` asked Kresna to check `__graphDebug.activeTool` live at the exact moment
+the unwanted rows show — it reported `'select'`. That single fact rules out the only plausible
+code-level theory found (`RW._cmdEscapeHandler` bailing on an `&lt;input&gt;` target, so Escape from a
+focused bar never reaches `select` — this was about to be proposed as the fix right when the
+`activeTool` reading came back and contradicted it). With the leading theory eliminated and no
+alternative yet found, Kresna said to skip this one rather than keep guessing — **deferred,
+unfixed, see Open Questions below** for what the next round should pick up from.
+
+**2. The autocomplete dropdown never scrolled to follow the highlight.** `renderMenuRows()`
+rebuilds every row from scratch (`menuEl.innerHTML = ''`, then re-append) on every highlight move,
+which resets `menuEl.scrollTop` to 0 as a side effect — so arrowing/Tabbing the highlight past
+whatever fits inside the 200px-max dropdown (~10 rows) moved it below the fold with nothing
+scrolling to follow. This specifically bites the `<tool>.` parameter listing (e.g. `route.`),
+the one list in this file that was never capped at 8 rows — the graph inspector can carry dozens
+of `graph-` controls. Fix: capture the highlighted row's own element while `renderMenuRows()`
+builds the list, then a new `cmdScrollRowIntoView()` helper adjusts `menuEl.scrollTop` by hand
+from the row's `offsetTop`/`offsetHeight` against the container's `clientHeight` — scroll up if
+the row sits above the current viewport, down if below, untouched otherwise. Deliberately NOT
+`Element.scrollIntoView()`, which would also scroll every scrollable ancestor — on this host that
+would yank the drawing itself out from under the user, the same "our own UI manages its own
+scrolling" boundary `panInOurUi` already enforces elsewhere in this file. Every geometry read is
+guarded so a context with no real layout (offsets/clientHeight all zero, as in a synthetic
+harness that never opted in) is a silent no-op, not a throw.
+
+**3. A digit typed at the end of a duct draw was swallowed by the command line instead of
+reaching the app's own numbered "pick the next tool" prompt.** The global auto-capture listener's
+only printability test (`e.key.length !== 1`) passes for digits same as any letter, so they fell
+straight through to the unconditional steal. There is no DOM signal to detect this prompt — its
+identity was never found live (see round 19's still-open item below) — so the fix doesn't try to:
+a bare digit typed while the command bar is genuinely empty and unfocused now passes straight
+through untouched (a plain `return`, no `preventDefault`/`stopImmediatePropagation` — same
+doctrine as the existing open-`&lt;dialog&gt;` bail-out just above it), **graph host only**. This is
+safe unconditionally, not merely for this one prompt, because no `GRAPH_TABLE`/`GRAPH_ACTIONS`
+name or alias, and no `graph-` param name, starts with a digit — so a digit at a genuinely resting
+bar can never be the start of anything typeable on this host. The annotate host is untouched:
+digits there are the app's own tag hotkeys (`tag1`…`tag0`), real commands, so `RW_IS_GRAPH` scopes
+the whole thing. `RW._cmdDigitPassthrough` (default `true`) is the console escape hatch, matching
+this file's existing `RW._cmdIsolateTools`/`RW._panEnabled` convention.
+
+**Tests.** The harness had no way to express row geometry at all — `makeElement` had
+`scrollTop`/`clientHeight` but no `offsetTop`/`offsetHeight`. Added both (default 0) plus an
+opt-in synthetic layout: a container carrying `__layoutRowHeight` has `appendChild` stamp each
+child's `offsetHeight`/`offsetTop` from its index the moment it's appended — enough to exercise
+`cmdScrollRowIntoView`'s scrollTop math without modeling a real layout engine. New tests (254-261,
+768 → 782): scrolling down to bring a below-the-fold row into view; scrolling back up to bring an
+above-the-fold row into view (deliberately landing on a non-zero scrollTop, not back at row 0 —
+returning to 0 would be indistinguishable from "scrollTop was simply never touched," a
+tautological pass); a highlight already fully visible leaves scrollTop untouched; no menu geometry
+at all never throws and leaves scrollTop at 0; a bare digit at rest on the graph host passes
+through untouched; the same digit still lands in the bar once the bar already holds text (proving
+the guard checks the bar's actual emptiness, not just "nothing focused"); the annotate host is
+completely unaffected; and the `RW._cmdDigitPassthrough = false` escape hatch restores the old
+behavior. **Confirmed both as genuine catches, not tautological**: reverting only the
+`cmdScrollRowIntoView()` call fails exactly the 3 expected assertions (780 passed, 3 failed);
+restoring and reverting only the digit bail-out fails exactly the 2 expected assertions (780
+passed, 2 failed); restoring both passes clean at 782. Loader rebuilt (185082 bytes).
+
+**Not live-verified this round** (synthetic-only, standing caveat) — neither the dropdown
+auto-scroll nor the digit passthrough has been tried against a real page yet. The digit
+passthrough in particular is worth watching closely live: finishing a duct is precisely the
+non-null → `null` `activeTool` edge the auto-select watcher (polled every `AUTOSEL_POLL_MS`)
+reverts to `select` on — if the app's numbered prompt turns out to depend on the tool still being
+armed, that watcher, not this change, could end up fighting it.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery
@@ -2907,3 +2983,20 @@ here too, though this repo's own tools have never written annotation state direc
   up) — the next step would be intercepting `EventTarget.prototype.addEventListener` to reorder
   registration, not attempted yet since it's a much bigger intervention this project has never
   needed before.
+- **(Round 23, deferred, not yet root-caused)** Tool *properties* still blend into the dropdown
+  while genuinely resting in `select` — confirmed live this round: `__graphDebug.activeTool` reads
+  `'select'` at the exact moment the unwanted property rows are showing. This directly
+  contradicts the code path that's supposed to gate them (`RW._cmdActiveSettingsTool()` returns
+  `null` for `'select'`, so `onInput()`'s bare-param blend should produce an empty `paramItems`),
+  so the rows are reaching the menu some other way not yet identified. **Ruled out**: `Escape`
+  from a focused command bar failing to reach `select` (`RW._cmdEscapeHandler` bails on an
+  `&lt;input&gt;` target) — a live `activeTool` reading of `'select'` means the app genuinely did
+  return to rest, so this theory can't be what's happening. Next step for whoever picks this up:
+  reproduce live, then read `RW._cmdActiveSettingsTool()`'s actual return value (not just
+  `activeTool`) and `RW._toolSettingsMap[currentActiveTool]` at the same moment — the discrepancy
+  has to be in one of those two, not in `readTool()` itself, since that already checked out.
+- **(Round 23)** Whether the digit-passthrough fix's "safe unconditionally, since no graph-host
+  command starts with a digit" reasoning holds up against the real prompt is untested live — see
+  Round 23's own account for the mechanism and the auto-select-watcher interaction to watch for.
+  This is a naming-convention argument, not a structural one: it would need revisiting if a
+  digit-leading tool name, alias, or param is ever added to this host.

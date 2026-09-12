@@ -184,6 +184,12 @@ on commit. Watch the status line: it always says "confirm it actually applied."
 So Escape typed twice in a row does two different things: the first clears/closes the command bar
 (if it had focus), the second — now that nothing is focused — sends the app back to select.
 
+**The highlighted row always stays on screen while cycling.** The autocomplete dropdown scrolls
+itself as needed so `ArrowUp`/`ArrowDown`/`Tab` never move the highlight somewhere invisible below
+(or above) the visible rows — this matters most for the `<tool>.` parameter listing on the graph
+host, the one dropdown list that isn't capped at 8 rows (the graph inspector can carry dozens of
+params). Only the dropdown's own scroll position moves; nothing else on the page scrolls.
+
 **Tab is escalated to win over the host app's own keyboard handling.** On top of the ordinary
 `inputEl`-level Tab handling above, Tab specifically is ALSO caught by a dedicated `window`-level,
 capture-phase listener — if the host app has its own keydown listener on `document` (its own
@@ -560,6 +566,16 @@ stage has nothing to scroll (it pans via a CSS transform instead), so the techni
 annotate host can't apply; the host's own wheel/Shift+wheel/middle-click panning already covers
 it. `__RW._panEnabled = true` re-enables the console escape hatch if a future page ever does
 scroll.
+
+**A bare digit typed at rest passes straight through to the app.** The app offers a numbered
+"pick the next tool" prompt at points such as the end of a duct draw — with the command line's
+own global typing-capture otherwise swallowing every printable character, the digit never reached
+that prompt. Now, on the graph host only, a digit typed while the command bar is genuinely empty
+and unfocused reaches the app untouched, since no graph-host tool or param name starts with a
+digit — once you've started typing a command, or are entering a numeric param value (e.g.
+`route.width-input=18`), digits keep working exactly as before. The annotate host is unaffected —
+a digit there is still the app's own tag hotkey (`tag1`…`tag0`), captured as always.
+`__RW._cmdDigitPassthrough = false` restores the old capture-everything behavior on this host too.
 
 ## Boundaries
 
