@@ -786,8 +786,8 @@
   // additive, unchanged below. While a duct tool (route, flex, ...) is armed, the
   // command line becomes modal: only that tool's own properties, the ways out
   // (select/Escape/Space), and the route-lifecycle actions (finish/cancel) are
-  // reachable. Everything else — other tools, other action buttons, # system search —
-  // is refused with a status message rather than silently vanishing.
+  // reachable. Everything else — other action buttons, # system search — is
+  // refused with a status message rather than silently vanishing.
   // Round 19: the 8 new modal-action commands are appended flat, matching
   // the finish/cancel precedent above rather than scoping per-tool —
   // finish/cancel are already globally allowed despite being route-specific,
@@ -804,6 +804,29 @@
     // finish/cancel already are, not scoped per-tool.
     'dimension'
   ];
+  // Round 25 (Kresna's own request, scoped narrowly: "only for the tool"):
+  // switching directly to a DIFFERENT native tool while one is ARMED is no
+  // longer refused — every `kind === NATIVE` entry (route, flex, select, ...)
+  // escapes isolation the same way the GRAPH_ISOLATION_ALLOWED actions above
+  // do, so typing/picking another tool's name arms it immediately with no
+  // "type select first" detour. Everything else isolation was ever meant to
+  // restrict is unchanged: that tool's own properties via a DIFFERENT tool's
+  // `tool.` prefix, `#` system search, and every non-tool action (undo,
+  // zoomfit, ...) are still refused exactly as before.
+  //
+  // Deliberately narrower than "isolated at all": the exemption only applies
+  // while isolation comes from an actually-ARMED tool, never while it comes
+  // from an OPEN CONFIG-DIALOG MODAL (`cmdOpenModalTool()`'s own fallback in
+  // RW._cmdIsolatedTool). Dispatching a tool-switch key while one of the four
+  // modals (branch fitting, change size, GRD, riser elevation) sits open on
+  // screen was never a considered scenario — this file's own modal-dispatch
+  // comment elsewhere already flags that as untested — and "switch tools"
+  // isn't really what picking a different tool WHILE A DIALOG IS OPEN would
+  // mean anyway; Cancel/Escape is the way out of a modal, unchanged.
+  function cmdIsolationEscapes(entry, modalOpen){
+    if (entry.kind === NATIVE && !modalOpen) return true;
+    return GRAPH_ISOLATION_ALLOWED.indexOf(entry.name) !== -1;
+  }
   RW._cmdIsolateTools = true; // console escape hatch: __RW._cmdIsolateTools = false restores the old additive behavior
   // Round 23: console escape hatch for the digit-passthrough bail-out in the global
   // auto-capture listener below — __RW._cmdDigitPassthrough = false restores the old
@@ -1222,7 +1245,7 @@
     // write, so without this exemption every property edit would be refused by its
     // own guard the instant isolation is in force.
     const iso = RW._cmdIsolatedTool();
-    if (iso && entry.name !== iso && GRAPH_ISOLATION_ALLOWED.indexOf(entry.name) === -1){
+    if (iso && entry.name !== iso && !cmdIsolationEscapes(entry, !!cmdOpenModalTool())){
       cmdIsolationRefuse(iso, 'run "' + entry.name + '"');
       return false;
     }
@@ -1809,8 +1832,9 @@
         // empty query (e.g. backspacing the bar clear) still shows the allowed
         // rows quietly, matching every other empty-query case in this file.
         const allMatches = RW._cmdMatch(v);
-        const allowed = allMatches.filter(function(e){ return GRAPH_ISOLATION_ALLOWED.indexOf(e.name) !== -1; });
-        if (v && allMatches.length > allowed.length) cmdIsolationRefuse(isolatedTool, 'switch tools');
+        const modalOpen = !!cmdOpenModalTool();
+        const allowed = allMatches.filter(function(e){ return cmdIsolationEscapes(e, modalOpen); });
+        if (v && allMatches.length > allowed.length) cmdIsolationRefuse(isolatedTool, 'use it');
         // Usability is filtered SEPARATELY from the isolation accounting just
         // above (round 24) — an allowed-but-currently-unusable action (e.g.
         // "finish" while isolated to route but no route is actually in

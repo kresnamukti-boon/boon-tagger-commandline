@@ -2911,6 +2911,58 @@ that the dropdown now reads the same signal earlier, before you pick something �
 pass to confirm the dropdown genuinely hides these at the right moments rather than just in the
 synthetic fixtures above.
 
+## Round 25: switching directly to a different tool is exempt from isolation (graph host)
+
+Kresna's initial message this round ("When any tools active, the it is possible to switch to other
+tools") read ambiguously — either a bug report (isolation failing to block a switch) or a feature
+request (wanting switching allowed). Rather than guess, this was checked with `AskUserQuestion`
+first — **rejected**, with a plain-chat correction instead: "I mean make it possible to switch to
+other tools." A follow-up scope question in plain chat (should everything else isolation restricts
+stay restricted, or should isolation be turned off entirely) got a clear answer: **"only for the
+tool."**
+
+**Fix**: `GRAPH_ISOLATION_ALLOWED`'s membership check is now wrapped in a new `cmdIsolationEscapes
+(entry, modalOpen)` predicate, used at both existing enforcement points (`RW.runCommand`'s own
+guard, and `onInput()`'s isolated-branch dropdown filter) — every `kind === NATIVE` entry (every
+tool in `GRAPH_TABLE`) now escapes isolation the same way the allowlisted actions already did, so
+typing or picking a different tool's name arms it directly, with no "type select first" detour.
+Everything isolation was otherwise built to restrict is untouched: a different tool's own
+properties via `tool.` (a separate, unaffected branch in `onInput()`), `#` system search (same),
+and every non-tool action button (`undo`, `zoomfit`, ...) — all still refused exactly as before.
+
+**The exemption deliberately does NOT apply while one of the four config-dialog modals (branch
+fitting/change size/GRD/riser elevation) is open** — i.e. when `RW._cmdIsolatedTool()` resolves via
+`cmdOpenModalTool()`'s own fallback rather than a genuinely armed tool. Dispatching a different
+tool's key while a dialog sits open on screen was never a considered scenario in this codebase (a
+comment elsewhere already flags "dispatching the tool's own key into an open dialog" as untested),
+and "switch tools" isn't really a meaningful action while a config dialog is up — Cancel/Escape
+stays the way out of a modal, unchanged. Both call sites now compute `modalOpen =
+!!cmdOpenModalTool()` and pass it through.
+
+**Tests.** Two existing tests encoded the OLD "tool switching is blocked" behavior as their whole
+point (210, 214) — rewritten to assert the new behavior instead, with a new sibling each (210b,
+and an added assertion in 214) confirming a non-tool ACTION is still refused, so the "only for the
+tool" scoping has its own coverage, not just the switch itself. A third existing test ("choose" —
+branch's own submit action — offered too, in the Space-opens-branch's-modal-listing test) started
+failing as a side effect of the FIRST (too-broad) version of this fix — with every native tool now
+unconditionally escaping isolation, the top-8-row cap on the blended list filled up with tool names
+before `choose` (a `GRAPH_ACTIONS` entry sorted later in `RW._cmdTable`) got a slot. Test 238
+(modal-driven isolation still applying to an unrelated tool switch) failed the same way. Both
+failures are what led to the modal-exclusion refinement above — with it in place, both passed again
+with **no test changes needed**, which is itself decent evidence the refinement is the right shape,
+not a patch bolted on to make tests pass. **Confirmed both layers as genuine catches, not
+tautological**: reverting just the round-25 exemption (`cmdIsolationEscapes` back to
+allowlist-only) fails exactly the 5 new/rewritten assertions (786 passed, 5 failed); separately,
+removing only the `!modalOpen` guard (keeping the bare `kind === NATIVE` exemption unconditional)
+fails exactly the 2 assertions above (789 passed, 2 failed) — restoring either passes clean.
+Loader rebuilt (188763 bytes). 782 → 791 passing overall this round (accounting for the two
+rewritten tests picking up extra assertions, not just the new 210b block).
+
+**Not live-verified this round** (synthetic-only, standing caveat) — the modal-exclusion carve-out
+in particular rests entirely on the existing "dispatching a tool key into an open dialog is
+untested" caution already on record (see "The graph ('Duct Takeoff') host" in `README.md`), not on
+anything newly confirmed live this round.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery
@@ -3059,3 +3111,10 @@ here too, though this repo's own tools have never written annotation state direc
   direct console call could disagree about whether something is usable; there is no test guarding
   against that drift specifically, only that each currently agrees on the handful of entries this
   round's tests cover.
+- **(Round 25)** Whether switching directly to a different tool while one is armed actually feels
+  right on a real page is untested live — the mechanics are unchanged from picking a tool while
+  resting in `select` (the same `entry.run()` dispatch), so there's no new *technical* risk, but
+  the modal-exclusion carve-out (switching still refused while a config dialog is open) has never
+  been tried against one of the four real dialogs. If a real page's own UI reacts oddly to a
+  same-second tool-to-tool switch (no intermediate `select` frame the app itself might expect),
+  that would be a reason to revisit this, not the isolation mechanism itself.

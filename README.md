@@ -482,19 +482,24 @@ diagnostic that reports every `graph-` control and why it was or wasn't included
 
 **Tool isolation: the command line is modal on this host while a duct tool is armed** — the
 opposite of the annotate host's "additive, not exclusive" behavior above (confirmed via
-`AskUserQuestion`). Once `route`/`flex`/`extend`/... is armed, only three things still match:
-that tool's own properties (bare, or via `route.`), the ways out (`select`, Escape, Space), and
-the route-lifecycle actions `finish`/`cancel`. Everything else — every other tool name, every
-other action button (`undo`, `zoomfit`, ...), and `#` system search — matches nothing, and the
-status line says why (e.g. `route is active — press Escape or type "select" first to switch
-tools`), so a blocked query never reads as a silent typo. This is enforced twice: the dropdown
-itself never lists a blocked entry, and `RW.runCommand` refuses one directly too (the same
-belt-and-suspenders precedent `FORBIDDEN_BUTTON_IDS` set), so a direct console call can't bypass
-it either. `route.gauge-select=24ga` and friends still work exactly as above — isolation
-restricts *other* tools, never the armed one's own properties, and a property write's own re-arm
-(`RW._cmdApplySetting` calling `RW.runCommand(route)` after every write) is explicitly exempted
-from its own guard. `__RW._cmdIsolateTools = false` in the console turns this off, restoring the
-old additive behavior on this host too.
+`AskUserQuestion`). Once `route`/`flex`/`extend`/... is armed, what still matches is: that tool's
+own properties (bare, or via `route.`), the ways out (`select`, Escape, Space), the route-lifecycle
+actions `finish`/`cancel`, **and every other native tool name** — typing or picking a different
+tool switches straight to it, arming that tool instead, with no need to return to `select` first
+(Kresna's own request, round 25: "only for the tool" — narrower than turning isolation off
+altogether). Everything else — every action button (`undo`, `zoomfit`, ...) and `#` system search
+— still matches nothing, and the status line says why, so a blocked query never reads as a silent
+typo. This is enforced twice: the dropdown itself never lists a blocked entry, and `RW.runCommand`
+refuses one directly too (the same belt-and-suspenders precedent `FORBIDDEN_BUTTON_IDS` set), so a
+direct console call can't bypass it either. `route.gauge-select=24ga` and friends still work
+exactly as above — isolation restricts *other* tools' properties, never the armed one's own, and a
+property write's own re-arm (`RW._cmdApplySetting` calling `RW.runCommand(route)` after every
+write) is explicitly exempted from its own guard. **The tool-switch exemption itself doesn't apply
+while one of the four config-dialog modals (below) is open** — dispatching a different tool's key
+while a dialog sits open on screen was never a considered scenario, so switching tools there is
+still refused exactly as before; Cancel/Escape remains the way out of a modal. `__RW._cmdIsolateTools
+= false` in the console turns isolation off entirely, restoring the old fully-additive behavior on
+this host too.
 
 **Properties match by what the app is showing right now, not just their fixed DOM id** — every
 inspector field's live on-screen label is read fresh each time (confirmed live: every field wraps

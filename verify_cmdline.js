@@ -4654,17 +4654,32 @@ function loadCoreModule(win){
     ok(annotateWin.__RW._cmdIsolatedTool() === null, 'always null on the annotate host, regardless of what is armed');
   }
 
-  /* ---------- 210. isolated: typing a different tool's name matches nothing and reports why ---------- */
+  /* ---------- 210. round 25: isolated, typing a DIFFERENT tool's name now matches — switching tools directly is exempt from isolation ---------- */
+  // Reversed from this test's own pre-round-25 behavior (Kresna's own
+  // request, scoped narrowly: "only for the tool" — everything ELSE
+  // isolation restricts, e.g. an action button or another tool's own
+  // properties, stays refused; see tests 210b/213 below for that).
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
     const inp = byId['rw-cmd-input'];
     inp.value = 'flex';
     inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('flex') === 0),
+       'typing a different tool\'s name while route is armed matches it — switching tools directly is allowed');
+    ok(win.__RW._lastStatus.indexOf('route is active') === -1, 'no isolation refusal is reported for a tool switch');
+  }
+
+  /* ---------- 210b. round 25: an ACTION button (not a tool) is still refused while isolated — the widened exemption is tool-switching only ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'undo';
+    inp.dispatchEvent({ type: 'input' });
     ok(!byId['rw-cmd-menu'] || byId['rw-cmd-menu']._children.length === 0,
-       'typing a blocked tool name while route is armed matches nothing');
-    ok(win.__RW._lastStatus.indexOf('route is active') !== -1 && win.__RW._lastStatus.indexOf('switch tools') !== -1,
-       'status explains why, naming the active tool');
+       '"undo" — an action, not a tool switch — still matches nothing while route is isolated');
+    ok(win.__RW._lastStatus.indexOf('route is active') !== -1, 'status still explains why');
   }
 
   /* ---------- 211. isolated: the active tool's own params still match bare, and via "route." ---------- */
@@ -4736,7 +4751,7 @@ function loadCoreModule(win){
        'status explains why');
   }
 
-  /* ---------- 214. isolated: RW.runCommand refuses a blocked tool in code, not just via the dropdown; the tool's own re-arm is exempted ---------- */
+  /* ---------- 214. round 25: RW.runCommand allows switching directly to a different tool in code too, not just via the dropdown; a non-tool action stays refused ---------- */
   {
     const { win } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
@@ -4744,12 +4759,14 @@ function loadCoreModule(win){
     const keys = [];
     RW._cmdDispatchAppKey = function(k){ keys.push(k); };
 
-    ok(RW.runCommand('flex') === false, 'runCommand refuses a different tool directly, bypassing the dropdown entirely');
-    ok(JSON.stringify(keys) === JSON.stringify([]), 'no key is dispatched for the refused command');
-    ok(RW._lastStatus.indexOf('route is active') !== -1, 'status names the active tool');
+    ok(RW.runCommand('flex') === true, 'runCommand switches directly to a different tool, bypassing the dropdown entirely');
+    ok(JSON.stringify(keys) === JSON.stringify(['f']), 'and it actually dispatches the new tool\'s own key');
 
     ok(RW.runCommand('route') === true, 'runCommand still allows re-arming the SAME tool that is isolated');
-    ok(JSON.stringify(keys) === JSON.stringify(['r']), 'and it actually dispatches — the exemption RW._cmdApplySetting\'s re-arm depends on');
+    ok(JSON.stringify(keys) === JSON.stringify(['f', 'r']), 'and it actually dispatches — the exemption RW._cmdApplySetting\'s re-arm depends on');
+
+    ok(RW.runCommand('undo') === false, 'a non-tool ACTION is still refused directly via runCommand — the widened exemption is tool-switching only');
+    ok(RW._lastStatus.indexOf('route is active') !== -1, 'status names the active tool');
   }
 
   /* ---------- 215. isolated: RW._cmdApplySetting's own re-arm still works end-to-end under isolation ---------- */
