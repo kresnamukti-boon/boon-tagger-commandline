@@ -184,6 +184,16 @@ on commit. Watch the status line: it always says "confirm it actually applied."
 So Escape typed twice in a row does two different things: the first clears/closes the command bar
 (if it had focus), the second — now that nothing is focused — sends the app back to select.
 
+**Tab is escalated to win over the host app's own keyboard handling.** On top of the ordinary
+`inputEl`-level Tab handling above, Tab specifically is ALSO caught by a dedicated `window`-level,
+capture-phase listener — if the host app has its own keydown listener on `document` (its own
+focus/accessibility handling, unrelated to this project), a plain document-level listener added by
+this loader could lose a same-node race to it and never even see Tab, leaving the browser's own
+default "move focus to the next element" behavior to fire instead (the dropdown then flickers and
+closes). A `window`-level capture listener runs before any `document`-level one regardless of
+registration order, so this wins that race. Scoped to firing only when the real command input is
+the actual event target, so it can never affect Tab anywhere else on the page.
+
 **Tab and the arrow keys only move the highlight — neither ever applies anything.** Cycling through
 `#conc` → CONCRETE / CONCRETE SLAB / CONCRETE WALL with Tab or the arrows only changes what's
 highlighted (and, for Tab, what's filled into the input); the tag is only actually assigned — same
@@ -511,6 +521,21 @@ known-scale) still blocks the command bar entirely, unchanged.
 `-service` or bare `name`/`service`) — the "Add" button (`graph-create-system`) stays a manual click
 only. Widening the sweep to include text inputs for this also incidentally makes `graph-tag-input`
 ("Equipment tag") reachable, a genuine existing property that was simply never sweepable before.
+
+**`dimension` (alias `dim`) sets Width and Height one after another, without re-typing the tool
+name in between.** Typing a duct tool's own Width and Height separately (`route.width-input=18`,
+then `route.height-input=9`) already worked — `dimension` is a shortcut for exactly that sequence:
+it opens the same numeric value-entry draft `width` alone would (`route.width-input = `, input
+still focused), but confirming it with Enter/Space immediately re-opens the draft on **Height**
+instead of clearing the bar, so the very next thing you type is the height value, then Enter
+finishes. Works against whichever tool is currently armed (or, for `branch`, its own open modal) —
+whatever `width`/`height` typed bare would already reach. Requires the active tool to genuinely
+have **both** a width and a height control right now (a round-profile duct, which only exposes
+Diameter, does not) — reported on the status line rather than silently doing nothing. A bad value
+at either step (not a number) stops the whole thing there; it never silently carries on to the
+next field with nothing set. Escape at any point cancels the entire two-step command, not just
+whichever field was showing. Exempt from tool isolation the same way `finish`/`cancel` already
+are, since it only ever edits the isolated tool's **own** width/height, never a different tool's.
 
 **Action buttons** — the page's own buttons that have no keyboard shortcut, typed by name (no
 single-letter aliases, since every letter is already a tool key): `undo`/`redo` (`re`), `zoomfit`

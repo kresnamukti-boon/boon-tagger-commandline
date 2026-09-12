@@ -2531,6 +2531,261 @@ drawn during this session never actually persisted server-side (`pageEntities` w
 `node verify_cmdline.js`: **721 passed, 0 failed**. Loader rebuilt (169044 bytes). Not yet
 live-verified on a real page.
 
+## Round 20: `dimension` — Width and Height, one after another, in a single command
+
+Kresna's request: add an input command for the graph host's Width/Height controls that lets you
+type both values back to back, rather than drilling into `route.width-input=`/`route.height-input=`
+as two fully separate commands each time.
+
+**Design, built on the existing numeric-draft mechanism rather than a new input system.** Picking a
+numeric settings item already opens a focused "tool.param = " draft (`runAndClear`'s `isSettingsItem`
+branch) that Enter/Space applies. `dimension` is a new `RW._cmdTable` entry
+(`{name:'dimension', kind:ACTION, aliases:['dim'], dimension:true}` — no `run`/`btn`, since it never
+dispatches a key or clicks a button) whose only special behavior is *what happens when it's picked*:
+it opens that exact same width draft, but stamps the draft with `chain: ['height-input']`. The
+existing settingsDraft Enter/Space handler in `onInputKeydown` (shared by `dimension` and every
+ordinary numeric param) checks `draft.chain` right after a successful apply — non-empty means
+re-open the draft on the next param (`cmdDimensionPrompt`) instead of the usual clear/blur, so
+confirming width drops straight into height with no re-typing of the tool name. A **failed** apply
+(bad value) does NOT advance the chain — the whole compound command stops there, matching how a
+single bad numeric entry already behaves, rather than silently skipping ahead to height with
+nothing set.
+
+**Fully live-discovered, no hardcoded tool list.** `cmdStartDimension()` resolves the target tool
+the same way bare-param blending already does (`RW._cmdActiveSettingsTool() || cmdOpenModalTool()`),
+then checks `RW._cmdToolSettingsList(tool)` for both `width-input` AND `height-input` before
+starting anything — a round-profile duct (Diameter only, confirmed live in round 18 to be the same
+underlying `width-input` control, just relabeled) correctly reports "no height-input control right
+now" instead of silently opening a draft for a field that doesn't apply. This means `dimension`
+automatically works against `branch`'s own modal (which has both, per round 19's own fixture) with
+zero tool-specific code, and would automatically start working against any other current or future
+tool that happens to expose both fields, with zero changes needed here.
+
+**Special-cased in two places, not just one — same "enforce it in code, not just by omission"
+precedent `FORBIDDEN_BUTTON_IDS`/isolation already set:**
+
+- `runAndClear` checks `item.dimension` before falling through to the ordinary `RW.runCommand(item.name)`
+  path (dropdown pick / Enter-Space on the highlighted row) — a successful start skips the normal
+  clear/blur (the draft needs the input focused), a failed one (no active tool, or one missing a
+  dimension) falls through to the same cleanup any other failed command gets.
+- `RW.runCommand` checks `entry.dimension` immediately after the isolation guard, **before** the
+  unconditional `inputEl.blur()` a few lines below it (added in round 16 so a tool-switch dispatch
+  isn't ignored by the app's own activeElement guard) — `dimension` is the one entry that must NOT
+  be blurred before its own work runs, since starting it means focusing the input for the width
+  value, the opposite of every dispatching command. This also gives `RW.runCommand('dimension')`
+  the same console-parity every other command already has.
+- Added to `GRAPH_ISOLATION_ALLOWED` alongside `finish`/`cancel` — `dimension` only ever edits the
+  *isolated tool's own* width/height (exactly like typing `<tool>.width-input=` by hand already
+  could, which is exempt from isolation for the same reason: it edits the armed tool's own
+  properties, never a different tool's), so it stays reachable in the normal case (a duct tool
+  already armed) rather than being refused as if it were a tool-switch.
+
+**Order is on-screen order, not alphabetical**: `DIMENSION_PARAMS = ['width-input', 'height-input']`
+matches every confirmed live listing (route, branch's own modal) showing "Width (in)" immediately
+before "Height (in)" — see round 19's own field-ordering fix. Each prompt still shows the CONTROL's
+own live label (round 18) in its status line, not the internal `width-input`/`height-input` id.
+
+**Escape cancels the whole two-step command, not just whichever field is showing** — no new logic
+needed here: the existing settingsDraft Escape handler already clears `settingsDraft` outright
+regardless of whether it carries a `chain`, so backing out mid-sequence behaves exactly like
+backing out of any single numeric draft.
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **753 passed, 0 failed** (30 new,
+244-251) — `dimension` is a real pickable/typeable row; picking it opens the width draft exactly
+like picking `width` bare would, previewing "Height (in) next" in the status line; confirming width
+re-opens the draft on height with the input still focused and height's own live range/current
+reported; confirming height finishes the chain (both real controls verified set, bar cleared and
+blurred); a clean refusal (status line names why, bar still cleared) with no active tool, and with
+an active tool missing one of the two controls (simulated round-profile fixture: only
+`graph-width-input` present); a bad width value stops the chain with height's control provably
+untouched; the `dim` alias resolves the same table entry and `RW.runCommand('dimension')` opens the
+draft directly (console parity, without the unconditional-blur regression the special-case ordering
+guards against); `dimension` still matches and still runs while `route` is isolated/armed, opening
+the draft on `route` itself; and Escape mid-chain leaves both real controls untouched with the bar
+cleared, plus the same "a later unrelated command can't resurrect a cancelled draft" regression
+guard test 83 already established for the single-param case. Loader rebuilt (176178 bytes).
+
+**Not live-verified this round** (synthetic-only, same standing caveat as every prior round) —
+in particular whether `transition`/`grd`/`vertical` (or their own modals) expose both a width and a
+height control the same way route/branch do; if a tool exposes width/height under different param
+names than `width-input`/`height-input`, `dimension` would report "no width-input/height-input
+control right now" for it even though the tool visually has both — the fix would be widening
+`DIMENSION_PARAMS`'s matching (or the fallback within it) once a real counter-example is found live,
+not assumed in advance.
+
+## Round 21: Tab escalated to a `window`-level capture listener — a host-app keydown listener can steal it
+
+Kresna reported: "Pressing TAB is not captured inside commandline." Clarified live symptom: the
+autocomplete dropdown was already open (from prior typing) and briefly visible, then closed again
+the instant Tab was pressed — not "Tab does nothing," but "Tab's ordinary highlight-cycling never
+ran, and the BAR ITSELF lost focus," since a dropdown only ever hides via `inputEl`'s own `blur`
+listener (`setTimeout(hideMenu, 150)`), and that symptom (open -> flicker -> closed ~150ms later)
+is the exact signature of the browser's *default* Tab action (move focus to the next element)
+firing, not this project's own Tab handling.
+
+**Root cause reasoned from the code, not guessed at blind**: `onInputKeydown`'s own Tab branch
+already calls `e.preventDefault(); e.stopPropagation();` — confirmed correct by this file's own
+many pre-existing Tab tests, which call it directly and pass. So the default action firing anyway
+means something intercepted the keydown event *before* that handler ever ran. The one plausible
+live-only culprit: a keydown listener the **host app itself** registers on `document` in the
+capture phase (its own focus/accessibility handling — nothing to do with this project). A listener
+this project adds on `document` can never beat that in a same-node race, because two capture-phase
+listeners on the same node fire in **registration order**, and the host app's own script always
+runs (and registers first) before this loader is ever pasted in. This is a different flavor of
+interception than round 3's (that one was self-inflicted — this project's own auto-capture eating
+its own synthetic dispatch); here the interceptor, if this diagnosis is right, is the host page's
+own code, not this project's.
+
+**Fix**: escalate Tab specifically to a `window`-level capture-phase listener. The capture phase
+always visits `window` before `document` structurally, regardless of listener registration order
+— so a `window`-level listener wins the race against ANY `document`-level listener, including one
+the host app registered first. This is the exact same "capture always wins" doctrine the existing
+global auto-capture listener already relies on (there, at the `document` level, for printable
+characters — which has apparently never lost this same race, suggesting the host app's own
+Tab-specific handling, if it exists, lives somewhere Tab-focused single-key printable capture
+doesn't compete with). Scoped tightly — `if (e.target !== inputEl) return;` — so this can never
+affect Tab anywhere else on the page; it fires exactly once per Tab press aimed at the real command
+input and nowhere else. `stopImmediatePropagation()` (not just `stopPropagation()`) both wins
+against the host's own document-level listener and stops the SAME event from also reaching
+`inputEl`'s own pre-existing bubble-phase `onInputKeydown` listener a second time — the new
+listener calls `onInputKeydown(e)` directly itself, so Tab is still handled exactly once, through
+the one existing code path, never duplicated.
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **757 passed, 0 failed** (4 new,
+252-253) — since this file's own per-node `_fire` helpers don't simulate real cross-node
+propagation on their own, test 252 drives the actual window-then-document capture ORDER by hand: a
+stand-in host-app-style `document`-capture Tab listener is registered, a keydown is fired on
+`win` first (mirroring what a real browser does structurally), and only continued to `doc` if not
+already stopped — confirming the new listener claims the event immediately, the stand-in host
+listener never sees it, and the ordinary Tab fill-behavior (`wand.tolerance` -> stays
+`wand.tolerance`, test 85's own scenario) still ran end-to-end through the escalated path, not a
+no-op preventDefault. Test 253 is the regression guard: Tab aimed at any OTHER element is left
+completely untouched (no preventDefault, no stopImmediatePropagation) — ordinary page-wide Tab
+navigation is unaffected. Loader rebuilt (178733 bytes).
+
+**Not live-verified this round** (synthetic-only, same standing caveat as every prior round) — in
+particular, whether the host app's own Tab-intercepting listener (if this diagnosis is correct) is
+actually on `document`, not `window`, is unconfirmed; if it turns out to ALSO be registered on
+`window`, this fix would lose the same registration-order race it currently wins, since two
+`window`-level capture listeners still tie-break by registration order and the host's own script
+always loads first. The next step in that case would be intercepting `EventTarget.prototype.
+addEventListener` itself to reorder registration — a much larger intervention, not attempted here
+without live confirmation that this fix alone isn't enough.
+
+## Round 22: the REAL cause of round 21's symptom — a select param's own Tab-preview blurs itself, no host app involved
+
+Round 21 diagnosed a host-app document-capture listener stealing Tab. Kresna's own follow-up live
+report pinpointed the actual mechanism instead: picking `route`'s own system/network **select**
+param, Tab moved the highlight ONE option, then the dropdown closed and the browser's own default
+focus behavior took over — and, separately, pressing **Space while a duct tool is active** closed
+it straight to `select` instead of showing that tool's own param list.
+
+**Root cause, found by re-reading the code that runs on every Tab-preview, not re-guessed at**:
+picking a select-type option (or cycling one via Tab, `settingsDraft.type === 'select'`) calls
+`RW._cmdApplySetting`, whose select branch ends by calling `cmdArmOrNoteModal(tool, modal)` — which
+(no modal open) calls `RW.runCommand(tool)` to re-arm it. `RW.runCommand` **unconditionally** calls
+`inputEl.blur()` before doing anything else (round 16's own fix, needed so the app's own
+`activeElement` guard doesn't block a real tool-switch dispatch). Every OTHER "stays focused"
+interaction in this file (picking a numeric/select param, `dimension`'s own width->height hop)
+already re-focuses the input right after its own internal re-arm — but the select-Tab-preview loop
+never did: it applies, re-renders the menu, and returns, with no `inputEl.focus()` call anywhere in
+that branch. In a real browser this is a genuine, visible blur — the input's own `blur` listener
+then hides the dropdown ~150ms later — but this repo's own synthetic DOM stub's `.blur()` is a
+plain flag-flip with no `'blur'` **event** dispatched to registered listeners, so nothing here ever
+observed the dropdown-closing side effect. Worse, no existing test even asserted `inp._focused`
+after a Tab-preview (test 103 checks the applied value, the re-arm, and that the dropdown stays
+open — never focus), so the flag itself flipping to `false` (which the stub's `.blur()` *does*
+correctly do) went completely unasserted and unnoticed.
+
+**This one bug explains BOTH symptoms reported live, not two separate ones.** Once the input is
+genuinely blurred, the very next keystroke no longer reaches `onInputKeydown` at all — it instead
+reaches the **global auto-capture** listener on `document`. For another Tab press, that listener
+just ignores it (Tab isn't a single printable character, round 21's own escalated `window`-capture
+listener also requires `e.target === inputEl`, which is no longer true once focus has moved) —
+matching "moved one, then closed, and the browser captured it." For a Space press with the tool
+still armed, that SAME global listener's existing, correct, documented behavior is "a tool is
+armed → close it to select" (see "Select is the resting state" above) — which is exactly what fired,
+matching the second symptom. Space was never broken or missing a "show params" feature; it was
+reacting correctly to state (armed, bar not really focused despite looking like it was) that the
+Tab bug put it in.
+
+**Fix**: add the same `inputEl.focus()` + `setSelectionRange` restoration every other "stays open"
+draft flow already has, right after `renderMenuRows()` in the select-Tab-preview branch — undoing
+`RW._cmdApplySetting`'s own internal blur synchronously, in the same tick, so the net visible effect
+in a real browser is no focus loss at all (blur immediately followed by a synchronous focus() in the
+same event-handling tick leaves the element focused, the same "blur-then-refocus dance" `dimension`'s
+own chain hop, round 20, already relies on).
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **761 passed, 0 failed** (4 new,
+103d) — asserts `inp._focused === true` after picking the param, after one Tab-preview, after a
+SECOND Tab-preview in a row (proving repeated cycling never compounds into a permanent loss), and
+after Shift+Tab. **Confirmed as a genuine catch, not a tautological test**: reverting just the new
+`inputEl.focus()`/`setSelectionRange` lines and re-running fails exactly the 3 new focus assertions
+(758 passed, 3 failed) — restoring them passes clean again. Loader rebuilt (180194 bytes).
+
+**Not live-verified this round** (synthetic-only) — whether this fully resolves the live symptom
+end-to-end (a real browser's blur/focus timing, and the 150ms `hideMenu` deferral this fix aims to
+race ahead of, can't be exercised by the synthetic stub) — Kresna asked to re-test the rebuilt
+loader live before this is treated as closed. Round 21's `window`-capture Tab escalation is kept
+regardless (it's a real, independently-defensible hardening against a genuine host-app interception
+racing our own listener), but it was NOT the cause of either symptom reported this round — this
+round's fix is the one that actually matters for both.
+
+**Round 22 follow-up, same live-testing session — the SECOND layer of the same bug**: Kresna
+confirmed Tab itself now cycles correctly (no more focus loss, no more Space-closes-instead
+symptom), but reported the dropdown itself still wasn't "persistent" while cycling — also true of
+`profile` and "New system," not just system/network, confirming this is generic to every
+select-type param, not specific to any one field.
+
+**Root cause: the fix above stops there being any VISIBLE, LASTING loss of focus, but it doesn't
+stop the original blur EVENT from having already fired and scheduled its own deferred cleanup.**
+`RW.runCommand`'s `inputEl.blur()` call (inside every settings re-arm) triggers the input's own
+`blur` listener (`inputEl.addEventListener('blur', function(){ setTimeout(hideMenu, 150); })`)
+immediately, which schedules `hideMenu()` to run ~150ms later — **unconditionally**, with no check
+of whether focus has come back by the time the timer actually fires. The round-22 fix above
+re-focuses synchronously, in the same tick, so the input never stays visibly blurred — but the
+150ms timer from that same blur event is still sitting there, waiting, and fires anyway,
+closing the dropdown out from under an otherwise-still-open Tab-preview cycle. Every additional Tab
+press schedules ANOTHER one of these, so the dropdown keeps flickering closed at unpredictable
+moments as multiple deferred timers land.
+
+**Fix**: check `document.activeElement !== inputEl` at the moment the deferred timer actually
+fires, not at the moment it's scheduled — `setTimeout(function(){ if (document.activeElement !==
+inputEl) hideMenu(); }, 150)`. A blur that gets undone (refocused) before the 150ms elapses no
+longer closes anything; a genuine, lasting blur (the user actually clicks or tabs away for real)
+still hides the dropdown exactly as before. This narrows the skip condition, it does not disable
+the mechanism outright.
+
+**A genuine, pre-existing DOM-fidelity gap in this file's own test harness, found and closed while
+writing the regression test, not guessed at**: `verify_cmdline.js`'s element stub's `.blur()`/
+`.focus()` methods only ever flipped an internal `_focused` flag — they never dispatched a real
+`'blur'`/`'focus'` EVENT to registered listeners the way a real browser does. This meant
+`inputEl.addEventListener('blur', ...)` (the exact listener this bug lives in) had **never actually
+been exercised by any test in this file**, on either side of this fix — every existing test that
+touches `.blur()` only ever asserted the flag, never that the listener ran. Fixed by having both
+methods `dispatchEvent()` their own real event (the stub already supports arbitrary event dispatch
+to registered listeners; it just wasn't wired to `.focus()`/`.blur()` themselves) and by threading
+the shared `byId` registry (already used for id lookups) into a `document.activeElement` getter,
+backed by whichever element most recently called `.focus()`. All 761 pre-existing tests still pass
+unchanged against this stricter stub, confirming no test was silently relying on the old
+no-event-dispatch behavior.
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **768 passed, 0 failed** (7 new —
+2 harness-fidelity tests folded into the existing count via the stricter stub, plus 103e/103f):
+103e drives the fake-timer clock forward past the ORIGINAL blur's own deferred hide after a
+Tab-preview and confirms the dropdown survives (focus had already come back by the time the timer
+fired), then confirms a further Tab-preview still cycles normally and survives a second round of
+the same check; 103f is the "this doesn't disable the mechanism" guard — a genuinely lasting
+`.blur()` (nothing refocuses it afterward) still hides the dropdown once the deferred delay
+elapses, unchanged from before. **Confirmed as a genuine catch, not tautological**: reverting just
+the `document.activeElement` guard (back to the unconditional `setTimeout(hideMenu, 150)`) and
+re-running fails exactly the 2 expected assertions (766 passed, 2 failed) — restoring it passes
+clean again. Loader rebuilt (181399 bytes).
+
+**Not live-verified this round** (synthetic-only, same standing caveat) — Kresna asked to re-test
+the rebuilt loader live again before this two-layer fix (round 22 + this follow-up) is treated as
+fully closed.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery
@@ -2639,3 +2894,16 @@ here too, though this repo's own tools have never written annotation state direc
   `CONFIRMED_WRITE_IDS` — every modal write and every `graph-new-*` write still carries the
   "confirm it actually applied" hedge until individually live-tested beyond the one manual write
   already done for `graph-branch-fitting-primary-input`.
+- **(Round 20)** `dimension` has not been live-tested against `transition`/`grd`/`vertical` (or
+  their own modals) — only route and branch's own fixture are confirmed (synthetically) to expose
+  both `width-input` and `height-input`. If a real tool exposes its width/height under different
+  param names, `dimension` would report both controls missing for it even though the tool visually
+  has them; widen `DIMENSION_PARAMS`'s matching once a real counter-example turns up live, rather
+  than guessing at alternate names in advance.
+- **(Round 21)** Whether the graph host's own Tab-stealing behavior is actually caused by a
+  `document`-level (not `window`-level) host-app keydown listener, as diagnosed from the code —
+  unconfirmed live. If Tab still misbehaves after this fix, that means the host's own interceptor is
+  itself on `window`, which this fix can't out-race (same registration-order tie-break, one level
+  up) — the next step would be intercepting `EventTarget.prototype.addEventListener` to reorder
+  registration, not attempted yet since it's a much bigger intervention this project has never
+  needed before.

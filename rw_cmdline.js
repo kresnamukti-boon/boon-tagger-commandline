@@ -243,6 +243,12 @@
     { name:'cancelgrd',    kind:ACTION, aliases:[],                       btn:'graph-checkpoint-grd-cancel',        conditional:'only while the place GRD dialog is open' },
     { name:'placeriser',   kind:ACTION, aliases:[],                       btn:'graph-checkpoint-riser-submit',      conditional:'only while the riser elevation dialog is open' },
     { name:'cancelriser',  kind:ACTION, aliases:[],                       btn:'graph-checkpoint-riser-cancel',      conditional:'only while the riser elevation dialog is open' },
+
+    // Round 20: bundles the active tool's own width AND height fields into one
+    // guided sequence — no `btn`/`run` (this never dispatches a key or clicks a
+    // button, so RW.runCommand/runAndClear special-case `dimension` directly,
+    // see cmdStartDimension below), just the marker field itself.
+    { name:'dimension',    kind:ACTION, aliases:['dim'],                  dimension:true },
   ];
 
   RW._cmdTable = RW_IS_GRAPH ? GRAPH_TABLE.concat(GRAPH_ACTIONS) : ANNOTATE_TABLE;
@@ -767,7 +773,12 @@
   // sibling coverage of this decision).
   const GRAPH_ISOLATION_ALLOWED = [
     'select', 'finish', 'cancel',
-    'choose', 'cancelbranch', 'apply', 'cancelsize', 'place', 'cancelgrd', 'placeriser', 'cancelriser'
+    'choose', 'cancelbranch', 'apply', 'cancelsize', 'place', 'cancelgrd', 'placeriser', 'cancelriser',
+    // Round 20: `dimension` only ever edits the isolated tool's OWN width/height
+    // fields (via RW._cmdApplySetting, exactly like typing "<tool>.width-input="
+    // by hand) — never another tool's, so it's exempt from isolation the same way
+    // finish/cancel already are, not scoped per-tool.
+    'dimension'
   ];
   RW._cmdIsolateTools = true; // console escape hatch: __RW._cmdIsolateTools = false restores the old additive behavior
 
@@ -956,6 +967,90 @@
     return true;
   };
 
+  // ----- graph host only: `dimension` — width then height, one after another (round 20) -----
+  // Kresna asked for a single command that lets you type the active tool's own
+  // width value, then immediately its height value, rather than drilling into
+  // `route.width-input=`/`route.height-input=` as two separate commands. Built
+  // as a thin chain on top of the existing numeric settingsDraft flow rather
+  // than a new input mechanism: picking/typing "dimension" opens the ordinary
+  // "tool.width-input = " numeric draft (see runAndClear's isSettingsItem
+  // branch, which this mirrors), and the settingsDraft Enter/Space handler
+  // below (onInputKeydown) checks `draft.chain` after applying a value — if
+  // non-empty, it re-opens the draft on the next param instead of clearing/
+  // blurring, so pressing Enter after width drops straight into height with no
+  // re-typing of the tool name needed. A failed apply (bad number) stops the
+  // chain rather than skipping ahead to height with nothing set.
+  //
+  // Order is on-screen order, not alphabetical: every confirmed tool/modal
+  // listing so far (route, branch's own modal) shows "Width (in)" immediately
+  // before "Height (in)". Param names (not labels) are used here since those
+  // are RW._cmdToolSettingsList/RW._cmdApplySetting's own stable identifier —
+  // the live label is still what gets shown in each prompt.
+  const DIMENSION_PARAMS = ['width-input', 'height-input'];
+
+  // Whichever tool `dimension` should target — the same "armed tool, or this
+  // tool's own modal is open" resolution bare-param blending already uses
+  // elsewhere in this file (RW._cmdActiveSettingsTool() || cmdOpenModalTool()),
+  // so `dimension` follows whatever tool a plain "width"/"height" bare-param
+  // type would already reach.
+  function cmdDimensionTool(){
+    return RW._cmdActiveSettingsTool() || cmdOpenModalTool();
+  }
+
+  // Entry point for both runAndClear (picking "dimension" from the dropdown)
+  // and RW.runCommand (console/direct call) — returns whether the first
+  // prompt (width) was actually opened, so callers can fall back to their own
+  // ordinary "command failed" cleanup when it wasn't.
+  function cmdStartDimension(){
+    const tool = cmdDimensionTool();
+    if (!tool){
+      RW._commitStatus && RW._commitStatus('dimension: no duct tool is currently active — arm one first (e.g. route, branch)');
+      return false;
+    }
+    const list = RW._cmdToolSettingsList(tool);
+    const missing = DIMENSION_PARAMS.filter(function(p){ return !list.some(function(i){ return i.param === p; }); });
+    if (missing.length){
+      RW._commitStatus && RW._commitStatus(
+        tool + ' has no ' + missing.join('/') + ' control right now — dimension needs both width and height (e.g. not available on a round profile)'
+      );
+      return false;
+    }
+    cmdDimensionPrompt(tool, DIMENSION_PARAMS.slice());
+    return true;
+  }
+
+  // Opens the numeric draft for `chain[0]`, stamping the REMAINING params
+  // (chain.slice(1)) onto the draft so the settingsDraft Enter/Space handler
+  // knows to continue instead of finishing. Re-reads RW._cmdToolSettingsList
+  // fresh (never cached across the width->height hop) — same live-read
+  // discipline as every other control lookup in this file, and load-bearing
+  // here specifically since applying width can shift what height's own
+  // min/max/current legitimately are.
+  function cmdDimensionPrompt(tool, chain){
+    const param = chain[0];
+    const item = RW._cmdToolSettingsList(tool).find(function(i){ return i.param === param; });
+    if (!item){
+      RW._commitStatus && RW._commitStatus(tool + '.' + param + ' is no longer on the page — dimension stopped');
+      return;
+    }
+    const rest = chain.slice(1);
+    settingsDraft = { tool: tool, param: param, type: item.type, chain: rest };
+    inputEl.value = tool + '.' + param + ' = ';
+    hideMenu();
+    inputEl.focus();
+    if (inputEl.setSelectionRange) inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    const label = item.label || item.param;
+    let nextHint = '';
+    if (rest.length){
+      const nextItem = RW._cmdToolSettingsList(tool).find(function(i){ return i.param === rest[0]; });
+      nextHint = ' (then ' + (nextItem ? (nextItem.label || nextItem.param) : rest[0]) + ' next)';
+    }
+    RW._commitStatus && RW._commitStatus(
+      'dimension: ' + label + ' ' + (item.min != null ? item.min : '') + '–' + (item.max != null ? item.max : '')
+      + ', currently ' + item.current + ' — type a new value and press Enter' + nextHint
+    );
+  }
+
   /* ---------- tag auto-detection (# search) ---------- */
   // This codebase has never referenced anything beyond annotationState.currentTag
   // (the currently-selected tag, {id,name}) before. Tries a short list of
@@ -1103,6 +1198,12 @@
       cmdIsolationRefuse(iso, 'run "' + entry.name + '"');
       return false;
     }
+    // Round 20: `dimension` never dispatches a key or clicks a button (it only
+    // opens the ordinary numeric settingsDraft against the active tool's own
+    // width/height controls) — handled entirely before the unconditional
+    // blur() below, since a dimension prompt needs the input to STAY focused,
+    // the opposite of every other entry.run() dispatch.
+    if (entry.dimension) return cmdStartDimension();
     // Reported live (round 16): on the graph host, tool-switch commands
     // (route, flex, ...) silently failed to arm while action commands
     // (undo, redo, ...) worked fine. Root cause: the graph app's own
@@ -1746,6 +1847,22 @@
       );
       return;
     }
+    if (item.dimension){
+      // Round 20: unlike every other table entry, a successful start must NOT
+      // clear/blur the input — cmdStartDimension already opened the width
+      // draft and (re)focused it, exactly like picking a numeric settings item
+      // above. Only fall through to the ordinary cleanup below when it
+      // couldn't start at all (no active tool, or that tool has no width/
+      // height right now), matching how every other failed command still
+      // clears the bar and reports why via the status line.
+      if (cmdStartDimension()) return;
+      inputEl.value = '';
+      hideMenu();
+      menuItems = [];
+      menuMode = 'command';
+      inputEl.blur();
+      return;
+    }
     if (menuMode === 'tag') RW._cmdSelectTag(item.tag, item.idx);
     else RW.runCommand(item.name);
     inputEl.value = '';
@@ -1780,7 +1897,18 @@
         valueText = (eq !== -1 ? raw.slice(eq + 1) : raw).trim();
       }
       settingsDraft = null;
-      RW._cmdApplySetting(draft.tool, draft.param, valueText);
+      const applied = RW._cmdApplySetting(draft.tool, draft.param, valueText);
+      // Round 20 (`dimension`): a chained draft carries the remaining params
+      // (width's own draft carries ['height-input']) — once THIS one applies
+      // cleanly, re-open the draft on the next one instead of the ordinary
+      // clear/blur below, so Enter after width drops straight into height. A
+      // failed apply (e.g. a non-numeric value) stops the chain right here —
+      // it does NOT skip ahead to height with nothing set — same as it would
+      // for any other numeric draft.
+      if (applied && draft.chain && draft.chain.length){
+        cmdDimensionPrompt(draft.tool, draft.chain);
+        return;
+      }
       inputEl.value = '';
       hideMenu();
       inputEl.blur();
@@ -1798,9 +1926,28 @@
         const picked = menuItems[menuHighlight];
         if (isOptionItem(picked)){
           settingsDraft.previewed = true;
+          // Round 22 fix (live report: Tab moved one option then the dropdown
+          // closed and focus fell out to the browser). RW._cmdApplySetting's
+          // own re-arm (cmdArmOrNoteModal -> RW.runCommand(tool)) unconditionally
+          // blurs inputEl FIRST (round 16's own fix, needed so the app's
+          // activeElement guard doesn't block a real tool-switch dispatch) —
+          // a real browser actually loses focus there, whereas this file's own
+          // synthetic .blur() stub is a silent no-op with no 'blur' EVENT
+          // dispatched, which is why no existing test caught this: nothing here
+          // ever asserted inp._focused after a Tab-preview. Once genuinely
+          // blurred, the NEXT keystroke (another Tab, or Space) lands on
+          // whatever now has focus instead — Space in particular gets picked up
+          // by the global auto-capture listener instead, which (tool still
+          // armed) closes it to select, exactly the second symptom reported.
           RW._cmdApplySetting(picked.tool, picked.param, String(picked.optionIndex));
         }
         renderMenuRows();
+        // Refocus synchronously, right after the blur RW._cmdApplySetting's
+        // own re-arm just caused — same "stays focused" contract this draft
+        // already had before Tab was pressed, and the same blur-then-refocus
+        // dance `dimension`'s own chain hop (round 20) already relies on.
+        inputEl.focus();
+        if (inputEl.setSelectionRange) inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
       }
       return;
     }
@@ -1910,7 +2057,24 @@
 
     inputEl.addEventListener('input', onInput);
     inputEl.addEventListener('keydown', onInputKeydown);
-    inputEl.addEventListener('blur', function(){ setTimeout(hideMenu, 150); });
+    // Round 22 follow-up (live report: cycling a select param — system/network,
+    // profile, "New system" — kept losing the open dropdown mid-cycle, not
+    // just once). Every settings write re-arms the tool via
+    // RW._cmdApplySetting -> cmdArmOrNoteModal -> RW.runCommand(tool), which
+    // unconditionally blurs inputEl FIRST (round 16's own fix) — round 22
+    // already re-focuses synchronously right after each Tab-preview so the
+    // input itself never stays visibly blurred, but THIS deferred hide was
+    // still scheduled from the ORIGINAL blur before that refocus ran, and
+    // fires 150ms later regardless of whether focus has since come back —
+    // hiding a dropdown the user is still actively tabbing through. Guarding
+    // on document.activeElement here (checked only once the timer actually
+    // fires, not at schedule time) makes this self-correcting: a blur that
+    // gets undone within the 150ms window before the timer fires no longer
+    // closes anything, while a genuine, lasting blur (the user actually
+    // clicked or tabbed away from the bar) still hides it exactly as before.
+    inputEl.addEventListener('blur', function(){
+      setTimeout(function(){ if (document.activeElement !== inputEl) hideMenu(); }, 150);
+    });
   }
 
   /* ---------- bottom-center overlay positioning ---------- */
@@ -2366,6 +2530,47 @@
     inputEl.focus();
     if (inputEl.setSelectionRange) inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
     onInput();
+  }, true);
+
+  // ----- Round 21: Tab must win over any host-app-level keydown capture -----
+  // Reported live: pressing Tab while the command input was genuinely
+  // focused (an autocomplete dropdown already open from prior typing) did
+  // not cycle the highlight — the dropdown flickered and then closed
+  // instead. onInputKeydown's own Tab branch already calls preventDefault()/
+  // stopPropagation() (confirmed by this file's many existing Tab tests,
+  // which drive it directly and pass) — so the observed symptom (the
+  // BROWSER's own default Tab action, moving focus away, firing instead,
+  // with the dropdown then hiding ~150ms later via the input's own blur
+  // handler) points to something intercepting the event before that handler
+  // ever runs: most likely a keydown listener the HOST APP ITSELF registers
+  // in the capture phase on `document` (its own accessibility/focus
+  // handling, unrelated to this project). A later capture-phase listener we
+  // add on `document` can never win that race — the app's own script always
+  // registers first (it runs at page load, always before this loader is
+  // pasted in), and two capture-phase listeners on the SAME node fire in
+  // registration order. A capture-phase listener on `window`, however,
+  // structurally fires BEFORE any document-level listener regardless of
+  // registration order, since the capture phase always visits window before
+  // document — the same "capture always wins" doctrine the global
+  // auto-capture listener above already relies on for printable characters,
+  // escalated one level higher specifically for Tab.
+  //
+  // Scoped tightly to "the real command input is the actual event target"
+  // (checked via e.target, which never changes across the whole capture+
+  // bubble dispatch regardless of listener order — unlike re-reading
+  // document.activeElement, which could be one tick stale) so this can never
+  // affect anything else on the page or either host differently.
+  // stopImmediatePropagation (not just stopPropagation) both wins against
+  // the app's own document-level listener AND stops the SAME event from
+  // also reaching inputEl's own bubble-phase onInputKeydown listener a
+  // second time — this fully REPLACES that path for Tab, it never runs
+  // alongside it, so Tab is still only ever handled once.
+  window.addEventListener('keydown', function(e){
+    if (e.key !== 'Tab') return;
+    if (e.target !== inputEl) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    onInputKeydown(e);
   }, true);
 
   // Install the auto-select watcher and its Escape listener (see the section

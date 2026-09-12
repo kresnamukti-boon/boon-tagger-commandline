@@ -85,8 +85,21 @@ function makeElement(tag, registry){
     parentNode: null,
     _clicked: 0,
     click(){ this._clicked++; if (this.onclick) this.onclick(); },
-    focus(){ this._focused = true; },
-    blur(){ this._focused = false; },
+    // `registry` (the shared byId map) doubles as a spot to track which
+    // element is "active" right now — real enough to exercise the blur
+    // handler's own document.activeElement re-check (round 22 follow-up)
+    // without modeling a full focus-management system. Each also dispatches
+    // its own real event to registered listeners (a genuine gap before this
+    // round: the module's own `inputEl.addEventListener('blur', ...)` relies
+    // on a real 'blur' EVENT firing, which a plain flag-flip never provided —
+    // every prior test exercising .blur() only ever asserted the `_focused`
+    // flag, never that its listener actually ran).
+    focus(){ this._focused = true; if (registry) registry.__activeElement = this; this.dispatchEvent({ type: 'focus' }); },
+    blur(){
+      this._focused = false;
+      if (registry && registry.__activeElement === this) registry.__activeElement = null;
+      this.dispatchEvent({ type: 'blur' });
+    },
     _rect: { left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 },
     getBoundingClientRect(){ return this._rect; },
     // Scroll/pan surface — a plain object by default (nothing scrollable);
@@ -318,6 +331,11 @@ function makeStubWindow(opts){
   const documentStub = {
     _byId: byId,
     body: body,
+    // Backed by the same shared byId map every makeElement() in this stub
+    // window writes to on focus()/blur() (round 22 follow-up) — real enough
+    // to exercise the command bar's own "is the input STILL blurred once the
+    // deferred hide timer actually fires" re-check.
+    get activeElement(){ return byId.__activeElement || null; },
     getElementById(id){ return byId[id] || null; },
     createElement(tag){ return makeElement(tag, byId); },
     querySelectorAll(selector){ return queryAllRecursive(body, selector); },
@@ -2338,6 +2356,107 @@ function loadCoreModule(win){
 
     inp._fire('keydown', { key: 'Tab', shiftKey: true });
     ok(anchor.value === 'right', 'Shift+Tab cycles backward');
+  }
+
+  /* ---------- 103d (round 22): each Tab-preview re-focuses the input — a real live regression, missed before since nothing asserted focus here ---------- */
+  // Live report: Tab moved the highlight ONE step, then the dropdown closed
+  // and the browser's own focus took over. Root cause: RW._cmdApplySetting's
+  // own re-arm (cmdArmOrNoteModal -> RW.runCommand(tool)) unconditionally
+  // calls inputEl.blur() BEFORE dispatching (round 16's own fix, needed so
+  // the app's activeElement guard doesn't block a real tool-switch dispatch)
+  // — every Tab-preview cycle goes through that exact path. In a real
+  // browser this genuinely defocuses the bar (the input's own 'blur'
+  // listener then hides the dropdown ~150ms later); the very next keystroke
+  // (another Tab, or Space) lands wherever focus actually is instead —
+  // Space in particular gets picked up by the global auto-capture listener,
+  // which (tool still armed) closes it to select, matching the second
+  // symptom reported live. Nothing before this round asserted `inp._focused`
+  // after a Tab-preview, so this genuine regression slipped through despite
+  // every other assertion in test 103 above passing.
+  {
+    const { win, byId, doc } = makeStubWindow();
+    loadModule(win);
+    const anchor = makeSelect(byId, 'ribbon-anchor', [['left','Left'],['center','Center'],['right','Right']], 'center');
+    doc.body.appendChild(anchor);
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'mline.anchor';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children[0]._fire('click', {});
+    ok(inp._focused === true, 'sanity: picking the param starts focused, as before');
+
+    inp._fire('keydown', { key: 'Tab' });
+    ok(inp._focused === true, 'still focused after ONE Tab-preview — the re-arm\'s own blur is immediately undone');
+
+    inp._fire('keydown', { key: 'Tab' });
+    ok(inp._focused === true, 'and after a SECOND Tab-preview in a row — cycling repeatedly never drops focus');
+
+    inp._fire('keydown', { key: 'Tab', shiftKey: true });
+    ok(inp._focused === true, 'Shift+Tab (cycling backward) refocuses too, not just the forward direction');
+  }
+
+  /* ---------- 103e (round 22 follow-up): the ORIGINAL blur's deferred "hide the dropdown" no longer fires once focus has genuinely come back ---------- */
+  // Live report (a step further than 103d): the dropdown itself kept
+  // disappearing mid-cycle, not just once — reported against route's own
+  // system/network select, profile, and "New system." Root cause: 103d's own
+  // fix undoes the blur SYNCHRONOUSLY, but the input's `blur` LISTENER
+  // (`inputEl.addEventListener('blur', ...)`) already ran at the moment
+  // RW.runCommand called inputEl.blur() — scheduling `setTimeout(hideMenu,
+  // 150)` — and that timer does not know focus came back moments later; it
+  // fires regardless ~150ms later and hides the dropdown out from under an
+  // otherwise-still-open Tab-preview cycle. This exercises the deferred timer
+  // itself (via the fake-timer harness), not just the synchronous focus flag
+  // test 103d already covers — the two are complementary, not redundant.
+  {
+    const { win, byId, doc } = makeStubWindow();
+    const timers = makeFakeTimers();
+    loadModule(win, null, timers);
+    const anchor = makeSelect(byId, 'ribbon-anchor', [['left','Left'],['center','Center'],['right','Right']], 'center');
+    doc.body.appendChild(anchor);
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'mline.anchor';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children[0]._fire('click', {});
+
+    inp._fire('keydown', { key: 'Tab' }); // previews "right" — blurs internally, then re-focuses (103d)
+    ok(inp._focused === true, 'sanity: still focused right after the Tab-preview');
+
+    timers.runTimeouts(); // let the ORIGINAL blur's own deferred hide actually run
+    ok(byId['rw-cmd-menu'].style.display !== 'none',
+       'the dropdown survives — focus had already come back before the deferred hide fired, so it correctly skips hiding');
+
+    // Cycling further afterward must keep working — the dropdown was never
+    // silently torn down behind the scenes by the timer that just ran.
+    inp._fire('keydown', { key: 'Tab' });
+    ok(anchor.value === 'left', 'a further Tab-preview after the deferred timer already fired still cycles normally');
+    timers.runTimeouts();
+    ok(byId['rw-cmd-menu'].style.display !== 'none', 'and survives a second round of the same deferred check too');
+  }
+
+  /* ---------- 103f (round 22 follow-up): a GENUINE, lasting blur still hides the dropdown once the deferred delay elapses ---------- */
+  // The fix in 103e must not disable the original mechanism outright — if the
+  // user actually clicks or tabs away from the bar for real (nothing
+  // refocuses it afterward), the dropdown should still close ~150ms later,
+  // exactly as it always has.
+  {
+    const { win, byId, doc } = makeStubWindow();
+    const timers = makeFakeTimers();
+    loadModule(win, null, timers);
+    const anchor = makeSelect(byId, 'ribbon-anchor', [['left','Left'],['center','Center'],['right','Right']], 'center');
+    doc.body.appendChild(anchor);
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'mline.anchor';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children[0]._fire('click', {});
+    ok(byId['rw-cmd-menu'].style.display !== 'none', 'sanity: the dropdown starts open');
+
+    inp.blur(); // the user genuinely leaves the bar — nothing re-focuses it afterward
+    ok(inp._focused === false, 'sanity: genuinely blurred this time');
+    timers.runTimeouts();
+    ok(byId['rw-cmd-menu'].style.display === 'none',
+       'a real, lasting blur still hides the dropdown once the deferred delay elapses — this fix narrows the skip condition, it does not disable it');
   }
 
   /* ---------- 103b. settings interaction UX: Escape after Tab-previewing reverts to what was really current, not the last preview ---------- */
@@ -5227,6 +5346,262 @@ function loadCoreModule(win){
 
     ok(keys.length === 1 && keys[0] === 's',
        'with no modal open, Space closes the armed tool exactly as before this round');
+  }
+
+  /* ---------- 244. round 20: `dimension` on route opens a width draft first, focused, naming height as next ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.min = '1'; width.max = '48'; width.value = '24'; width.offsetParent = {};
+    const height = makeElement('input', byId);
+    height.id = 'graph-height-input'; height.type = 'number'; height.min = '1'; height.max = '48'; height.value = '12'; height.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Width (in)', width));
+    inspector.appendChild(makeGraphField(byId, 'Height (in)', height));
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'dimension';
+    inp.dispatchEvent({ type: 'input' });
+    const row = byId['rw-cmd-menu']._children.find(r => r.innerText.indexOf('dimension') === 0);
+    ok(!!row, '"dimension" is a real, typeable/pickable command on the graph host');
+    row._fire('click', {});
+
+    ok(inp.value === 'route.width-input = ', 'picking dimension opens the SAME numeric draft a bare "width" pick would, starting with width');
+    ok(inp._focused === true, 'the input stays focused, same as any other numeric settings draft');
+    ok(RW._lastStatus.indexOf('Width (in)') !== -1 && RW._lastStatus.indexOf('1–48') !== -1 && RW._lastStatus.indexOf('24') !== -1,
+       'the status line reports width\'s own live range/current, same as picking it directly');
+    ok(RW._lastStatus.indexOf('Height (in) next') !== -1, 'and additionally previews that height comes next, since this is a chained dimension draft');
+  }
+
+  /* ---------- 245. round 20: applying width chains straight into height — no re-typing the tool name ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.min = '1'; width.max = '48'; width.value = '24'; width.offsetParent = {};
+    const height = makeElement('input', byId);
+    height.id = 'graph-height-input'; height.type = 'number'; height.min = '1'; height.max = '48'; height.value = '12'; height.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Width (in)', width));
+    inspector.appendChild(makeGraphField(byId, 'Height (in)', height));
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'dimension';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children.find(r => r.innerText.indexOf('dimension') === 0)._fire('click', {});
+
+    inp.value = 'route.width-input = 18';
+    inp._fire('keydown', { key: 'Enter' });
+
+    ok(width.value === '18', 'width was actually applied to the real control');
+    ok(height.value === '12', 'height has not been touched yet');
+    ok(inp.value === 'route.height-input = ', 'confirming width immediately re-opens the draft on height, not a blank/cleared bar');
+    ok(inp._focused === true, 'the input stays focused across the width -> height hop');
+    ok(RW._lastStatus.indexOf('Height (in)') !== -1 && RW._lastStatus.indexOf('12') !== -1,
+       'the status line now reports HEIGHT\'s own live range/current');
+    ok(RW._lastStatus.indexOf('next') === -1, 'no further "next" hint — height is the last param in the chain');
+
+    inp.value = 'route.height-input = 9';
+    inp._fire('keydown', { key: 'Enter' });
+    ok(height.value === '9', 'height was applied too, finishing the compound command');
+    ok(inp.value === '' && !inp._focused, 'once the chain is exhausted, the bar clears and blurs exactly like any other completed command');
+  }
+
+  /* ---------- 246. round 20: dimension refuses cleanly with no active tool, and does not crash ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: null });
+    const RW = win.__RW;
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'dimension';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children.find(r => r.innerText.indexOf('dimension') === 0)._fire('click', {});
+
+    ok(RW._lastStatus.indexOf('no duct tool is currently active') !== -1, 'reports why, rather than silently doing nothing');
+    ok(inp.value === '' && !inp._focused, 'falls back to the ordinary failed-command cleanup (bar cleared, blurred)');
+  }
+
+  /* ---------- 247. round 20: dimension refuses when the active tool is missing one of width/height (e.g. a round profile) ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    // Only width is present/visible — as if profile were round and height's own control were hidden.
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '4'; width.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Diameter (in)', width));
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'dimension';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children.find(r => r.innerText.indexOf('dimension') === 0)._fire('click', {});
+
+    ok(RW._lastStatus.indexOf('height-input') !== -1, 'names exactly which control is missing');
+    ok(RW._lastStatus.indexOf('round profile') !== -1, 'hints at the likely real-world cause');
+    ok(inp.value === '' && !inp._focused, 'no draft is left open — same cleanup as any other failed command');
+  }
+
+  /* ---------- 248. round 20: an invalid width value stops the chain — it never silently skips ahead to height ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '24'; width.offsetParent = {};
+    const height = makeElement('input', byId);
+    height.id = 'graph-height-input'; height.type = 'number'; height.value = '12'; height.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Width (in)', width));
+    inspector.appendChild(makeGraphField(byId, 'Height (in)', height));
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'dimension';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children.find(r => r.innerText.indexOf('dimension') === 0)._fire('click', {});
+
+    inp.value = 'route.width-input = not-a-number';
+    inp._fire('keydown', { key: 'Enter' });
+
+    ok(width.value === '24', 'the bad value never reached the real control');
+    ok(height.value === '12', 'and the chain never advanced to height off the back of a failed apply');
+    ok(inp.value === '' && !inp._focused, 'the whole compound command is abandoned, same as a plain failed numeric apply');
+  }
+
+  /* ---------- 249. round 20: the "dim" alias resolves the same table entry, and RW.runCommand("dimension") starts it directly (console parity) ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '24'; width.offsetParent = {};
+    const height = makeElement('input', byId);
+    height.id = 'graph-height-input'; height.type = 'number'; height.value = '12'; height.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Width (in)', width));
+    inspector.appendChild(makeGraphField(byId, 'Height (in)', height));
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'dim';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('dimension') === 0),
+       'the "dim" alias finds the same "dimension" row via ordinary alias matching');
+
+    ok(RW.runCommand('dimension') === true, 'RW.runCommand("dimension") starts the chain directly, the same console-parity path every other command has');
+    ok(inp.value === 'route.width-input = ' && inp._focused === true,
+       'the direct call opens the width draft too — dimension is special-cased BEFORE runCommand\'s unconditional blur, unlike every dispatching command');
+  }
+
+  /* ---------- 250. round 20: dimension stays reachable while a tool is isolated (armed) — it only ever edits ITS OWN width/height ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    RW.runCommand('route'); // arm it — RW._cmdIsolatedTool() now reads 'route'
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '24'; width.offsetParent = {};
+    const height = makeElement('input', byId);
+    height.id = 'graph-height-input'; height.type = 'number'; height.value = '12'; height.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Width (in)', width));
+    inspector.appendChild(makeGraphField(byId, 'Height (in)', height));
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'dimension';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('dimension') === 0),
+       '"dimension" still matches while route is isolated — it is in GRAPH_ISOLATION_ALLOWED, same precedent as finish/cancel');
+
+    ok(RW.runCommand('dimension') === true, 'and actually runs, not refused by the isolation guard');
+    ok(inp.value === 'route.width-input = ', 'opening the width draft on the isolated tool itself, never a different one');
+  }
+
+  /* ---------- 251. round 20: Escape mid-chain cancels the WHOLE compound command, not just the current param ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.value = '24'; width.offsetParent = {};
+    const height = makeElement('input', byId);
+    height.id = 'graph-height-input'; height.type = 'number'; height.value = '12'; height.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Width (in)', width));
+    inspector.appendChild(makeGraphField(byId, 'Height (in)', height));
+    const inp = byId['rw-cmd-input'];
+
+    inp.value = 'dimension';
+    inp.dispatchEvent({ type: 'input' });
+    byId['rw-cmd-menu']._children.find(r => r.innerText.indexOf('dimension') === 0)._fire('click', {});
+    inp.value = 'route.width-input = 30';
+    inp._fire('keydown', { key: 'Escape' });
+
+    ok(width.value === '24' && height.value === '12', 'Escape before confirming width leaves BOTH real controls untouched');
+    ok(inp.value === '' && !inp._focused, 'and clears/blurs the bar, the same as cancelling any other settings draft');
+
+    // A stray Enter afterward must not resurrect the cancelled chain — same
+    // regression shape as test 83's single-param version.
+    inp.value = 'mirror';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(width.value === '24' && height.value === '12', 'the cancelled dimension chain cannot be resurrected by a later, unrelated command');
+  }
+
+  /* ---------- 252. round 21: Tab is escalated to a window-level capture listener that wins over a host-app-style document-level capture listener ---------- */
+  // Reproduces the live report: a host app can register its OWN keydown
+  // listener on `document` in the capture phase (its own focus/accessibility
+  // handling) — registered before this loader is ever pasted in, so it would
+  // otherwise always win a same-node registration-order race against a
+  // document-level listener this project adds. This test drives the actual
+  // window -> document capture ORDER by hand (the flat per-node `_fire`
+  // helpers here don't simulate real cross-node propagation on their own),
+  // to prove the new window-level listener claims Tab before a document-level
+  // one — real or host-app's — ever gets a chance to see it.
+  {
+    const { win, doc, byId } = makeStubWindow();
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'wand.tolerance';
+    inp.dispatchEvent({ type: 'input' });
+
+    let hostSawIt = false;
+    doc.addEventListener('keydown', function(e){
+      if (e.key === 'Tab'){ hostSawIt = true; e.stopImmediatePropagation(); }
+    });
+
+    const evt = {
+      target: inp, key: 'Tab', defaultPrevented: false, _immediateStopped: false,
+      preventDefault(){ this.defaultPrevented = true; },
+      stopPropagation(){},
+      stopImmediatePropagation(){ this._immediateStopped = true; }
+    };
+    win._fire('keydown', evt); // window's own capture listeners run first, structurally, in a real browser
+    if (!evt._immediateStopped) doc._fire('keydown', evt); // only reachable if window didn't already claim it
+
+    ok(evt._immediateStopped === true, 'the new window-capture listener claims Tab immediately');
+    ok(hostSawIt === false, 'a host-app-style document-level capture listener never gets a chance to see/steal it');
+    ok(inp.value === 'wand.tolerance', 'and the ordinary Tab handling (fill "tool.param") still ran end-to-end via the escalated listener');
+  }
+
+  /* ---------- 253. round 21: the escalated Tab listener only ever acts on the real command input, never anywhere else on the page ---------- */
+  {
+    const { win, byId } = makeStubWindow();
+    loadModule(win);
+    const other = makeElement('input', byId); // some unrelated real page input/control
+    let defaultPrevented = false;
+    const evt = {
+      target: other, key: 'Tab', _immediateStopped: false,
+      preventDefault(){ defaultPrevented = true; },
+      stopPropagation(){},
+      stopImmediatePropagation(){ this._immediateStopped = true; }
+    };
+    win._fire('keydown', evt);
+    ok(!defaultPrevented && !evt._immediateStopped,
+       'Tab aimed at any other element is left completely alone — ordinary page-wide Tab navigation is unaffected');
   }
 
   finish();
