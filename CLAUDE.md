@@ -2963,6 +2963,99 @@ in particular rests entirely on the existing "dispatching a tool key into an ope
 untested" caution already on record (see "The graph ('Duct Takeoff') host" in `README.md`), not on
 anything newly confirmed live this round.
 
+## Round 26: the four config-dialog modals remember their own categorical fields, auto-filled next time (graph host)
+
+Kresna asked whether the branch fitting modal's settings could be saved so they don't need typing
+in "again and again." `AskUserQuestion` (used this time at Kresna's own explicit request — see the
+memory note on this below) settled the design: all four modals (not just branch fitting),
+persisted across page reloads (`localStorage`), limited to fields that "tend to repeat" rather than
+every field, auto-filled the instant the modal opens rather than needing a typed command.
+
+**"Tends to repeat" is drawn from live control TYPE, not a hardcoded per-modal field list** — the
+same live-discovery philosophy `RW._cmdToolSettingsList`'s id-prefix sweep already uses elsewhere
+in this file. Select and checkbox fields are remembered; number and text fields are not, since
+those are more likely to differ duct to duct. This happens to land exactly on the split Kresna was
+steered toward for branch fitting (Fitting type/Branch shape/Alignment/Damper remembered;
+Starting width/Width/Height not) — but unlike that one modal, change size/GRD/riser's own real
+field shapes were never individually confirmed live (the round-19 open item is still open), and
+this rule needs no such confirmation to be correct, since it reads each control's live type, never
+a specific id.
+
+**Mechanism**, all new in `rw_cmdline.js`, added right after `RW._cmdApplySetting`:
+
+- `RW._cmdModalMemory` — `{tool: {param: value}}`, loaded once at startup from `localStorage`
+  (`GRAPH_MODAL_MEMORY_KEY`) and console-inspectable. Read/written via `window.localStorage`, not a
+  bare `localStorage` global reference — this file already relies on `window` for everything else
+  host-environment-shaped, and it's what let the synthetic test harness hand a fake store to a stub
+  window with no change to `loadModule`'s own sandbox-globals list. Every read/write is wrapped in
+  try/catch, failing to "nothing remembered" (never throwing) — private browsing, quota, or
+  disabled storage all degrade to in-memory-only for the rest of that page.
+- `cmdRememberModalValue(tool, modal, param, value)` — called from `RW._cmdApplySetting`'s own
+  checkbox/select branches right after a real write. Gated on `modal` (only truthy when the write
+  happened while that tool's OWN config-dialog modal was open, a value `RW._cmdApplySetting`
+  already resolves fresh per call) — this is what scopes remembering to "branch/change-size/
+  GRD/riser windows" specifically and not the ordinary always-visible inspector; a write to
+  `route.gauge-select` on the regular inspector is never remembered.
+- `cmdAutoFillModalMemory(tool)` — walks `RW._cmdToolSettingsList(tool)` (which already resolves
+  the modal-aware id prefix), and for every select/checkbox item with a remembered value that
+  differs from its current one, writes it directly to the real control (`.value`/`.checked` +
+  `input`/`change`, mirroring `RW._cmdApplySetting`'s own write shape) and collects its label. One
+  combined status line reports everything filled in, rather than one message per field —
+  `RW._commitStatus` is a single overwritten line, not a log (see `rw_core.js`), so N separate calls
+  would just leave only the last one visible.
+- `RW._cmdModalMemoryTick()` — the trigger. Edge-triggered like `RW._cmdToolWatchTick` (only a
+  transition INTO a recognized modal being open fires the auto-fill, never every tick it stays
+  open, never on close), but deliberately **not** gated on `RW._cmdAutoSelect` — that flag is
+  specific to the unrelated auto-select-to-select feature. Ticked from the SAME `setInterval`
+  `RW._cmdStartToolWatch` already runs (`AUTOSEL_POLL_MS`, 250ms), not a second timer.
+  `RW._cmdModalMemoryLastOpen` is reset to `null` on every `RW._cmdStartToolWatch()` call (a fresh
+  paste/reload) rather than seeded from the actual current state — deliberately, so a modal that's
+  ALREADY open at the moment the loader is (re-)pasted still gets one auto-fill pass rather than
+  being treated as already-seen.
+- `RW._cmdModalMemoryEnabled` (default `true`) — console escape hatch, matching this file's
+  existing `RW._cmdIsolateTools`/`RW._cmdDigitPassthrough` convention; turns off both remembering
+  and auto-filling. `RW._cmdModalMemoryClear(tool)` forgets one tool, or everything with no
+  argument, persisting the clear too.
+
+**Tests.** The harness had no `localStorage` at all (Node 22 does have a real global one, but it's
+inert without an explicit flag — confirmed empirically before writing anything: `typeof
+localStorage` is `'undefined'` in this environment). A new `makeFakeLocalStorage()` helper (a
+minimal real-enough `getItem`/`setItem`/`removeItem` stub over a plain object) is handed to a stub
+window's own `.localStorage` per test — reachable specifically because the source reads
+`window.localStorage`, so no change was needed to `loadModule`'s sandbox-globals list at all. Nine
+new tests (268-276, 791 → 810): a select write inside branch's own open modal is remembered
+in-memory AND persisted; a number write in the same modal is not; a select write in the ORDINARY
+inspector (no modal open) is not remembered either — proving the "branch windows only" scoping; a
+remembered value auto-fills the moment the modal is detected open, with one combined status naming
+the field(s); a second tick while the SAME modal stays open does not re-apply over a value the user
+changed back by hand; the enabled-hatch disables both remembering and auto-fill; `_cmdModalMemoryClear`
+clears one tool or everything; two separate `loadModule()` calls sharing one fake `localStorage`
+instance (simulating two page loads) show the second one already carrying the first one's
+remembered value at startup, before anything is typed, and auto-filling it once its own modal is
+opened; and no `localStorage` at all never throws, falling back to in-memory-only for that page.
+**Confirmed three separate mechanisms as genuine catches, not tautological**: reverting only the
+`cmdRememberModalValue` call sites inside `RW._cmdApplySetting` fails exactly the 5 expected
+assertions (805 passed, 5 failed); separately, gutting `RW._cmdModalMemoryTick`'s body to a no-op
+fails exactly the 3 auto-fill assertions (807 passed, 3 failed); separately, removing
+`cmdRememberModalValue`'s own `!modal` guard fails exactly the 1 scoping assertion (809 passed, 1
+failed) — restoring each passes clean at 810. Loader rebuilt (195598 bytes).
+
+**A process note, not a code one**: Kresna rejected `AskUserQuestion` twice earlier this same
+session (on an unrelated, still-deferred bug — see round 23's own account), which had been read as
+a standing preference for plain-chat clarification. This round's request — Kresna explicitly typed
+"use question" right after being asked in plain chat — showed that reading was too broad: the
+preference is situational, not fixed, and the right move is to take each signal (a rejection, or an
+explicit ask) as what's wanted in that moment, not to lock onto one mode based on a past instance.
+
+**Not live-verified this round** (synthetic-only, standing caveat) — none of this has been tried
+against a real branch-fitting (or any of the other three) dialog yet. Two things worth specifically
+watching for on a real page: whether the 250ms poll cadence feels instant enough in practice (the
+mechanism is the same one this project already uses for auto-select, so no new technical risk, but
+this is the first time its timing is user-facing in a way that's meant to feel immediate), and
+whether change-size/GRD/riser's own real fields are actually select/checkbox-shaped the way branch
+fitting's are — if any of those three turn out to be all-numeric, this feature would have nothing
+to remember for them, which wouldn't be a bug, just nothing to see.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery
@@ -3118,3 +3211,11 @@ here too, though this repo's own tools have never written annotation state direc
   been tried against one of the four real dialogs. If a real page's own UI reacts oddly to a
   same-second tool-to-tool switch (no intermediate `select` frame the app itself might expect),
   that would be a reason to revisit this, not the isolation mechanism itself.
+- **(Round 26)** Whether change size/GRD/riser's own real fields are actually select/checkbox-
+  shaped the way branch fitting's confirmed ones are is unknown — their field shapes were never
+  individually confirmed live (same still-open round-19 item). If any of the three turn out to be
+  all-numeric, `RW._cmdModalMemory` would simply stay empty for them, not a bug, just nothing for
+  this feature to do there. Also unconfirmed live: whether the 250ms poll cadence feels instant
+  enough in practice for a feature where the timing is now user-facing (every other use of this
+  same poll mechanism in this project has been a background correction, not something the user is
+  watching for).
