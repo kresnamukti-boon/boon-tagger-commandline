@@ -107,6 +107,13 @@ function makeElement(tag, registry){
     scrollLeft: 0, scrollTop: 0,
     scrollWidth: 0, scrollHeight: 0,
     clientWidth: 0, clientHeight: 0,
+    // offsetTop/offsetHeight default to 0 — a plain stub with no real layout
+    // engine. __layoutRowHeight (round 23) opts a container into a synthetic
+    // fixed-row-height layout: appendChild below stamps each child's own
+    // offsetHeight/offsetTop from its index the moment it's appended, enough
+    // to exercise cmdScrollRowIntoView's scrollTop math without modeling a
+    // real layout engine.
+    offsetTop: 0, offsetHeight: 0,
     _computed: null,           // {overflowX, overflowY, scrollBehavior} — read by the getComputedStyle stub
     _captured: null,
     setPointerCapture(id){ this._captured = id; },
@@ -128,7 +135,13 @@ function makeElement(tag, registry){
     },
     appendChild(child){
       if (child.parentNode) child.parentNode.removeChild(child);
-      this._children.push(child); child.parentNode = this; return child;
+      this._children.push(child); child.parentNode = this;
+      if (this.__layoutRowHeight){
+        const i = this._children.length - 1;
+        child.offsetHeight = this.__layoutRowHeight;
+        child.offsetTop = i * this.__layoutRowHeight;
+      }
+      return child;
     },
     insertBefore(child, ref){
       if (child.parentNode) child.parentNode.removeChild(child);
@@ -5602,6 +5615,159 @@ function loadCoreModule(win){
     win._fire('keydown', evt);
     ok(!defaultPrevented && !evt._immediateStopped,
        'Tab aimed at any other element is left completely alone — ordinary page-wide Tab navigation is unaffected');
+  }
+
+  /* ---------- 254. round 23: cycling the highlight scrolls a below-the-fold row into view ---------- */
+  // The "<tool>." parameter listing (rw_cmdline.js:1702) is the one dropdown
+  // list in this file that isn't capped at 8 rows — the graph inspector can
+  // carry far more params than fit in the 200px-max menu, and renderMenuRows()
+  // rebuilding every row from scratch on each highlight move used to reset
+  // scrollTop to 0 regardless of where the highlight actually was.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inspector = makeGraphInspector(win, byId);
+    for (let i = 0; i < 10; i++){
+      const el = makeElement('input', byId);
+      el.id = 'graph-p' + i + '-input'; el.type = 'number'; el.value = String(i); el.offsetParent = {};
+      inspector.appendChild(el);
+    }
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route.';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    ok(menu._children.length === 10, 'sanity: all 10 params are listed, uncapped');
+
+    // Opt the menu into the synthetic fixed-row layout only now — mirrors a
+    // real page, where the menu's rows only get real geometry once actually
+    // painted, which happens after this first render.
+    menu.__layoutRowHeight = 18; menu.clientHeight = 100; // ~5 rows visible
+
+    for (let i = 0; i < 5; i++) inp._fire('keydown', { key: 'ArrowDown' }); // highlight -> row index 5
+    ok(menu.scrollTop === 8, 'scrolled down just enough to bring row 5 (offscreen below) into view');
+  }
+
+  /* ---------- 255. round 23: cycling back up scrolls to bring an above-the-fold row into view ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inspector = makeGraphInspector(win, byId);
+    for (let i = 0; i < 10; i++){
+      const el = makeElement('input', byId);
+      el.id = 'graph-p' + i + '-input'; el.type = 'number'; el.value = String(i); el.offsetParent = {};
+      inspector.appendChild(el);
+    }
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route.';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    menu.__layoutRowHeight = 18; menu.clientHeight = 100;
+
+    // Deliberately doesn't return to row 0 (scrollTop 0 there would be
+    // indistinguishable from "scrollTop was simply never touched" — a
+    // tautological pass). Down to row 8 (scrollTop lands on 62), then up to
+    // row 2 (scrollTop 36) — a non-zero value only the fix's up-scroll branch
+    // can produce.
+    for (let i = 0; i < 8; i++) inp._fire('keydown', { key: 'ArrowDown' }); // -> row 8, scrollTop 62
+    for (let i = 0; i < 6; i++) inp._fire('keydown', { key: 'ArrowUp' });   // -> row 2, above the current scroll position
+    ok(menu.scrollTop === 36, 'scrolled back up to bring row 2 into view');
+  }
+
+  /* ---------- 256. round 23: a highlight that's already fully in view leaves scrollTop untouched ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inspector = makeGraphInspector(win, byId);
+    for (let i = 0; i < 10; i++){
+      const el = makeElement('input', byId);
+      el.id = 'graph-p' + i + '-input'; el.type = 'number'; el.value = String(i); el.offsetParent = {};
+      inspector.appendChild(el);
+    }
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route.';
+    inp.dispatchEvent({ type: 'input' });
+    const menu = byId['rw-cmd-menu'];
+    menu.__layoutRowHeight = 18; menu.clientHeight = 100;
+
+    for (let i = 0; i < 5; i++) inp._fire('keydown', { key: 'ArrowDown' }); // -> row 5, scrollTop 8
+    inp._fire('keydown', { key: 'ArrowUp' }); // -> row 4, top=72, bottom=90, both within [8, 108] already
+    ok(menu.scrollTop === 8, 'row 4 was already fully visible at the current scroll position, so it is left unchanged');
+  }
+
+  /* ---------- 257. round 23: no menu geometry (a non-rendering context) never throws, and scrollTop stays put ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inspector = makeGraphInspector(win, byId);
+    for (let i = 0; i < 10; i++){
+      const el = makeElement('input', byId);
+      el.id = 'graph-p' + i + '-input'; el.type = 'number'; el.value = String(i); el.offsetParent = {};
+      inspector.appendChild(el);
+    }
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route.';
+    inp.dispatchEvent({ type: 'input' });
+    // Deliberately NOT opting the menu into __layoutRowHeight — matches the
+    // stub's default (offsetTop/offsetHeight/clientHeight all 0), the
+    // "geometry never set" case cmdScrollRowIntoView's own guard exists for.
+    let threw = false;
+    try {
+      for (let i = 0; i < 8; i++) byId['rw-cmd-input']._fire('keydown', { key: 'ArrowDown' });
+    } catch (e) { threw = true; }
+    ok(!threw, 'cycling the highlight with no real layout geometry never throws');
+    ok(byId['rw-cmd-menu'].scrollTop === 0, 'and scrollTop is left at 0 rather than computed from bogus zeroed geometry');
+  }
+
+  /* ---------- 258. round 23: a digit typed at rest, bar empty, passes straight through to the app (graph host) ---------- */
+  // Reported live: at the end of a duct draw the app offers the next tool by
+  // a numbered prompt, and the global auto-capture listener was swallowing
+  // the digit into the command bar instead of letting the app see it.
+  {
+    const { win, byId, doc } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const bodyTarget = makeElement('div', byId); // stands in for "nothing else focused" — same convention as test 11
+    let defaultPrevented = false;
+    doc._fire('keydown', { target: bodyTarget, key: '3', preventDefault(){ defaultPrevented = true; } });
+    ok(!defaultPrevented, 'the digit is not consumed — the app receives it untouched');
+    ok(byId['rw-cmd-input'].value === '', 'the command bar is not seeded by the digit');
+  }
+
+  /* ---------- 259. round 23: a digit still lands in the bar once something's already been typed ---------- */
+  // Directly exercises the guard's actual condition (bar genuinely EMPTY),
+  // not just "nothing focused" — proves the fix is scoped to a resting bar,
+  // not a blanket digit exemption on this host.
+  {
+    const { win, byId, doc } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const bodyTarget = makeElement('div', byId);
+    byId['rw-cmd-input'].value = 'ro'; // bar already holds a partial command
+    let defaultPrevented = false;
+    doc._fire('keydown', { target: bodyTarget, key: '3', preventDefault(){ defaultPrevented = true; } });
+    ok(defaultPrevented, 'a non-empty bar still captures the digit, same as any other printable character');
+    ok(byId['rw-cmd-input'].value === 'ro3', 'the digit was appended, not passed through');
+  }
+
+  /* ---------- 260. round 23: the annotate host is completely unaffected — digits keep working as tag hotkeys there ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow(); // no {host: GRAPH_HOST} -> annotate host
+    loadModule(win);
+    const bodyTarget = makeElement('div', byId);
+    let defaultPrevented = false;
+    doc._fire('keydown', { target: bodyTarget, key: '3', preventDefault(){ defaultPrevented = true; } });
+    ok(defaultPrevented, 'on the annotate host a digit is still captured even at rest — tag1..tag0 stay real commands there');
+    ok(byId['rw-cmd-input'].value === '3', 'and still seeds the bar exactly as before this round');
+  }
+
+  /* ---------- 261. round 23: RW._cmdDigitPassthrough = false restores the old capture-everything behavior ---------- */
+  {
+    const { win, byId, doc } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    win.__RW._cmdDigitPassthrough = false;
+    const bodyTarget = makeElement('div', byId);
+    let defaultPrevented = false;
+    doc._fire('keydown', { target: bodyTarget, key: '3', preventDefault(){ defaultPrevented = true; } });
+    ok(defaultPrevented, 'the console escape hatch restores capture on the graph host too');
+    ok(byId['rw-cmd-input'].value === '3', 'and the digit seeds the bar exactly as it did before this round');
   }
 
   finish();

@@ -781,6 +781,10 @@
     'dimension'
   ];
   RW._cmdIsolateTools = true; // console escape hatch: __RW._cmdIsolateTools = false restores the old additive behavior
+  // Round 23: console escape hatch for the digit-passthrough bail-out in the global
+  // auto-capture listener below — __RW._cmdDigitPassthrough = false restores the old
+  // behavior (bare digits captured into the command bar even at rest, graph host too).
+  RW._cmdDigitPassthrough = true;
 
   // Returns the tool name to isolate to, or null when nothing should be restricted:
   // annotate host, the hatch turned off, resting in select, or an unreadable
@@ -1585,6 +1589,30 @@
 
   function hideMenu(){ if (menuEl) menuEl.style.display = 'none'; }
 
+  // ----- Round 23: keep the highlighted row visible while cycling -----
+  // renderMenuRows() rebuilds every row from scratch on each call (innerHTML = ''
+  // below), which resets menuEl.scrollTop to 0 — so cycling the highlight past
+  // whatever fits in MENU_MAX_H (~10 rows) moved it below the fold with nothing
+  // scrolling to follow. This bites the "<tool>." parameter listing specifically,
+  // the one list in this file that isn't capped at 8 rows (the graph inspector has
+  // ~43 graph- controls). Deliberately NOT Element.scrollIntoView() — that also
+  // scrolls every scrollable ancestor, which on this host would yank the drawing
+  // itself out from under the user; this only ever touches menuEl's own scrollTop,
+  // the same "our own UI manages its own scrolling" boundary panInOurUi already
+  // enforces elsewhere in this file. Every geometry read is guarded so a
+  // non-rendering context (e.g. offsetHeight/clientHeight never set, as in a
+  // synthetic harness that hasn't opted into layout) is a silent no-op, not a throw.
+  function cmdScrollRowIntoView(row){
+    if (!row || !menuEl) return;
+    const rowTop = row.offsetTop, rowH = row.offsetHeight, viewH = menuEl.clientHeight;
+    if (typeof rowTop !== 'number' || typeof rowH !== 'number' || !viewH) return;
+    if (rowTop < menuEl.scrollTop){
+      menuEl.scrollTop = rowTop;
+    } else if (rowTop + rowH > menuEl.scrollTop + viewH){
+      menuEl.scrollTop = rowTop + rowH - viewH;
+    }
+  }
+
   // Text color only (never the row background, which the keyboard-highlight
   // already uses) so kind stays legible regardless of which row is selected.
   const KIND_COLOR = { native: '#a8e6a3', action: '#8ecae6' };
@@ -1607,9 +1635,11 @@
     if (!menuItems.length){ hideMenu(); return; }
     ensureMenuDom();
     menuEl.innerHTML = '';
+    let highlightRow = null;
     menuItems.forEach(function(item, i){
       const row = document.createElement('div');
       row.className = 'rw-cmd-item';
+      if (i === menuHighlight) highlightRow = row;
       let label, color;
       if (menuMode === 'tag'){
         label = item.tag.name; // no hotkey-number hint — that mapping was removed as confirmed wrong
@@ -1651,6 +1681,7 @@
     });
     positionMenu();
     menuEl.style.display = 'block';
+    cmdScrollRowIntoView(highlightRow);
   }
 
   // Typing "#" as the first character switches the same dropdown/keyboard
@@ -2433,6 +2464,28 @@
     if (t && t.tagName==='SELECT' && cmdOpenModalTool()) return;
     if (e.ctrlKey||e.metaKey||e.altKey) return;
     if (e.key.length !== 1) return; // printable characters only
+    // ----- Round 23: bare digits pass through to the app (graph host only) -----
+    // Reported live: at the end of a duct draw the app offers the next tool by a
+    // numbered prompt, and this listener was swallowing the digit into the command
+    // bar instead. No host-state signal for that prompt exists (its DOM identity
+    // was never found live — see CLAUDE.md's round 19 open item), so this doesn't
+    // try to detect it; instead it's safe unconditionally, because no graph-host
+    // command or param name starts with a digit (GRAPH_TABLE/GRAPH_ACTIONS are all
+    // words/letters), so a digit at a genuinely EMPTY, unfocused bar can never be
+    // the start of anything typeable on this host. A plain bail-out, not a consume
+    // (no preventDefault/stopImmediatePropagation), matching the open-<dialog>
+    // bail-out's own doctrine just above — the app receives the key untouched.
+    // Scoped to RW_IS_GRAPH only: on the annotate host a digit is the app's own tag
+    // hotkey and tag1...tag0 are real commands, so that host is unaffected.
+    // !inputEl.value (not just e.target !== inputEl, already true here since the
+    // editable-target guard above bailed if inputEl had focus) is what keeps digits
+    // working once a command's been started or a numeric param value is being
+    // typed (e.g. route.width-input=18) — this only ever fires at a genuinely
+    // resting, empty bar. !settingsDraft is belt-and-braces on the same point.
+    // RW._cmdDigitPassthrough (default true) is a console escape hatch, matching
+    // this file's existing RW._cmdIsolateTools/RW._panEnabled convention.
+    if (RW_IS_GRAPH && RW._cmdDigitPassthrough !== false && /^[0-9]$/.test(e.key)
+        && !settingsDraft && (!inputEl || !inputEl.value)) return;
     // AutoCAD's own convention, extended into a toggle: Space with nothing typed
     // either repeats the last tool or closes the one currently active, whichever
     // applies. Both branches only fire when the command bar is genuinely empty (not
