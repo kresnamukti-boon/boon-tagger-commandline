@@ -4095,6 +4095,9 @@ function loadCoreModule(win){
        'graph table has the rest of the confirmed data-tool set (grd, damper, ...)');
     ok(!RW._cmdTable.some(e => e.name === 'linear' || e.name === 'wand'),
        'graph table does not carry annotate-host-only tool names');
+    ok(RW._cmdTable.some(e => e.name === 'connect') && RW._cmdTable.some(e => e.name === 'adjust'),
+       'round 27: two more tools discovered live — connect and adjust — are in the fallback table');
+    ok(RW._cmdGraphTableInfo.source === 'fallback', 'round 27: no toolbar in this fixture, so the built-in table is in force');
   }
 
   /* ---------- 181. Graph host: a real tool dispatches ONLY its own key — no defensive "d" draw-mode prefix ---------- */
@@ -4112,6 +4115,10 @@ function loadCoreModule(win){
     ok(keys.length === 1 && keys[0] === 'r', 'route dispatches exactly one key ("r"), with no leading "d"');
     RW.runCommand('grd');
     ok(keys[1] === 'g', 'grd dispatches its own key too, same one-key pattern');
+    RW.runCommand('connect');
+    ok(keys[2] === 'j', 'round 27: connect dispatches its own key ("j"), same one-key pattern');
+    RW.runCommand('adjust');
+    ok(keys[3] === 'a', 'round 27: adjust dispatches its own key ("a"), same one-key pattern');
   }
 
   /* ---------- 182. Graph host: `select` is a mode switch, not a repeat-tracked tool — same contract as the annotate host ---------- */
@@ -4211,6 +4218,56 @@ function loadCoreModule(win){
     win.document.body.appendChild(aside);
     return aside;
   }
+
+  // Round 27: synthesizes the real graph toolbar — <aside aria-label="Duct
+  // graph tools"> with one <button data-tool="..."> per pair, each carrying
+  // the app's own <span class="graph-tool-key">KEY</span> badge (rendered
+  // uppercase, same as the real app) plus a prose label span. Attached to
+  // doc.body because this stub's querySelectorAll walks from there, and
+  // '[data-tool]' is exactly the bare-attribute form its hand-rolled matcher
+  // supports. The badge itself is NOT findable by any selector the stub
+  // knows — that's the point: cmdToolKeyBadge reaches it via a manual
+  // .children walk, the same discipline cmdControlLiveLabel already uses, so
+  // this fixture exercises the real code path rather than a stub-only
+  // shortcut. Pass [name, null] for a button with no badge at all.
+  //
+  // IMPORTANT ordering: derivation runs at module LOAD time, so this must be
+  // called BEFORE loadModule(...) — unlike every other graph fixture in this
+  // file, which is built after loading.
+  function makeGraphToolbar(win, byId, pairs){
+    const aside = makeElement('aside', byId);
+    aside.setAttribute('aria-label', 'Duct graph tools');
+    pairs.forEach(function(p){
+      const btn = makeElement('button', byId);
+      btn.setAttribute('data-tool', p[0]);
+      if (p[1] !== null && p[1] !== undefined){
+        const badge = makeElement('span', byId);
+        badge.className = 'graph-tool-key';
+        badge.innerText = String(p[1]).toUpperCase();
+        btn.appendChild(badge);
+      }
+      const label = makeElement('span', byId);
+      label.innerText = p[2] || (p[0] + ' tool');
+      btn.appendChild(label);
+      aside.appendChild(btn);
+    });
+    win.document.body.appendChild(aside);
+    return aside;
+  }
+  // The real duct-pack toolbar, badges as confirmed live (round 27) — 13
+  // pairs including the two newly-discovered tools.
+  const DUCT_TOOLBAR = [['select','S'],['route','R'],['flex','F'],['extend','E'],['branch','B'],
+    ['transition','T'],['grd','G'],['unit','U'],['vertical','V'],['cut','C'],['damper','D'],
+    ['connect','J','Connect two open ends'],['adjust','A','Adjust duct length']];
+  // The real PIPE_TOOL_KEYS from pipe-session-ui.js (read from the bundle,
+  // never rendered/seen live) — same tool ids as the duct pack in several
+  // cases, DIFFERENT key letters, plus tools the duct pack doesn't have at
+  // all (terminate, valve, equipment, service, fixture, terminal, fitting,
+  // occlusion) — including `evidence`, which collides with this host's own
+  // `evidence` action.
+  const PIPE_TOOLBAR = [['select','S'],['route','R'],['extend','X'],['terminate','P'],['transition','N'],
+    ['cut','U'],['valve','V'],['equipment','Q'],['vertical','Z'],['service','A'],['evidence','D'],
+    ['fixture','F'],['terminal','T'],['fitting','G'],['occlusion','O']];
 
   /* ---------- 187. Graph host: RW._cmdToolSettingsList filters the shared "graph-" prefix by DOM visibility ---------- */
   // Unlike wand/wrap/mline's own confirmed-unique id prefixes, every graph
@@ -4584,23 +4641,84 @@ function loadCoreModule(win){
        'the identical decoy on the annotate host still captures — the dialog guard is graph-only');
   }
 
-  /* ---------- 205. table integrity: no duplicate names/aliases, and no action name/alias shadows a tool's ---------- */
+  /* ---------- 205. table integrity, now that the graph tool half is runtime-derived (round 27) ---------- */
+  // The old blanket rule ("no action name/alias equals or prefixes ANY tool
+  // name") can only be enforced over tools this repo actually controls — the
+  // built-in fallback table. Against a live toolbar it isn't enforceable at
+  // all: the piping pack ships a tool literally named `evidence`, colliding
+  // exactly with this host's `evidence` action. So the rule splits in two:
+  // the strict form still holds for the fallback table (block below), and a
+  // weaker but universal one holds for ANY derived table (this loop) — a
+  // collision may never make either entry unreachable, and precedence is
+  // pinned to table order (a tool always wins its own name; an action always
+  // keeps at least one of its own tokens).
   {
-    const { win: graphWin } = makeStubWindow({ host: GRAPH_HOST });
-    loadModule(graphWin, null, null, { activeTool: 'select' });
-    const table = graphWin.__RW._cmdTable;
-    const names = table.map(e => e.name);
-    ok(new Set(names).size === names.length, 'no two graph-table entries share a name');
-    const allAliases = [].concat(...table.map(e => e.aliases || []));
-    ok(new Set(allAliases).size === allAliases.length, 'no two graph-table entries share an alias');
-    const toolNames = table.filter(e => e.kind === 'native' && e.name !== 'select').map(e => e.name);
-    table.filter(e => e.kind === 'action').forEach(function(action){
-      const tokens = [action.name].concat(action.aliases || []);
-      tokens.forEach(function(tok){
-        ok(!toolNames.some(t => t === tok || t.indexOf(tok) === 0),
-           '"' + tok + '" (action "' + action.name + '") does not equal or prefix any tool name (' + toolNames.join(',') + ')');
+    const FIXTURES = [['fallback', null], ['duct toolbar', DUCT_TOOLBAR], ['piping toolbar', PIPE_TOOLBAR]];
+    FIXTURES.forEach(function(fx){
+      const label = fx[0];
+      const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+      if (fx[1]) makeGraphToolbar(win, byId, fx[1]);
+      loadModule(win, null, null, { activeTool: 'select' });
+      const RW = win.__RW, table = RW._cmdTable;
+      const tools = table.filter(function(e){ return e.kind === 'native'; });
+      const actions = table.filter(function(e){ return e.kind === 'action'; });
+
+      const toolNames = tools.map(function(e){ return e.name; });
+      ok(new Set(toolNames).size === toolNames.length, label + ': no two tools share a name');
+      const actionNames = actions.map(function(e){ return e.name; });
+      ok(new Set(actionNames).size === actionNames.length, label + ': no two actions share a name');
+      const toolAliases = [].concat(...tools.map(function(e){ return e.aliases || []; }));
+      ok(new Set(toolAliases).size === toolAliases.length, label + ': no two tools share an alias (the key letters, in particular)');
+      const actionAliases = [].concat(...actions.map(function(e){ return e.aliases || []; }));
+      ok(new Set(actionAliases).size === actionAliases.length, label + ': no two actions share an alias');
+
+      // Precedence, pinned: a tool always wins its own name.
+      toolNames.forEach(function(n){
+        const m = RW._cmdMatch(n)[0];
+        ok(m && m.name === n && m.kind === 'native',
+           label + ': "' + n + '" resolves to the TOOL, whatever else carries that token');
+      });
+      // Reachability, pinned: every action keeps at least one token of its own.
+      actions.forEach(function(a){
+        const tokens = [a.name].concat(a.aliases || []);
+        ok(tokens.some(function(t){ const m = RW._cmdMatch(t)[0]; return m === a; }),
+           label + ': action "' + a.name + '" is still reachable by at least one of its own tokens');
+      });
+      // No action ever takes a single letter — every letter is some pack's key.
+      actions.forEach(function(a){
+        [a.name].concat(a.aliases || []).forEach(function(t){
+          ok(t.length > 1, label + ': action token "' + t + '" is not a single letter');
+        });
       });
     });
+
+    // The strict original rule, kept for the table this repo fully controls.
+    {
+      const { win } = makeStubWindow({ host: GRAPH_HOST });
+      loadModule(win, null, null, { activeTool: 'select' });
+      const table = win.__RW._cmdTable;
+      ok(win.__RW._cmdGraphTableInfo.source === 'fallback', 'sanity: no toolbar in this fixture, so the built-in table is in force');
+      const toolNames = table.filter(e => e.kind === 'native' && e.name !== 'select').map(e => e.name);
+      table.filter(e => e.kind === 'action').forEach(function(action){
+        [action.name].concat(action.aliases || []).forEach(function(tok){
+          ok(!toolNames.some(t => t === tok || t.indexOf(tok) === 0),
+             '"' + tok + '" (action "' + action.name + '") does not equal or prefix any built-in tool name (' + toolNames.join(',') + ')');
+        });
+      });
+    }
+
+    // The one known live collision (piping's `evidence` tool) is ASSERTED as
+    // correctly reported, not merely tolerated by the loop above.
+    {
+      const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+      makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+      loadModule(win, null, null, { activeTool: 'select' });
+      const rows = win.__RW._cmdGraphTableInfo.shadowedActions;
+      const ev = rows.find(function(r){ return r.action === 'evidence'; });
+      ok(!!ev && ev.shadowed.indexOf('evidence') !== -1, 'the piping `evidence` TOOL is reported as shadowing the `evidence` ACTION');
+      ok(!!ev && ev.reachableAs.indexOf('attach') !== -1, 'and the action is reported as still reachable by "attach"');
+      ok(rows.every(function(r){ return r.reachableAs.length > 0; }), 'no action is left with zero reachable tokens');
+    }
   }
 
   /* ---------- 206. boundary guard: no table entry ever carries a forbidden button id, and the guard is enforced in code ---------- */
@@ -5064,7 +5182,7 @@ function loadCoreModule(win){
     inspector.appendChild(dialog); // deliberately inside the inspector, same as test 192
 
     const tools = RW._cmdTable.filter(e => e.kind === 'native' && e.name !== 'select').map(e => e.name);
-    ok(tools.length === 10, 'sanity: 10 real graph tools besides select');
+    ok(tools.length === 12, 'sanity: 12 real graph tools besides select in the built-in fallback table (connect/adjust added round 27)');
     tools.forEach(function(tool){
       const params = RW._cmdToolSettingsList(tool);
       ok(params.every(p => p.id !== 'graph-calibrate-feet'), tool + '. never lists a control inside the non-recognized calibrate dialog');
@@ -5379,6 +5497,31 @@ function loadCoreModule(win){
        'a real graph tool (route) is offered');
     ok(rows && !rows.some(function(r){ return r.innerText.indexOf('undo') === 0; }),
        'undo — an action, not a tool — is never offered in this starting menu');
+    // Round 27: the fallback table is now 13 tools long (connect/adjust
+    // added), so "first 8" genuinely excludes some real tools — pins that
+    // the cap is table order, not "every tool always fits."
+    ok(rows && rows.length === 8, 'round 27: still capped at 8 rows even though the fallback table is now 13 tools');
+    ok(rows && !rows.some(function(r){ return r.innerText.indexOf('connect') === 0; }),
+       'round 27: connect (13th in table order) does not fit in the first-8 starting menu');
+  }
+
+  /* ---------- 241b. round 27: the first-Space starting menu's first 8 follows the LIVE toolbar's own DOM order when one is derived ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    // adjust first, connect second — the opposite of DUCT_TOOLBAR's order —
+    // so this can only pass if the menu order really tracks the derived
+    // table's order, not a coincidence of the fallback table's own order.
+    makeGraphToolbar(win, byId, [['select','S'],['adjust','A'],['connect','J'],['route','R'],
+      ['flex','F'],['extend','E'],['branch','B'],['transition','T'],['grd','G']]);
+    loadModule(win, null, null, { activeTool: null });
+    win.document._fire('keydown', { target: makeElement('div', byId), key: ' ' });
+    const rows = byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children;
+    ok(rows && rows.length === 8, 'still 8 rows against a 9-tool derived toolbar');
+    ok(rows && rows.some(function(r){ return r.innerText.indexOf('adjust') === 0; })
+       && rows.some(function(r){ return r.innerText.indexOf('connect') === 0; }),
+       'adjust and connect — first in THIS toolbar\'s DOM order — are offered');
+    ok(rows && !rows.some(function(r){ return r.innerText.indexOf('grd') === 0; }),
+       'grd (9th in this toolbar\'s DOM order) does not fit in the first 8');
   }
 
   /* ---------- 242. Space also "initializes the console" while a config-dialog modal is open — no synthetic key dispatch, just its own dropdown (Kresna: "I want that behaviour also be in branch mode") ---------- */
@@ -5919,6 +6062,18 @@ function loadCoreModule(win){
        'a plain native tool (route) is still offered with no button/DOM state to check at all');
   }
 
+  /* ---------- 266b. round 27: the same no-`.btn`-means-never-gated invariant holds for a DERIVED (piping) tool this repo doesn't hardcode ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'valve';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('valve') === 0),
+       'a derived native tool (valve, piping-only) is offered too, with no button/DOM state to check');
+  }
+
   /* ---------- 267. round 24: the annotate host is unaffected — it has no button-backed action entries at all ---------- */
   {
     const { win, byId } = makeStubWindow(); // annotate host
@@ -6106,6 +6261,206 @@ function loadCoreModule(win){
     fixture.typeSel.value = 'tap';
     RW._cmdModalMemoryTick();
     ok(fixture.typeSel.value === 'tap', 'is never auto-filled either — branch\'s own dedicated repo is the only place this now lives');
+  }
+
+  /* ---------- 278. round 27: derives the real duct toolbar, badges and all ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, DUCT_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdGraphTableInfo.source === 'toolbar', 'source reports "toolbar" once a real one is present');
+    ok(RW._cmdGraphTableInfo.count === 13, 'all 13 duct-toolbar tools were derived');
+    ok(RW._cmdGraphTableInfo.skipped.length === 0 && RW._cmdGraphTableInfo.aliasDropped.length === 0,
+       'nothing skipped, no alias dropped, against a clean toolbar');
+    const table = RW._cmdTable;
+    ok(table.filter(function(e){ return e.kind === 'native'; }).length === 13, 'RW._cmdTable carries all 13 derived tools');
+    const connect = table.find(function(e){ return e.name === 'connect'; });
+    ok(!!connect && connect.aliases[0] === 'j' && connect.aliases.indexOf('join') !== -1,
+       'connect: key "j" from the badge, curated alias "join" merged in');
+    const adjust = table.find(function(e){ return e.name === 'adjust'; });
+    ok(!!adjust && adjust.aliases[0] === 'a' && adjust.aliases.indexOf('stretch') !== -1,
+       'adjust: key "a" from the badge, curated alias "stretch" merged in');
+    ok(table.filter(function(e){ return e.name === 'select'; })[0].run.__isModeSwitch === true,
+       'select is still the mode switch when derived');
+    ok(connect.run.__isDrawTool === true, 'a real derived tool is still __isDrawTool');
+  }
+
+  /* ---------- 279. round 27: the badge is authoritative — a piping-shaped toolbar dispatches ITS keys, not the duct pack's ---------- */
+  // This is the test that would have caught the exact silent-wrong-key bug
+  // this round exists to prevent, had the table stayed hardcoded.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('extend');
+    ok(keys[0] === 'x', 'piping toolbar: extend dispatches "x" (not "e", the duct pack\'s key)');
+    RW.runCommand('vertical');
+    ok(keys[1] === 'z', 'piping toolbar: vertical dispatches "z" (not "v")');
+    RW.runCommand('cut');
+    ok(keys[2] === 'u', 'piping toolbar: cut dispatches "u" (not "c")');
+    RW.runCommand('transition');
+    ok(keys[3] === 'n', 'piping toolbar: transition dispatches "n" (not "t")');
+  }
+
+  /* ---------- 280. round 27: no toolbar on the page ⇒ falls back to the built-in table, and says so ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdGraphTableInfo.source === 'fallback', 'source reports "fallback" with no toolbar present');
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('route'); ok(keys[0] === 'r', 'fallback route still dispatches "r"');
+    RW.runCommand('connect'); ok(keys[1] === 'j', 'fallback connect still dispatches "j"');
+    // The tail report fires after RW._cmdDetectTags, so it's the last status
+    // set by the end of module load.
+    ok(RW._lastStatus && RW._lastStatus.indexOf('built-in') !== -1,
+       'the fallback case reports itself via RW._commitStatus, unlike the ordinary success case');
+  }
+
+  /* ---------- 281. round 27: select stays a mode switch on a derived table, same contract as the fallback ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    RW.runCommand('route');
+    ok(RW._cmdLastTool === 'route', 'a real derived tool becomes the Space-repeat target');
+    RW.runCommand('select');
+    ok(RW._cmdToolArmed === false, 'select clears the armed flag on a derived table too');
+    ok(RW._cmdLastTool === 'route', 'select never overwrites the last-repeated tool');
+  }
+
+  /* ---------- 282. round 27: a button with a missing/unreadable badge inherits its built-in key when the id is known, else is dropped ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, [['select','S'], ['route', null], ['mystery', null], ['flex','F']]);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    const route = RW._cmdTable.find(function(e){ return e.name === 'route'; });
+    ok(!!route && route.aliases[0] === 'r', 'route with no badge inherits its built-in key "r"');
+    ok(!RW._cmdTable.some(function(e){ return e.name === 'mystery'; }), 'an unknown id with no badge is dropped entirely, not a dead command');
+    ok(RW._cmdGraphTableInfo.skipped.some(function(s){ return s.indexOf('route') === 0 && s.indexOf('built-in') !== -1; }),
+       'route\'s fallback is recorded in `skipped`');
+    ok(RW._cmdGraphTableInfo.skipped.some(function(s){ return s.indexOf('mystery') === 0; }),
+       'mystery\'s drop is recorded in `skipped` too');
+  }
+
+  /* ---------- 283. round 27: two buttons claiming the same badge letter — first in DOM order keeps it, the later one is dropped and recorded ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, [['select','S'], ['route','R'], ['duplicate','R'], ['flex','F']]);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdTable.some(function(e){ return e.name === 'route'; }), 'route (first with "r") is kept');
+    ok(!RW._cmdTable.some(function(e){ return e.name === 'duplicate'; }), 'duplicate (second with "r") is dropped');
+    ok(RW._cmdGraphTableInfo.skipped.some(function(s){ return s.indexOf('duplicate') === 0 && s.indexOf('already taken') !== -1; }),
+       'the drop is recorded in `skipped`, naming the letter');
+  }
+
+  /* ---------- 284. round 27: a derived tool gets <tool>. drill-in and isolation for free — no per-tool wiring needed ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'valve' });
+    const RW = win.__RW;
+    ok(RW._cmdActiveSettingsTool() === 'valve', 'a piping-only tool (valve) is recognized as the active settings tool');
+    ok(RW._cmdIsolatedTool() === 'valve', 'and isolation picks it up too');
+    ok(!!RW._toolSettingsMap.valve, 'RW._toolSettingsMap has an entry for it');
+    ok(!RW._toolSettingsMap.select, 'but not for select, same rule as the fallback table');
+    ok(Array.isArray(RW._cmdToolSettingsList('valve')) && RW._cmdToolSettingsList('valve').length === 0,
+       'RW._cmdToolSettingsList returns [] (no DOM to find), never throws or reports "unknown tool"');
+    // The NATIVE exemption in cmdIsolationEscapes covers derived tools too —
+    // switching to a different real tool is never blocked by isolation.
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('route') === 0),
+       'typing a different tool (route) while valve is isolated still matches — the NATIVE exemption covers derived tools');
+  }
+
+  /* ---------- 285. round 27: curated aliases merge by id, and drop on collision with another derived tool's own name/key ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, DUCT_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdMatch('duct')[0] && RW._cmdMatch('duct')[0].name === 'route', 'curated alias "duct" resolves to route');
+    ok(RW._cmdMatch('join')[0] && RW._cmdMatch('join')[0].name === 'connect', 'curated alias "join" resolves to connect');
+
+    // A synthetic toolbar carrying BOTH `unit` and a real `equipment` tool —
+    // `equipment` is `unit`'s own curated alias, so it must be dropped.
+    const { win: win2, byId: byId2 } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win2, byId2, [['select','S'], ['unit','U'], ['equipment','Q']]);
+    loadModule(win2, null, null, { activeTool: 'select' });
+    const RW2 = win2.__RW;
+    ok(RW2._cmdGraphTableInfo.aliasDropped.some(function(s){ return s.indexOf('unit') === 0 && s.indexOf('equipment') !== -1; }),
+       'unit\'s curated alias "equipment" is dropped and recorded once a real "equipment" tool exists');
+    ok(RW2._cmdMatch('equipment')[0] && RW2._cmdMatch('equipment')[0].name === 'equipment',
+       '"equipment" now resolves to the TOOL, not unit\'s dropped alias');
+  }
+
+  /* ---------- 286. round 27: RW._cmdRebuildGraphTable() re-derives without a page reload; n/a on the annotate host ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdGraphTableInfo.source === 'fallback', 'starts on the fallback (no toolbar yet)');
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    const info = RW._cmdRebuildGraphTable();
+    ok(info.source === 'toolbar', 'rebuild picks up the toolbar that has since appeared');
+    ok(RW._cmdTable.some(function(e){ return e.name === 'valve'; }), 'RW._cmdTable itself is refreshed');
+    ok(!!RW._toolSettingsMap.valve, 'RW._toolSettingsMap is refreshed too');
+    ok(RW._lastStatus && RW._lastStatus.indexOf('toolbar') !== -1, 'reports the outcome via _commitStatus');
+
+    const { win: annWin } = makeStubWindow(); // annotate host
+    loadModule(annWin);
+    ok(annWin.__RW._cmdRebuildGraphTable() === null, 'n/a on the annotate host — returns null');
+  }
+
+  /* ---------- 287. round 27: the "annotations" action (Hide/Show Annotations) ---------- */
+  {
+    // (a) button absent — refused, and never offered in the dropdown (round-24 gate).
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    ok(win.__RW.runCommand('annotations') === false, 'refuses when the button is not on the page');
+    ok(win.__RW._lastStatus.indexOf('not on the page') !== -1, 'status says so');
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'annotations';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('annotations') === 0)),
+       'and it is not offered in the dropdown at all while unusable');
+  }
+  {
+    // (b) button present + visible — clicks it.
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-toggle-annotations'; btn.offsetParent = {};
+    win.document.body.appendChild(btn);
+    ok(win.__RW.runCommand('annotations') === true && btn._clicked === 1, 'clicks graph-toggle-annotations when present');
+  }
+  {
+    // (c) the "anno" alias resolves to it.
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    ok(win.__RW._cmdMatch('anno')[0] && win.__RW._cmdMatch('anno')[0].name === 'annotations', '"anno" resolves to the annotations action');
+  }
+  {
+    // (d) refused while a tool is isolated — pinning the deliberate decision
+    // NOT to add it to GRAPH_ISOLATION_ALLOWED.
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-toggle-annotations'; btn.offsetParent = {};
+    win.document.body.appendChild(btn);
+    ok(win.__RW.runCommand('annotations') === false, 'refused while route is isolated, even with its button present');
+    ok(win.__RW._lastStatus.indexOf('is active') !== -1, 'the refusal is the isolation message, not "not on the page"');
+    ok(btn._clicked === 0, 'and the button was never actually clicked');
   }
 
   finish();

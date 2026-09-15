@@ -459,12 +459,38 @@ On `/graph/projects/<project>/session/?page=<page>` — a full-screen node-graph
 app chrome, no `annotationState` at all — the command line detects this automatically (the
 console log names it) and switches over:
 
-**Tool vocabulary** (every entry a plain one-key dispatch — **no defensive `d` draw-mode prefix**,
-this host has no draw-mode concept): `select` (`s`, the resting state), `route`/`duct` (`r`),
-`flex` (`f`), `extend` (`e`), `branch` (`b`), `transition` (`t`), `grd`/`diffuser` (`g`),
-`unit`/`equipment` (`u`), `vertical`/`riser` (`v`), `cut`/`split` (`c`), `damper` (`d`). This
-table is entirely separate from the annotate host's own — nothing above (`linear`, `wand`, tag
-digits, `pan`/`label`/`crop`/`mirror`, ...) applies here.
+**Tool vocabulary is read live off the app's own toolbar** (round 27), not hardcoded — every
+`[data-tool]` button's id becomes a command name, and its own `<span class="graph-tool-key">`
+badge (the app's own key hint, derived from its own `TOOL_KEYS` map — the single source of truth)
+becomes that command's key. Curated descriptive aliases are merged in by id on top: `route`/`duct`,
+`grd`/`diffuser`, `unit`/`equipment`, `vertical`/`riser`, `cut`/`split`, `connect`/`join`,
+`adjust`/`stretch`. On today's duct ("Duct Takeoff") project that yields 13 commands: `select`
+(`s`, the resting state), `route` (`r`), `flex` (`f`), `extend` (`e`), `branch` (`b`), `transition`
+(`t`), `grd` (`g`), `unit` (`u`), `vertical` (`v`), `cut` (`c`), `damper` (`d`), `connect` (`j`,
+"Connect two open ends"), `adjust` (`a`, "Adjust duct length") — the last two discovered live this
+round. Every entry is a plain one-key dispatch — **no defensive `d` draw-mode prefix**, this host
+has no draw-mode concept. This table is entirely separate from the annotate host's own — nothing
+above (`linear`, `wand`, tag digits, `pan`/`label`/`crop`/`mirror`, ...) applies here.
+
+**Why derived, not hardcoded**: this same host also runs a *second* trade pack (piping), which
+reuses several of the same tool ids with **different** key letters (`extend`=`x` not `e`,
+`vertical`=`z` not `v`, `cut`=`u` not `c`, `transition`=`n` not `t`) and filters which tools even
+appear per project — a static table would silently dispatch the wrong key there. If the live
+toolbar can't be read (nothing found, or the page isn't ready yet), the command line falls back to
+the built-in 13-tool table above and reports it: a status-bar message on load
+(`"graph toolbar not readable — using the built-in ... table"`), a `console.log` naming the source,
+and `__RW._cmdGraphTableInfo` (`{source, count, tools, skipped, aliasDropped, shadowedActions}`) —
+console-inspectable any time. `__RW._cmdRebuildGraphTable()` re-derives without a page reload
+(useful since re-pasting the loader onto an already-injected page is a no-op — see "Injection"
+above); it refreshes `RW._cmdTable`/`RW._toolSettingsMap` but never touches `RW._cmdLastTool`, so if
+the tool Space would repeat has disappeared from the toolbar, Space simply dispatches a key the app
+no longer maps (harmless — an unmapped key is ignored).
+
+**When a tool's own name collides with an action's** (only known case: the piping pack's `evidence`
+tool vs. this host's own `evidence` action), the **tool always wins its own name** — typing
+`evidence` arms the tool, and the action stays reachable by its other alias (`attach`).
+`__RW._cmdGraphTableInfo.shadowedActions` reports any such collision and what each action is still
+reachable by.
 
 **`#` search finds systems/networks, not tags.** There's no tag list on this host — `#fptu` (say)
 searches the live `#graph-system-select` options (e.g. "FPTU (Supply)") instead, same
@@ -484,8 +510,10 @@ diagnostic that reports every `graph-` control and why it was or wasn't included
 opposite of the annotate host's "additive, not exclusive" behavior above (confirmed via
 `AskUserQuestion`). Once `route`/`flex`/`extend`/... is armed, what still matches is: that tool's
 own properties (bare, or via `route.`), the ways out (`select`, Escape, Space), the route-lifecycle
-actions `finish`/`cancel`, **and every other native tool name** — typing or picking a different
-tool switches straight to it, arming that tool instead, with no need to return to `select` first
+actions `finish`/`cancel`, **and every other native tool name** (whatever the live toolbar actually
+shows — round 27's derivation, so a different trade pack's tools are covered with no code change)
+— typing or picking a different tool switches straight to it, arming that tool instead, with no
+need to return to `select` first
 (Kresna's own request, round 25: "only for the tool" — narrower than turning isolation off
 altogether). Everything else — every action button (`undo`, `zoomfit`, ...) and `#` system search
 — still matches nothing, and the status line says why, so a blocked query never reads as a silent
@@ -566,11 +594,13 @@ whichever field was showing. Exempt from tool isolation the same way `finish`/`c
 are, since it only ever edits the isolated tool's **own** width/height, never a different tool's.
 
 **Action buttons** — the page's own buttons that have no keyboard shortcut, typed by name (no
-single-letter aliases, since every letter is already a tool key): `undo`/`redo` (`re`), `zoomfit`
+single-letter aliases, since every letter is — or might be, on some trade pack — a tool key): `undo`/`redo` (`re`), `zoomfit`
 (`fit`)/`zoomin`/`zoomout`, `region` (`addregion`), `ruler` (`measure`), `calibrate` (`cal`),
 `setscale` (`scale`)/`resetscale`, `finish`/`cancel` (only available while a route is in
 progress), `evidence` (`attach`)/`note` (`memo`)/`rationale` (`why`), `toggledamper` (`tdamper`),
-`elevation` (`riserelev`, only available with a riser selected). A disabled or not-currently-shown
+`elevation` (`riserelev`, only available with a riser selected), `annotations` (`anno`, round 27
+— toggles the canvas toolbar's Hide/Show Annotations view state; a pure client-side toggle,
+submits nothing; refused while a tool is isolated, same as `zoomfit`/`zoomin`/`ruler`). A disabled or not-currently-shown
 button is reported, never clicked. Deliberately excluded, and not clickable from the command line
 at all even if injected by hand: `graph-save-commands`, all four recording controls (Boundaries,
 below), and the "System / network" / "New system" property-group actions (assign network to a

@@ -161,25 +161,154 @@
     { name:'mirror',   kind:NATIVE, aliases:['m'],  run: nativeKey('m') },
   ];
 
-  // ----- graph ("Duct Takeoff") host: confirmed live via opencli — every
-  // data-tool value and its key hint (S R F E B T G U V C D) matched exactly,
-  // and dispatching each key from `document` flipped __graphDebug.activeTool
-  // with pageEntities/history staying at 0 throughout. `select` is this
+  // ----- graph ("Duct Takeoff") host: tool table (round 27: now derived live
+  // from the toolbar — see cmdDeriveGraphTools/cmdApplyGraphTable below) -----
+  // This literal is the FALLBACK only, reached when the live toolbar can't be
+  // read. Originally confirmed live via opencli — every data-tool value and
+  // its key hint (S R F E B T G U V C D) matched exactly, and dispatching
+  // each key from `document` flipped __graphDebug.activeTool with
+  // pageEntities/history staying at 0 throughout — widened round 27 to add
+  // two tools discovered live since (connect=J, adjust=A). `select` is this
   // host's own resting state already, so it's a mode switch here too, same
   // as the annotate host's `select` — everything else is a real tool.
-  const GRAPH_TABLE = [
-    { name:'select',     kind:NATIVE, aliases:['s'], run: nativeKey('s') },
-    { name:'route',      kind:NATIVE, aliases:['r','duct'],      run: nativeToolPlain('r') },
-    { name:'flex',       kind:NATIVE, aliases:['f'],             run: nativeToolPlain('f') },
-    { name:'extend',     kind:NATIVE, aliases:['e'],             run: nativeToolPlain('e') },
-    { name:'branch',     kind:NATIVE, aliases:['b'],             run: nativeToolPlain('b') },
-    { name:'transition', kind:NATIVE, aliases:['t'],             run: nativeToolPlain('t') },
-    { name:'grd',        kind:NATIVE, aliases:['g','diffuser'],  run: nativeToolPlain('g') },
-    { name:'unit',       kind:NATIVE, aliases:['u','equipment'], run: nativeToolPlain('u') },
-    { name:'vertical',   kind:NATIVE, aliases:['v','riser'],     run: nativeToolPlain('v') },
-    { name:'cut',        kind:NATIVE, aliases:['c','split'],     run: nativeToolPlain('c') },
-    { name:'damper',     kind:NATIVE, aliases:['d'],             run: nativeToolPlain('d') },
+  //
+  // Round 27: a SECOND trade pack was found to exist on this same host
+  // (pipe-session-ui.js's PIPE_TOOL_KEYS, active when
+  // bootstrap.workspace.tradePack === "piping" — a module-local const with no
+  // global we can read) that reuses several of these same tool ids with
+  // DIFFERENT key letters (extend=x not e, vertical=z not v, cut=u not c,
+  // transition=n not t) and filters which tools even appear per project. A
+  // hardcoded table can silently dispatch the WRONG key there — the reason
+  // the real table is now read from the app's own toolbar (each button's own
+  // `.graph-tool-key` badge, which the app itself derives from whichever
+  // TOOL_KEYS map is actually active) rather than trusted as a static list.
+  // This literal is what's used when that read fails or finds nothing.
+  const GRAPH_TOOL_ALIASES = {
+    route:['duct'], grd:['diffuser'], unit:['equipment'], vertical:['riser'],
+    cut:['split'], connect:['join'], adjust:['stretch']
+  };
+
+  const GRAPH_FALLBACK_KEYS = [
+    ['select','s'], ['route','r'], ['flex','f'], ['extend','e'], ['branch','b'],
+    ['transition','t'], ['grd','g'], ['unit','u'], ['vertical','v'], ['cut','c'],
+    ['damper','d'], ['connect','j'], ['adjust','a']
   ];
+
+  // One entry factory shared by the fallback table AND every live-derived
+  // table, so a derived entry and a fallback entry are structurally
+  // identical — the invariant every existing graph-table test leans on.
+  // `select` is special-cased by NAME, never by key position: the piping
+  // pack also calls its own resting tool `select` (with the same key, `s`,
+  // on both packs, but this must not rely on that coincidence), and
+  // GRAPH_SETTINGS_MAP/RW._cmdActiveSettingsTool already key off that name.
+  function cmdGraphToolEntry(name, key){
+    return {
+      name: name,
+      kind: NATIVE,
+      key: key, // metadata for the derivation diagnostics below; dispatch itself goes through run()
+      aliases: [key].concat(GRAPH_TOOL_ALIASES[name] || []),
+      run: (name === 'select') ? nativeKey(key) : nativeToolPlain(key)
+    };
+  }
+
+  const GRAPH_TABLE = GRAPH_FALLBACK_KEYS.map(function(p){ return cmdGraphToolEntry(p[0], p[1]); });
+
+  // Reads the app's own live toolbar to build the real tool table — see the
+  // GRAPH_TABLE comment above for why this can't be a static list. Walks
+  // .children by hand (no querySelector('.class'), no .closest(), no
+  // .dataset) for the same reason cmdControlLiveLabel does further below:
+  // this project's Node test harness supports only getAttribute/.children/
+  // #id lookups, and this must run unchanged against both it and the real
+  // DOM. GRAPH_TOOL_KEY_CLASS/cmdToolKeyBadge/cmdDeriveGraphTools/
+  // cmdShadowedActions are pure functions — none of them touch RW._cmdTable
+  // themselves; cmdApplyGraphTable (declared further below, once
+  // GRAPH_SETTINGS_PREFIX/GRAPH_ACTIONS are in scope) is what actually wires
+  // the result in.
+  const GRAPH_TOOL_KEY_CLASS = 'graph-tool-key';
+
+  function cmdToolKeyBadge(el, depth){
+    for (const child of (el.children || [])){
+      if (String(child.className || '').split(/\s+/).indexOf(GRAPH_TOOL_KEY_CLASS) !== -1){
+        const text = (child.innerText || child.textContent || '').trim().toLowerCase();
+        if (text) return text;
+      }
+      if ((depth || 0) < 3){
+        const nested = cmdToolKeyBadge(child, (depth || 0) + 1);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
+
+  // Returns {source, entries, skipped, aliasDropped}. `entries` is null when
+  // nothing usable was found on the page, so the caller falls back to the
+  // built-in GRAPH_TABLE above — this never throws and never returns a
+  // half-built table.
+  function cmdDeriveGraphTools(){
+    const out = { source:'fallback', entries:null, skipped:[], aliasDropped:[] };
+    let els = [];
+    try { els = Array.from(document.querySelectorAll('[data-tool]')); } catch (e){ els = []; }
+    const tools = [], seenName = {}, seenKey = {};
+    for (const el of els){
+      const name = (el.getAttribute('data-tool') || '').trim().toLowerCase();
+      if (!name) continue;
+      if (seenName[name]){ out.skipped.push(name + ': duplicate data-tool'); continue; }
+      let key = cmdToolKeyBadge(el);
+      if (!key || !/^[a-z0-9]$/.test(key)){
+        // No readable badge. Inherit this tool's own built-in key if we know
+        // one, else drop it — a keyless entry could dispatch nothing at all,
+        // and a dead row in the dropdown would be worse than not listing it.
+        const known = GRAPH_TABLE.find(function(e){ return e.name === name; });
+        if (!known){ out.skipped.push(name + ': no key badge, no built-in key'); continue; }
+        key = known.key;
+        out.skipped.push(name + ': no key badge, used built-in "' + key + '"');
+      }
+      if (seenKey[key]){ out.skipped.push(name + ': key "' + key + '" already taken'); continue; }
+      seenName[name] = true; seenKey[key] = true;
+      tools.push(cmdGraphToolEntry(name, key));
+    }
+    if (!tools.length) return out;
+    // A curated alias that collides with another DERIVED tool's own name or
+    // key is dropped, so the alias namespace stays unambiguous whatever pack
+    // is loaded — the piping pack has a tool literally named `equipment`,
+    // which is also `unit`'s curated alias on the duct pack. The key itself
+    // (index 0) is never dropped here; it was already deduped above.
+    tools.forEach(function(t){
+      t.aliases = t.aliases.filter(function(a, i){
+        if (i === 0) return true;
+        if (seenName[a] || seenKey[a]){ out.aliasDropped.push(t.name + ': "' + a + '"'); return false; }
+        return true;
+      });
+    });
+    out.source = 'toolbar'; out.entries = tools;
+    return out;
+  }
+
+  // Which ACTION entries a given tool table shadows, and what each is still
+  // reachable by. Table order IS the resolution rule — RW._cmdTable is
+  // tools-then-actions, and both findEntry and RW._cmdMatch scan it in
+  // order (exact name before exact alias), so a collision is deterministic,
+  // never ambiguous: the TOOL wins its own name and the action keeps every
+  // other token it has. The live case is the piping pack, whose `evidence`
+  // tool collides exactly with this host's `evidence` action (still
+  // reachable as `attach`). `fitting`/`fixture` vs. the `fit` alias is only
+  // ever a RANKING question, never a reachability one: `fit` is an exact
+  // alias (rank 1) and beats `fitting` as a name-prefix (rank 2), while
+  // typing `fitting` in full is an exact name (rank 0) either way.
+  function cmdShadowedActions(tools){
+    const names = tools.map(function(t){ return t.name; });
+    const rows = [];
+    GRAPH_ACTIONS.forEach(function(a){
+      const tokens = [a.name].concat(a.aliases || []);
+      const clashed = tokens.filter(function(t){ return names.indexOf(t) !== -1; });
+      if (clashed.length) rows.push({
+        action: a.name,
+        shadowed: clashed,
+        reachableAs: tokens.filter(function(t){ return names.indexOf(t) === -1; })
+      });
+    });
+    return rows;
+  }
 
   // Enforced in RW.runCommand's button-dispatch path, not just by omission
   // from GRAPH_ACTIONS below — see that function's own comment. Save is a
@@ -206,9 +335,18 @@
   // manual-commit mode — CommandJournal flushes within 300ms-2s regardless
   // of the Save button, which is a force-flush/retry control, not a commit
   // gate) — exactly the same as a user clicking that same button by hand.
-  // No single-letter aliases: every one of s/r/f/e/b/t/g/u/v/c/d is already
-  // a GRAPH_TABLE tool key, so these take word names/aliases only, chosen so
-  // no name or alias collides with (or prefixes) a tool's own name/alias.
+  // No single-letter aliases, and no name/alias that equals or prefixes a
+  // tool name. As of round 27, WHICH letters are tool keys isn't known until
+  // the toolbar is actually read at runtime (the piping pack uses x/z/u/n
+  // where the duct pack uses e/v/c/t — see GRAPH_TABLE's own comment), so the
+  // rule is now: no action takes a single letter at all, and no action token
+  // may equal or prefix a tool name in EITHER known pack. Where a collision
+  // is unavoidable anyway — the piping pack ships a tool literally named
+  // `evidence` — resolution is deterministic by table order (see
+  // cmdShadowedActions above): the TOOL wins its own name, and the action
+  // stays reachable by its own remaining token (`attach`).
+  // cmdApplyGraphTable reports every such case and console.warns if one is
+  // ever left with no reachable token at all; test 205 asserts both halves.
   const GRAPH_ACTIONS = [
     { name:'undo',         kind:ACTION, aliases:[],                       btn:'graph-undo-command' },
     { name:'redo',         kind:ACTION, aliases:['re'],                   btn:'graph-redo-command' },
@@ -227,6 +365,18 @@
     { name:'rationale',    kind:ACTION, aliases:['why'],                  btn:'graph-attach-rationale' },
     { name:'toggledamper', kind:ACTION, aliases:['tdamper'],              btn:'graph-toggle-damper' },
     { name:'elevation',    kind:ACTION, aliases:['riserelev'],            btn:'graph-edit-riser-elevation', conditional:'only appears with a riser selected' },
+    // Round 27: the canvas toolbar's own "Hide Annotations"/"Show Annotations"
+    // button, next to undo/redo — a pure client-side view toggle
+    // (`annotationsHidden`), submits nothing, and flips its own label in
+    // place, so one neutral noun covers both directions rather than a
+    // hide/show pair. No single-letter alias: `a` is `adjust`'s own key on
+    // the duct pack (and `service`'s on the piping pack). Deliberately NOT
+    // added to GRAPH_ISOLATION_ALLOWED below — it's a view control in the
+    // same class as zoomfit/zoomin/ruler, every one of which is already
+    // refused while a tool is armed; admitting it would be the first
+    // widening of that allowlist beyond a tool's own lifecycle/dialog/
+    // dimension edits, for a one-keystroke (Escape) inconvenience.
+    { name:'annotations',  kind:ACTION, aliases:['anno'],                 btn:'graph-toggle-annotations' },
 
     // ----- round 19: each config-dialog modal's own Choose/Cancel-equivalent
     // buttons — reuses RW.runCommand's existing button-dispatch path
@@ -345,12 +495,64 @@
   // which may round up empty) so `<tool>.` still drills in cleanly instead
   // of reporting "unknown tool."
   const GRAPH_SETTINGS_PREFIX = 'graph-';
-  const GRAPH_SETTINGS_MAP = GRAPH_TABLE.reduce(function(map, entry){
-    if (entry.name !== 'select') map[entry.name] = { dataTool: entry.name, prefix: GRAPH_SETTINGS_PREFIX };
-    return map;
-  }, {});
 
-  RW._toolSettingsMap = RW_IS_GRAPH ? GRAPH_SETTINGS_MAP : ANNOTATE_SETTINGS_MAP;
+  // Round 27: whichever graph tool table is actually in force — derived from
+  // the live toolbar when possible, else the GRAPH_TABLE fallback above. A
+  // `let`, not a const, so RW._cmdRebuildGraphTable below can re-derive
+  // without a page reload: this module's own `if (RW.vcmd) return` re-entry
+  // guard makes re-pasting the loader onto an already-injected page a no-op,
+  // so re-deriving needs its own entry point.
+  let GRAPH_TOOLS = GRAPH_TABLE;
+  RW._cmdGraphTableInfo = { source: 'n/a' }; // graph host only; overwritten below
+
+  // Builds RW._cmdTable AND RW._toolSettingsMap from ONE derivation, so the
+  // two can never disagree about which tools exist — GRAPH_SETTINGS_MAP has
+  // been derived from the tool table since round 15, and that stays true
+  // here, which is what gives every derived tool its `<tool>.` drill-in for
+  // free, with no extra code. Also reports the outcome — see cmdDeriveGraphTools/
+  // cmdShadowedActions above for what each field means.
+  function cmdApplyGraphTable(){
+    const res = cmdDeriveGraphTools();
+    GRAPH_TOOLS = res.entries || GRAPH_TABLE;
+    RW._cmdTable = GRAPH_TOOLS.concat(GRAPH_ACTIONS);
+    RW._toolSettingsMap = GRAPH_TOOLS.reduce(function(map, entry){
+      if (entry.name !== 'select') map[entry.name] = { dataTool: entry.name, prefix: GRAPH_SETTINGS_PREFIX };
+      return map;
+    }, {});
+    const shadowed = cmdShadowedActions(GRAPH_TOOLS);
+    RW._cmdGraphTableInfo = {
+      source: res.source,
+      count: GRAPH_TOOLS.length,
+      tools: GRAPH_TOOLS.map(function(e){ return e.name + ' (' + e.aliases[0] + ')'; }),
+      skipped: res.skipped,
+      aliasDropped: res.aliasDropped,
+      shadowedActions: shadowed
+    };
+    console.log('[RW] graph tools: ' + GRAPH_TOOLS.length + ' from the ' + res.source
+      + ' — ' + RW._cmdGraphTableInfo.tools.join(', ')
+      + (res.skipped.length ? ' | skipped: ' + res.skipped.join('; ') : '')
+      + (res.aliasDropped.length ? ' | aliases dropped: ' + res.aliasDropped.join('; ') : '')
+      + (shadowed.length ? ' | shadowed actions: ' + shadowed.map(function(r){ return r.action; }).join(', ') : ''));
+    shadowed.forEach(function(r){
+      if (!r.reachableAs.length) console.warn('[RW] action "' + r.action + '" is fully shadowed by a tool of the same name and has no other token — it is no longer reachable from the command line');
+    });
+    return RW._cmdGraphTableInfo;
+  }
+
+  RW._toolSettingsMap = ANNOTATE_SETTINGS_MAP;
+  if (RW_IS_GRAPH) cmdApplyGraphTable();
+
+  // Console escape hatch: re-derive the graph tool table without a page
+  // reload (see the `let GRAPH_TOOLS` comment above for why re-pasting the
+  // loader can't do this on its own). Read-only apart from the table itself
+  // — never re-arms a tool, never dispatches anything. n/a on the annotate
+  // host, matching this file's other host-scoped console probes.
+  RW._cmdRebuildGraphTable = function(){
+    if (!RW_IS_GRAPH){ console.log('[RW] graph tool table: n/a on this host'); return null; }
+    const info = cmdApplyGraphTable();
+    RW._commitStatus && RW._commitStatus('graph tools: ' + info.count + ' from the ' + info.source);
+    return info;
+  };
 
   // ----- graph host: scoping the settings sweep to the real inspector (round 15) -----
   // Confirmed live: "every graph- id that's currently visible" (the rule
@@ -2608,6 +2810,16 @@
   mountCommandBar();
   RW._cmdDetectTags();
 
+  // Round 27: report the fallback case specifically — RW._cmdDetectTags just
+  // set the status line above, and a successful toolbar derivation shouldn't
+  // stomp that; only the noteworthy "couldn't read the live toolbar" case
+  // gets a status line of its own here, mirroring RW._cmdDetectTags' own
+  // "could not auto-detect" convention.
+  if (RW_IS_GRAPH && RW._cmdGraphTableInfo.source !== 'toolbar'){
+    RW._commitStatus && RW._commitStatus('graph toolbar not readable — using the built-in '
+      + RW._cmdGraphTableInfo.count + '-tool table; keys may be wrong on a non-duct project');
+  }
+
   // Global auto-capture: typing anywhere (nothing else focused) seeds the
   // command input and focuses it — only the FIRST character needs this;
   // every character after that lands on the now-focused real <input> and is
@@ -3188,6 +3400,7 @@
   return 'vcmd up: command line (native tools only, ' + RW_HOST + ' host) — just start typing a tool name '
     + '(or # for a ' + (RW_IS_GRAPH ? 'system' : 'tag') + '), ' + RW._cmdTable.length + ' commands, '
     + (RW._cmdTagList ? RW._cmdTagList.length + ' ' + listNoun : 'no ' + listNoun + ' detected')
+    + (RW_IS_GRAPH ? ', tools from the ' + RW._cmdGraphTableInfo.source : '')
     + '. select is the resting state (Escape returns here); '
     + (RW_IS_GRAPH
         ? 'this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.'

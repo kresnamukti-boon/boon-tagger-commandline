@@ -49,7 +49,7 @@ done
 
 cat >> "$OUT" <<'FOOTER'
 
-  console.log('[RW] command line ready (' + __RW._host.id + ' host): ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' ' + (__RW._host.id === 'graph' ? 'systems' : 'tags') : 'none detected') + '. Type a tool name (or # for a ' + (__RW._host.id === 'graph' ? 'system' : 'tag') + ') anywhere on the page. select is the resting state (Escape returns here);' + (__RW._host.id === 'graph' ? ' this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.' : ' hold the middle mouse button to pan.'));
+  console.log('[RW] command line ready (' + __RW._host.id + ' host): ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' ' + (__RW._host.id === 'graph' ? 'systems' : 'tags') : 'none detected') + (__RW._host.id === 'graph' ? ' (tools from the ' + __RW._cmdGraphTableInfo.source + ')' : '') + '. Type a tool name (or # for a ' + (__RW._host.id === 'graph' ? 'system' : 'tag') + ') anywhere on the page. select is the resting state (Escape returns here);' + (__RW._host.id === 'graph' ? ' this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.' : ' hold the middle mouse button to pan.'));
 })()
 FOOTER
 

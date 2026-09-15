@@ -70,7 +70,9 @@ crop/mirror) dispatch only their own letter.
 aliases, run}`. `armed`/`disarm` support still exists in `RW.runCommand` (a table entry can
 supply `armed()`/`disarm()` instead of a plain `run`), kept for a future native `armed()`
 predicate once real `annotationState.currentTool` strings are confirmed live — no current table
-entry uses it.
+entry uses it. (As of round 27, this describes the **annotate** host's table only — the graph
+host's tool half is derived live from the app's own toolbar at load, with a hardcoded table kept
+only as a fallback; see "Round 27" further below.)
 
 ### Command bar + autocomplete
 
@@ -3080,6 +3082,151 @@ value (standing in for old data written before this round) never getting auto-fi
 functions fails exactly the 3 new assertions (810 passed, 3 failed) — restoring passes clean at
 813. Loader rebuilt (196440 bytes).
 
+## Round 27: the graph tool table is derived from the live toolbar; a second trade pack; the annotations toggle
+
+Kresna asked to check the graph session for new tools with their own shortcuts, pointing at a
+specific test job. Live investigation via opencli, plus a read of the host app's own unminified
+bundle (`graph-session-entry.js`, fetched from the public static root — the same technique round
+15 used), found more than the two new tools that prompted the ask.
+
+**Confirmed live:**
+- **Two new tools**: `data-tool="connect"` (key **J**, "Connect two open ends") and
+  `data-tool="adjust"` (key **A**, "Adjust duct length"). Neither has a config dialog; both are
+  plain click-driven canvas tools (`connect` arms a two-click open-connector join, `adjust` reveals
+  drag handles on a connected run's endpoints).
+- **Every toolbar button now renders its own key in a dedicated badge** —
+  `<button data-tool="connect"><span class="graph-tool-key">J</span><span>Connect two open
+  ends</span></button>` — which the app derives from its own `TOOL_KEYS` map (bundle line ~22988,
+  the single source of truth the real keydown handler also reads from), registered on `window` in
+  the **bubble** phase (so this project's own round-21 window-**capture** Tab listener still wins
+  any race against it), and gated by `checkpointDialogOpen()` — which reads exactly this project's
+  own `GRAPH_MODAL_DIALOG_IDS` four dialogs, an independent confirmation from the app's own source
+  that round 25's "no tool-switch while a config dialog is open" carve-out is correct.
+- **A second trade pack exists on this same host and was never known about before this round**:
+  `pipe-session-ui.js` exports `PIPE_TOOL_KEYS = { select:'s', route:'r', extend:'x',
+  terminate:'p', transition:'n', cut:'u', valve:'v', equipment:'q', vertical:'z', service:'a',
+  evidence:'d', fixture:'f', terminal:'t', fitting:'g', occlusion:'o' }`, active when
+  `bootstrap.workspace.tradePack === "piping"` — a module-local const, exposed on no global this
+  loader can read. It reuses several of the duct pack's own tool ids with **different key
+  letters** (`extend` X not E, `vertical` Z not V, `cut` U not C, `transition` N not T) and filters
+  which tools even appear per project. This means the hardcoded `GRAPH_TABLE` this project shipped
+  through round 26 would have silently dispatched the **wrong key** on such a project — the
+  motivating finding for this round's redesign, not just the two new tools.
+- `graph-toggle-annotations` (canvas toolbar, next to undo/redo — "Hide Annotations"/"Show
+  Annotations"), a pure client-side view toggle (`let annotationsHidden` in the bundle), submits
+  nothing, flips its own label.
+
+**Decisions, confirmed via `AskUserQuestion`** (asked twice this round — once for the table
+mechanism, once for which new buttons to add, the second re-asked with a screenshot after Kresna
+asked "where is it located?" rather than guessing): derive the graph tool table live from the
+toolbar (`[data-tool]` + its `.graph-tool-key` badge), with the hardcoded table kept as a fallback
+(widened to 13 entries — `connect`/`adjust` added) and curated descriptive aliases (`duct`,
+`diffuser`, `equipment`, `riser`, `split`, plus new `join`/`stretch`) merged in by tool id; add
+exactly one new action this round, `graph-toggle-annotations` → `annotations`/`anno` — not
+`graph-components-button` or `graph-nav-help`, both declined.
+
+**Implementation, all in `rw_cmdline.js`.** `GRAPH_TABLE` (the fallback) and every live-derived
+table now share one entry factory, `cmdGraphToolEntry(name, key)`, so a derived entry and a
+fallback entry are structurally identical — `select` is special-cased **by name** (not key
+position, since the piping pack also rests on a tool called `select`), everything else is
+`nativeToolPlain`. `cmdDeriveGraphTools()` reads `document.querySelectorAll('[data-tool]')`,
+resolves each button's key via `cmdToolKeyBadge` — a manual `.children` walk for a
+`graph-tool-key`-classed child, the same discipline `cmdControlLiveLabel` already established,
+since this project's Node harness has no `querySelector('.class')`/`.closest()` — and returns
+`{source, entries, skipped, aliasDropped}`, never throwing and never returning a half-built table.
+`cmdApplyGraphTable()` (placed where `GRAPH_SETTINGS_PREFIX` is declared, so `GRAPH_ACTIONS` is
+already in scope) wires the result into `RW._cmdTable` **and** rebuilds `RW._toolSettingsMap` from
+the same derivation in one place — `GRAPH_SETTINGS_MAP` has been derived from the tool table since
+round 15, and that stays true here, which is what gives every derived tool (including a future one
+this project has never seen) its `<tool>.` drill-in and isolation exemption for free, with zero
+per-tool code. `RW._cmdRebuildGraphTable()` is a new console escape hatch to re-derive without a
+page reload — needed because this module's own `if (RW.vcmd) return` re-entry guard makes
+re-pasting the loader onto an already-injected page a no-op (documented repeatedly since round 15).
+
+**Collision resolution, deterministic, never a silent ambiguity:**
+
+| Collision | Resolution | Surfaced as |
+|---|---|---|
+| Two toolbar buttons, same `data-tool` | first in DOM order wins | `skipped` |
+| Two tools claiming the same badge letter | first in DOM order keeps it, later dropped (a keyless tool would be a dead command) | `skipped` |
+| Badge missing/unreadable | inherit that id's built-in key from `GRAPH_TABLE` if known, else drop the tool | `skipped` |
+| Curated alias equals another derived tool's own name/key | alias dropped (the key itself, index 0, is never dropped) | `aliasDropped` |
+| Tool name equals an action name (the piping pack's own `evidence` tool vs. this host's `evidence` action) | **the tool wins by table order** — `RW._cmdTable` is tools-then-actions, and both `findEntry` and `RW._cmdMatch` scan in order with exact-name-before-exact-alias ranking; the action stays reachable by its own remaining token (`attach`) | `RW._cmdGraphTableInfo.shadowedActions`, plus a `console.warn` if an action is ever left with zero reachable tokens |
+| No toolbar readable at all | the built-in 13-entry fallback table | `console.log` naming the source + `RW._commitStatus` (only for this case, so it doesn't stomp the ordinary tag/system-detection success line) + `RW._cmdGraphTableInfo` |
+
+The now-stale `GRAPH_ACTIONS` header comment ("every one of s/r/f/e/b/t/g/u/v/c/d is already a
+GRAPH_TABLE tool key") was rewritten — which letters are tool keys isn't knowable until the
+toolbar is read at runtime, so the rule is now simply "no action takes a single letter at all, and
+no action token may equal-or-prefix a tool name in either known pack," with the table-order
+resolution above as the documented answer for the one unavoidable case.
+
+**`annotations` (alias `anno`)** — a plain `GRAPH_ACTIONS` entry, `btn:'graph-toggle-annotations'`.
+**Deliberately not added to `GRAPH_ISOLATION_ALLOWED`** — it's a view control in the same class as
+`zoomfit`/`zoomin`/`ruler`, every one of which is already refused while a tool is armed; admitting
+it would be the first widening of that allowlist beyond a tool's own lifecycle/dialog/dimension
+edits, for a one-keystroke (Escape) inconvenience.
+
+**Verification.** `node --check` clean; `node verify_cmdline.js`: **1154 passed, 0 failed** (817
+before this round + a net 337 more — test 205's rewrite alone triples its own assertion count by
+looping three fixtures: the fallback table, a synthesized real duct toolbar, and a synthesized
+piping toolbar). New fixture `makeGraphToolbar(win, byId, pairs)` builds a real
+`<aside aria-label="Duct graph tools">` with `<button data-tool>` + a real
+`<span class="graph-tool-key">` badge child, attached to `doc.body` before `loadModule(...)` —
+derivation runs at module load, so this is the one graph fixture in the whole file built *before*
+loading rather than after. New/extended coverage: tests 180/181 now also cover `connect`/`adjust`
+in the fallback and assert `source === 'fallback'` for that fixture; test 205 rewritten to assert
+pack-agnostic invariants (no duplicate names/aliases, every tool resolves to itself, every action
+keeps a reachable token, no action token is a single letter) across all three fixtures, plus the
+original strict "no action prefixes a tool name" kept for the fallback specifically, plus a
+dedicated assertion that the piping `evidence` collision is reported correctly; test 225's count
+bumped 10→12; test 241 gained a same-fixture "connect doesn't fit in the first 8" assertion and a
+new 241b proving the first-8 cap follows a *derived* toolbar's own DOM order, not a coincidence of
+the fallback's order; test 266 gained a derived (piping) `valve` tool proving the
+no-`.btn`-means-never-gated invariant holds for tools this repo doesn't hardcode. Ten new test
+blocks (278-287): deriving the duct toolbar correctly; **the badge is authoritative** — a
+piping-shaped toolbar dispatches piping keys (`extend`→x, `vertical`→z, `cut`→u, `transition`→n) —
+the test that would have caught the exact silent-wrong-key bug this round exists to prevent; no
+toolbar ⇒ fallback + status line naming it; `select` stays a mode switch on a derived table;
+missing badge inherits the built-in key or drops the tool; duplicate badge letter resolution;
+`<tool>.` drill-in and isolation working for a piping-only tool (`valve`) with zero code written
+for it; curated-alias merge-and-drop; `RW._cmdRebuildGraphTable()` re-deriving live and returning
+`null` on the annotate host; and the `annotations` action (clicks when present, refused with a
+helpful status when absent, `anno` resolves it, refused while a different tool is isolated — pins
+the deliberate no-allowlist-entry decision). **Spot-checked per this repo's own convention**:
+forcing `cmdToolKeyBadge` to always return `null` fails exactly the 16 badge-dependent assertions
+(1129 passed); separately, disabling the alias-collision filter fails the one assertion built to
+catch it; both restored clean. Loader rebuilt (208057 bytes).
+
+**Live-verified**, via the opencli browser bridge, after a genuine fresh page load (not a same-URL
+re-navigation — see round 15's own documented pitfall) and a chunked base64 re-upload of the
+rebuilt loader (round 17's own workaround for `opencli eval`'s argument-length limit on a file this
+size): `window.__RW._cmdGraphTableInfo` reported `source:'toolbar'`, all 13 real tool/key pairs
+exactly matching a direct DOM read taken beforehand, zero `skipped`/`aliasDropped`/
+`shadowedActions`; ranking checks (`_cmdMatch('j')`, `'connect'`, `'stretch'`, `'anno'`) all
+resolved correctly; `connect.`/`adjust.` both listed real `graph-` fields (10 each — the shared
+inspector's currently-visible generic fields, since neither tool has dedicated settings of its own
+or a modal, exactly the documented "one flat `graph-` prefix, scoped by visibility" design working
+as intended, not a defect); running `annotations` flipped the real button's label
+Hide→Show and running it again restored Hide, with `pageEntities`/`activeTool`/revision unaffected
+throughout.
+
+**A live finding, reported plainly rather than glossed over: tool-switch dispatch did not visibly
+take effect this session, and this is NOT attributed to this round's own change.** Running
+`RW.runCommand('connect')` (and separately `RW._cmdDispatchAppKey('r')` for the already-existing
+`route`) returned success and reported a dispatch, but `__graphDebug.activeTool` stayed `'select'`
+afterward. Isolated by testing something outside this round's code entirely: a genuine CDP-level
+trusted click directly on the real `[data-tool="flex"]` button (via `opencli browser click`, not
+this project's own dispatch) **also** left `activeTool` unchanged — proving the gap is not in
+`nativeToolPlain`/`RW._cmdDispatchAppKey` (unchanged by this round) or specific to the newly-added
+tools. This is the same phenomenon "Native-tools-only branch, round 2" already recorded: tool
+dispatch worked before a page reload in that session and stopped working after, root cause never
+isolated. This round reproduces it after a genuine reload+reinject, reinforcing that it's an
+environmental/session condition of this exact test job or the automation bridge, not a code defect
+— a plain `.click()` JS call on `graph-toggle-annotations` (a non-tool-switch action) worked
+correctly in the very same session, which narrows the gap specifically to whatever
+`attemptActivateTool`'s own tool-switch path needs that this session isn't providing, not to
+synthetic-event dispatch in general. Not resolved this round; flagged in Open Questions below.
+
 ## Constraints (do not violate)
 
 - **Console injection only.** `console_loader.js` (paste-per-page) is the only delivery
@@ -3123,7 +3270,13 @@ here too, though this repo's own tools have never written annotation state direc
   per-tag-shortcut dispatch by real id (not list position) is ever attempted.
 - Whether native tool dispatch reliably works post-reload on every job — a real session found it
   worked before a page reload and stopped working after, root cause not isolated (see "Native-
-  tools-only branch, round 2" above).
+  tools-only branch, round 2" above). **Reinforced, round 27**: reproduced again after a genuine
+  fresh reload + reinject on the graph host, with a real trusted click on the toolbar button
+  (bypassing this project's own dispatch code entirely) also failing to flip `activeTool` in the
+  same session — narrows the gap to whatever the app's own `attemptActivateTool` tool-switch path
+  needs that this test session/automation bridge isn't providing, since a plain `.click()` on a
+  non-tool-switch action (`graph-toggle-annotations`) worked correctly in the very same session.
+  Still not isolated; still worth a live check by a human annotator, not just this automation.
 - Whether this app's viewport actually scrolls (so middle-drag pan's `scrollLeft`/`scrollTop`
   writes do anything) or pans via a CSS transform instead — run `RW._panDiagnose()` on a real page
   to find out before assuming either way (see round 3 above).
@@ -3243,3 +3396,22 @@ here too, though this repo's own tools have never written annotation state direc
   enough in practice for a feature where the timing is now user-facing (every other use of this
   same poll mechanism in this project has been a background correction, not something the user is
   watching for).
+- **(Round 27)** Whether a real **piping** project's toolbar actually renders the same
+  `<span class="graph-tool-key">` badge markup the duct pack's does — `PIPE_TOOL_KEYS` was read
+  from the module's own exports, never seen rendered on a live piping page (none was available
+  this round). If it doesn't render that badge (or renders it differently), `cmdDeriveGraphTools`
+  would fall back to the built-in table for every tool it can't find a key for, which is wrong-keyed
+  for the piping pack by design — see the fallback table's own comment. The fix, once a real piping
+  page is available, is to confirm the badge shape live and adjust `cmdToolKeyBadge` if it differs,
+  not to guess again.
+- **(Round 27)** `graph-toggle-annotations` being genuinely submit-free (no server command, no
+  journal entry) is read from the bundle's own `annotationsHidden` local-state handler, not yet
+  independently confirmed by watching the command/revision counter across a live click — the live
+  check this round only confirmed the label flips and `pageEntities`/`activeTool`/revision stayed
+  the same across the round-trip, which is suggestive but not the same as watching the journal
+  directly.
+- **(Round 27)** Whether the graph host's own toolbar can ever re-render or change mid-session
+  (a tool added/removed without a page reload) is unknown — `RW._cmdRebuildGraphTable()` exists to
+  handle that case if it's real, but no evidence either way has been gathered; it may be that the
+  toolbar is fixed for the life of a page load and this console helper is never actually needed in
+  practice, in which case it's a harmless-but-unused safety valve, not a wasted feature.
