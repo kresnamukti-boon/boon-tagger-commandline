@@ -602,14 +602,18 @@ hatch off), and `__RW._cmdModalWalk` is a plain console-inspectable object while
 **The walk remembers what was typed, and offers to reuse it next time.** The instant the branch
 fitting modal is detected open, if anything was applied during an earlier walk, the command bar
 shows a choice instead of jumping straight into field 1 — "Edit each field" (starts exactly like a
-walk with nothing remembered, every field blank) or "use previous for all" (every field opens
+walk with nothing remembered, every field blank), "use previous for all" (every field opens
 **pre-filled** with what was applied last time, one at a time, still requiring its own Enter to
-actually apply — nothing is bulk-applied without a chance to look at or edit it first). A field
-that's never had a value applied simply opens blank even in "use previous" mode, and a remembered
-select value that no longer matches any real option falls back to the field's own actual current
-value rather than guessing. Every field type is remembered (select, checkbox, number, text) — a
-skipped field (bare Enter, nothing typed) is never recorded, so its own previously remembered value
-survives untouched. This is a **separate** mechanism from the four modals' existing "modal memory"
+actually apply — nothing is bulk-applied without a chance to look at or edit it first), or **"use
+previous for all, without confirming"** — the same remembered values, but applied to every field
+immediately with no per-field prompt at all, landing straight on the same Choose/Cancel prompt an
+ordinary walk ends on (it still doesn't click Choose itself — only the per-field confirms are
+skipped, not the modal's own final action). A field that's never had a value applied simply opens
+blank even in "use previous" mode (or is left untouched in the without-confirming mode), and a
+remembered select value that no longer matches any real option falls back to the field's own actual
+current value rather than guessing. Every field type is remembered (select, checkbox, number, text)
+— a skipped field (bare Enter, nothing typed, or nothing remembered in the without-confirming mode)
+is never recorded, so its own previously remembered value survives untouched. This is a **separate** mechanism from the four modals' existing "modal memory"
 (above) — deliberately not a reuse of it, since branch fitting is excluded from that one entirely
 (its own field-memory lives in `boon-duct-workbench`) and that one only ever silently auto-fills
 select/checkbox fields with no choice offered. `__RW._cmdModalWalkValueMemory` is a plain

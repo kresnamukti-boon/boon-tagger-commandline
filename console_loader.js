@@ -1955,6 +1955,40 @@
     );
   }
 
+  // Third offer choice: same remembered values as "use previous for all", but applies every
+  // field immediately instead of opening a per-field prompt and waiting for Enter — Kresna's
+  // own explicit request ("use save without confirming like 2nd option"). Still ends on the
+  // same Choose/Cancel prompt cmdWalkFinish always produces rather than auto-submitting
+  // anything itself — removing the per-field confirm step doesn't touch the modal's own final
+  // action, which keeps the same standing caution every other graph-host action command has
+  // (see CLAUDE.md's Constraints). Applies through RW._cmdApplySetting directly, the same
+  // writer every other confirm path in this file already funnels through, rather than
+  // opening-then-immediately-confirming a draft (there's no UI step to actually show here). A
+  // field with nothing remembered (partial memory) is left untouched and counted as skipped —
+  // the same outcome as leaving a prompt blank in the confirming walk.
+  function cmdWalkAutoApplyAll(tool, modal){
+    modalWalk = { tool: tool, seen: [], applied: 0, skipped: 0, reuse: true, noConfirm: true };
+    RW._cmdModalWalk = modalWalk;
+    let item = cmdWalkNextItem(tool, modalWalk.seen);
+    while (item){
+      const remembered = cmdWalkMemoryGet(tool, item.param);
+      modalWalk.seen.push(item.param);
+      if (remembered !== undefined && RW._cmdApplySetting(tool, item.param, remembered)){
+        modalWalk.applied++;
+        // Re-read the control's own live value rather than trusting `remembered` verbatim —
+        // same reasoning as cmdWalkAdvance's own recording branch: a remembered value can match
+        // a select option case-insensitively (cmdMatchOption) without BEING that option's real
+        // value, so recording it as typed could silently drift from what's actually on screen.
+        const appliedItem = RW._cmdToolSettingsList(tool).find(function(i){ return i.param === item.param; });
+        if (appliedItem) cmdWalkMemorySet(tool, item.param, appliedItem.current);
+      } else {
+        modalWalk.skipped++;
+      }
+      item = cmdWalkNextItem(tool, modalWalk.seen);
+    }
+    cmdWalkFinish(tool, modal);
+  }
+
   // Entry point for both the auto-start tick (below) and a manual console call
   // (RW._cmdStartModalWalk) — opens the first field's prompt if the modal actually has
   // any walkable fields, else leaves the bar untouched (mirrors cmdStartDimension's own
@@ -1995,14 +2029,15 @@
     menuMode = 'command';
     menuItems = [
       { walkChoice: 'edit', tool: tool, label: 'Edit each field' },
-      { walkChoice: 'reuse', tool: tool, label: 'use previous for all' }
+      { walkChoice: 'reuse', tool: tool, label: 'use previous for all' },
+      { walkChoice: 'reuseNoConfirm', tool: tool, label: 'use previous for all, without confirming' }
     ];
     menuHighlight = 0;
     renderMenuRows();
     inputEl.value = '';
     inputEl.focus();
     RW._commitStatus && RW._commitStatus(
-      reg.title + ': you have values saved from last time — Edit each field from scratch, or reuse them all'
+      reg.title + ': you have values saved from last time — Edit each field from scratch, reuse them one at a time, or reuse them all without confirming'
     );
   }
 
@@ -2832,6 +2867,7 @@
         inputEl.value = ''; hideMenu(); menuItems = []; menuMode = 'command'; inputEl.blur();
         return;
       }
+      if (item.walkChoice === 'reuseNoConfirm'){ cmdWalkAutoApplyAll(tool, modal); return; }
       modalWalk = { tool: tool, seen: [], applied: 0, skipped: 0, reuse: item.walkChoice === 'reuse' };
       RW._cmdModalWalk = modalWalk;
       cmdWalkOpenPrompt(tool, first, modal);

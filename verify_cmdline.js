@@ -6847,8 +6847,9 @@ function loadCoreModule(win){
 
     ok(inpB.value === '', 'the walk does NOT jump straight into field 1 this time');
     const rows = byIdB['rw-cmd-menu']._children;
-    ok(rows.length === 2 && rows[0].innerText === 'Edit each field' && rows[1].innerText === 'use previous for all',
-       'instead the Edit/use-previous choice is offered');
+    ok(rows.length === 3 && rows[0].innerText === 'Edit each field' && rows[1].innerText === 'use previous for all'
+       && rows[2].innerText === 'use previous for all, without confirming',
+       'instead the Edit/use-previous/use-previous-without-confirming choice is offered');
     ok(winB.__RW._cmdModalWalk === null, 'and no walk has actually started yet — nothing was chosen');
   }
 
@@ -6863,7 +6864,7 @@ function loadCoreModule(win){
 
     RW._cmdModalWalkTick();
     const rows = byId['rw-cmd-menu']._children;
-    ok(rows.length === 2, 'sanity: the offer is showing');
+    ok(rows.length === 3, 'sanity: the offer is showing');
     rows[0]._fire('click', {}); // "Edit each field"
 
     ok(inp.value === 'branch.type-select = ', 'field 1 opens completely blank, no prefill');
@@ -6991,6 +6992,53 @@ function loadCoreModule(win){
 
     RW._cmdModalWalkTick(); // modal is still open, unchanged since the last tick
     ok(inp.value === 'select', 'the offer is not re-shown — the edge has not changed, so the bar is left exactly as the user typed it');
+  }
+
+  /* ---------- 313. round 29 follow-up: "use previous for all, without confirming" applies every remembered field immediately, no per-field prompt ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye', 'starting-width-input': '20', 'damper-check': 'on' } }; // alignment-select deliberately left unremembered
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 3 && rows[2].innerText === 'use previous for all, without confirming', 'sanity: the third choice is offered');
+    rows[2]._fire('click', {}); // "use previous for all, without confirming"
+
+    ok(fx.typeSel.value === 'wye', 'the select field was applied immediately, no draft/Enter needed');
+    ok(fx.startWidth.value === '20', 'the number field was applied immediately too');
+    ok(fx.damper.checked === true, 'and the checkbox field was applied immediately as well');
+    ok(fx.alignmentSel.value === 'top', "the field with nothing remembered was left at its own current value, untouched");
+    ok(RW._cmdModalWalk === null, 'the walk itself has already ended (no per-field prompt was ever opened)');
+
+    const endRows = byId['rw-cmd-menu']._children;
+    ok(endRows.length === 2 && endRows[0].innerText.indexOf('choose') === 0 && endRows[1].innerText.indexOf('cancelbranch') === 0,
+       'it lands straight on the same Choose/Cancel prompt an ordinary walk ends on');
+    ok(fx.chooseBtn._clicked === 0, 'Choose has still NOT been clicked automatically — only the per-field confirms were skipped, not the final action');
+  }
+
+  /* ---------- 314. round 29 follow-up: applying without confirming still records into walk-value memory, re-reading the control's own live value rather than trusting the remembered one blindly ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    // 'WYE' (uppercase) still matches the 'wye' option case-insensitively (cmdMatchOption) but is
+    // not itself the option's real value — if the applied branch recorded `remembered` verbatim
+    // instead of re-reading the control's own live `.current`, this would stay 'WYE' untouched.
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'WYE' } };
+    const fx = makeBranchWalkFixture(win, byId);
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    rows[2]._fire('click', {}); // "use previous for all, without confirming"
+
+    ok(fx.typeSel.value === 'wye', 'sanity: the remembered value was actually applied (case-insensitive match)');
+    ok(RW._cmdModalWalkValueMemory.branch['type-select'] === 'wye',
+       "the recorded value is normalized to the control's own real value, not left as the verbatim remembered text");
+    ok(!('starting-width-input' in RW._cmdModalWalkValueMemory.branch), 'a field with nothing remembered is never recorded just for being skipped over');
   }
 
   finish();

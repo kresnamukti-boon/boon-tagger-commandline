@@ -283,23 +283,31 @@ deliberately. `RW._cmdModalMemory` excludes `branch` entirely (its field-memory 
 remembers **every** field type the walk touches (`RW._cmdModalWalkValueMemory`, its own
 `localStorage` key) and always asks first rather than auto-applying anything. `cmdWalkStart`
 checks `cmdWalkHasMemory(tool)` before opening field 1: if anything's remembered, it shows a
-two-row choice ("Edit each field" / "use previous for all") via `cmdWalkOfferChoice` — and,
-load-bearing, **`modalWalk` itself is not created until a choice is actually made** (in
-`runAndClear`'s `isWalkChoiceItem` branch, the only other place it's constructed besides
-`cmdWalkStart`'s own no-memory path). This is what lets the user simply ignore the offer (type an
-unrelated command, switch tools) with nothing left to clean up — no new Escape-handling branch was
-needed for it. Recording happens once, in `cmdWalkAdvance`, only on an actual apply (never a skip)
-— it re-reads the control's own live `.current` right after applying rather than threading the
-value through every confirm path (Enter, a Tab-preview, a mouse click on an option row all funnel
-through this one spot). Prefilling reuses the existing draft/option-list machinery rather than a
-parallel one: a plain field just gets `remembered` appended into `inputEl.value` (already
-"typed", never mistaken for the empty-Enter skip); a select reuses its own unfiltered option list
-and highlights whichever index matches the remembered value (falling back to today's
-current-value highlight, unchanged, when nothing matches — e.g. the app's own option list
-changed) — the ordinary Enter-confirm path needed **no changes at all**, since it already just
-applies whichever option row is highlighted. `RW._cmdModalWalkMemoryEnabled = false` disables both
-the offer and new recording (the walk itself always still works, starting fresh);
-`RW._cmdModalWalkMemoryClear(tool)` forgets one tool or everything.
+three-row choice ("Edit each field" / "use previous for all" / "use previous for all, without
+confirming") via `cmdWalkOfferChoice` — and, load-bearing, **`modalWalk` itself is not created
+until a choice is actually made** (in `runAndClear`'s `isWalkChoiceItem` branch, the only other
+place it's constructed besides `cmdWalkStart`'s own no-memory path). This is what lets the user
+simply ignore the offer (type an unrelated command, switch tools) with nothing left to clean up —
+no new Escape-handling branch was needed for it. Recording happens only on an actual apply (never
+a skip) — it re-reads the control's own live `.current` right after applying rather than trusting
+the remembered value verbatim (a remembered value can match a select option case-insensitively via
+`cmdMatchOption` without being that option's real value). Prefilling reuses the existing
+draft/option-list machinery rather than a parallel one: a plain field just gets `remembered`
+appended into `inputEl.value` (already "typed", never mistaken for the empty-Enter skip); a select
+reuses its own unfiltered option list and highlights whichever index matches the remembered value
+(falling back to today's current-value highlight, unchanged, when nothing matches — e.g. the app's
+own option list changed) — the ordinary Enter-confirm path needed **no changes at all**, since it
+already just applies whichever option row is highlighted. The third choice
+(`cmdWalkAutoApplyAll`, Kresna's own follow-up request — "use save without confirming like 2nd
+option") skips the per-field prompt entirely: it walks every currently-visible field, applies
+`RW._cmdApplySetting` directly wherever something's remembered (recording through the same
+re-read-`.current` path as `cmdWalkAdvance`) and leaves an unremembered field untouched, then lands
+on `cmdWalkFinish`'s own Choose/Cancel prompt exactly like the other two paths — removing the
+per-field confirm step never removes the modal's own final-action confirm, which stays a
+deliberate, separate Enter no matter which of the three choices was picked.
+`RW._cmdModalWalkMemoryEnabled = false` disables both the offer and new recording (the walk itself
+always still works, starting fresh); `RW._cmdModalWalkMemoryClear(tool)` forgets one tool or
+everything.
 
 ### Isolation (graph host only)
 
