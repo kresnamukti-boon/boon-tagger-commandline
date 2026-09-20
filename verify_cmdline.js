@@ -5009,6 +5009,36 @@ function loadCoreModule(win){
     return { modal: modal, sizeSel: sizeSel, newWidth: newWidth };
   }
 
+  // Round 28 fixture: a branch fitting modal with all four field TYPES the walk has to
+  // handle (select, number, checkbox, select), appended in this deliberate document
+  // order so the walk's own "first unvisited field in on-screen order" rule has
+  // something real to walk through. Also carries real, usable submit/cancel buttons
+  // (offsetParent set) since cmdActionUsable would otherwise drop them from the
+  // end-of-walk prompt — see round 24's own comment on why a button needs to be
+  // genuinely present/visible/enabled to be offered.
+  function makeBranchWalkFixture(win, byId){
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap'], ['wye', 'Wye']]);
+    typeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+    const startWidth = makeElement('input', byId);
+    startWidth.id = 'graph-branch-fitting-starting-width-input'; startWidth.type = 'number'; startWidth.value = '12'; startWidth.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Starting width (in)', startWidth));
+    const damper = makeElement('input', byId);
+    damper.id = 'graph-branch-fitting-damper-check'; damper.type = 'checkbox'; damper.checked = false; damper.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Damper', damper));
+    const alignmentSel = makeSelect(byId, 'graph-branch-fitting-alignment-select', [['top', 'Top'], ['center', 'Center'], ['bottom', 'Bottom']]);
+    alignmentSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Alignment', alignmentSel));
+    const chooseBtn = makeElement('button', byId);
+    chooseBtn.id = 'graph-branch-fitting-submit'; chooseBtn.offsetParent = {};
+    modal.appendChild(chooseBtn);
+    const cancelBtn = makeElement('button', byId);
+    cancelBtn.id = 'graph-branch-fitting-cancel'; cancelBtn.offsetParent = {};
+    modal.appendChild(cancelBtn);
+    return { modal: modal, typeSel: typeSel, startWidth: startWidth, damper: damper, alignmentSel: alignmentSel, chooseBtn: chooseBtn, cancelBtn: cancelBtn };
+  }
+
   /* ---------- 218. round profile flips route's own width control's live label to "Diameter (in)" — "diameter" now matches it, "width" still does too ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
@@ -6461,6 +6491,506 @@ function loadCoreModule(win){
     ok(win.__RW.runCommand('annotations') === false, 'refused while route is isolated, even with its button present');
     ok(win.__RW._lastStatus.indexOf('is active') !== -1, 'the refusal is the isolation message, not "not on the page"');
     ok(btn._clicked === 0, 'and the button was never actually clicked');
+  }
+
+  /* ---------- 288. round 28: opening the branch fitting modal auto-starts a field walk on the FIRST field ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+
+    ok(inp.value === 'branch.type-select = ', 'the tick opens a value draft on the first field in document order (Fitting type)');
+    ok(inp._focused === true, 'the command bar takes focus on its own — no keystroke needed to start');
+    ok(RW._lastStatus.indexOf('Fitting type') !== -1, 'the status names the live label');
+    ok(RW._lastStatus.indexOf('1/4') !== -1, "and reports progress against the modal's own current field count (4)");
+    ok(RW._cmdModalWalk && RW._cmdModalWalk.tool === 'branch', 'RW._cmdModalWalk is console-inspectable while the walk is running');
+  }
+
+  /* ---------- 289. round 28: the auto-start is edge-triggered — a second tick with the same modal still open never resets the walk ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    inp.value = 'something the user is mid-typing';
+    RW._cmdModalWalkTick();
+
+    ok(inp.value === 'something the user is mid-typing', 'a second tick while the SAME modal stays open never touches the bar again');
+  }
+
+  /* ---------- 290. round 28: scoped to branch fitting only — a transition modal opening does not start a walk ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    makeTransitionFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+
+    ok(inp.value === '', 'no walk starts for a modal outside MODAL_WALK_TOOLS');
+    ok(inp._focused !== true, 'the bar is never focused either');
+    ok(RW._cmdModalWalk === null, 'RW._cmdModalWalk stays null');
+  }
+
+  /* ---------- 291. round 28: a typed value on each field type walks select -> number -> checkbox -> select, writing every real control ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // opens field 1: Fitting type (select)
+    inp.value = 'branch.type-select = wye';
+    inp.dispatchEvent({ type: 'input' }); // filters the option list down to "wye" so it's the one highlighted
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.typeSel.value === 'wye', 'field 1 (select) was applied to the real control');
+    ok(inp.value === 'branch.starting-width-input = ', 'confirming field 1 immediately opens field 2 (Starting width), no re-typing the tool name');
+
+    inp.value = 'branch.starting-width-input = 20';
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.startWidth.value === '20', 'field 2 (number) was applied');
+    ok(inp.value === 'branch.damper-check = ', 'and field 3 (Damper, a checkbox) opens next');
+
+    inp.value = 'branch.damper-check = on';
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.damper.checked === true, 'field 3 (checkbox) was applied via a typed on/off value, not auto-toggled');
+    ok(inp.value === 'branch.alignment-select = ', 'and field 4 (Alignment, a select) opens last');
+
+    inp.value = 'branch.alignment-select = bottom';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.alignmentSel.value === 'bottom', 'field 4 (select) was applied, completing the walk');
+  }
+
+  /* ---------- 292. round 28: Enter with nothing typed leaves the field untouched and advances — it is a skip, not a re-apply ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: Fitting type (select), opened on its own current value
+    inp._fire('keydown', { key: 'Enter' }); // nothing typed, nothing Tab-previewed
+    ok(fx.typeSel.value === 'tap', 'an untouched select is left at its ORIGINAL value, not silently re-applied to itself');
+    ok(inp.value === 'branch.starting-width-input = ', 'and the walk still advances to field 2');
+
+    inp._fire('keydown', { key: 'Enter' }); // field 2: number, also untouched
+    ok(fx.startWidth.value === '12', 'an untouched number field keeps its original value too');
+    ok(inp.value === 'branch.damper-check = ', 'and advances to field 3');
+  }
+
+  /* ---------- 293. round 28: a Tab-previewed select is KEPT on a bare Enter, not treated as a skip ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: Fitting type, starts on "tap"
+    inp._fire('keydown', { key: 'Tab' }); // live-previews the next option ("wye") for real
+    ok(fx.typeSel.value === 'wye', 'sanity: Tab actually previewed a different value on the real control');
+
+    inp._fire('keydown', { key: 'Enter' }); // nothing further typed
+    ok(fx.typeSel.value === 'wye', 'a bare Enter after a Tab-preview KEEPS the previewed value — it is not treated as an untouched skip');
+    ok(inp.value === 'branch.starting-width-input = ', 'and the walk still advances normally');
+  }
+
+  /* ---------- 294. round 28: a walk-driven checkbox is a typed on/off draft, never an immediate auto-toggle ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    inp._fire('keydown', { key: 'Enter' }); // skip field 1
+    inp._fire('keydown', { key: 'Enter' }); // skip field 2 -> lands on field 3, Damper (checkbox)
+    ok(inp.value === 'branch.damper-check = ', 'the walk opened a value draft on the checkbox, exactly like any other field');
+    ok(fx.damper.checked === false, 'and it has NOT been auto-toggled just by walking onto it');
+
+    inp.value = 'branch.damper-check = on';
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.damper.checked === true, 'typing "on" and confirming it DOES flip the real control');
+  }
+
+  /* ---------- 295. round 28: the walk ends on a Choose/Cancel prompt, never clicking Choose automatically ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    for (let i = 0; i < 4; i++) inp._fire('keydown', { key: 'Enter' }); // skip through every field
+
+    ok(fx.chooseBtn._clicked === 0, 'Choose has NOT been clicked automatically once every field is walked');
+    ok(inp.value === '', 'the bar itself is empty, not left mid-command');
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 2 && rows[0].innerText.indexOf('choose') === 0 && rows[1].innerText.indexOf('cancelbranch') === 0,
+       'exactly the two modal actions are offered, choose first');
+    ok(rows[0].style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1, 'choose is the one highlighted');
+    ok(RW._cmdModalWalk === null, 'the walk itself has ended (no longer in progress)');
+
+    inp._fire('keydown', { key: 'Enter' }); // confirm the highlighted row
+    ok(fx.chooseBtn._clicked === 1, 'one further, deliberate Enter now actually clicks Choose');
+  }
+
+  /* ---------- 296. round 28: an unusable Choose button is left off the end-of-walk prompt, same as the ordinary dropdown ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    fx.chooseBtn.disabled = true;
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    for (let i = 0; i < 4; i++) inp._fire('keydown', { key: 'Enter' });
+
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 1 && rows[0].innerText.indexOf('cancelbranch') === 0, 'only cancelbranch is offered when choose is disabled');
+    ok(rows[0].style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1, 'and it is the one highlighted, since it is now the only option');
+  }
+
+  /* ---------- 297. round 28: the next field is re-discovered live on every hop, not snapshotted at walk-start ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    fx.alignmentSel.offsetParent = null; // hidden at walk-start — e.g. conditional on Fitting type, like branch's real flush-boot fields
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    inp._fire('keydown', { key: 'Enter' }); // skip field 1
+    inp._fire('keydown', { key: 'Enter' }); // skip field 2 -> lands on field 3 (damper); alignment is still hidden, so it's skipped over entirely
+    ok(inp.value === 'branch.damper-check = ', 'alignment is not prompted for while hidden — only the 3 currently-visible fields are walked');
+
+    fx.alignmentSel.offsetParent = {}; // becomes visible, as if the app just revealed it
+    inp._fire('keydown', { key: 'Enter' }); // skip field 3 (damper)
+    ok(inp.value === 'branch.alignment-select = ', "and it IS picked up the moment it becomes visible, on the very next hop — the field list is re-read live, not frozen at walk-start");
+  }
+
+  /* ---------- 298. round 28: Escape mid-walk ends the WHOLE walk, and it cannot be resumed by a later Enter ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    inp.value = 'branch.type-select = wye';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' }); // field 1 applied for real, walk now on field 2
+    ok(fx.typeSel.value === 'wye', 'sanity: field 1 really was applied before Escape');
+
+    inp._fire('keydown', { key: 'Escape' });
+    ok(RW._cmdModalWalk === null, 'the walk itself is torn down');
+    ok(inp.value === '' && inp._focused === false, 'the bar clears and blurs, same as any other cancelled draft');
+    ok(fx.typeSel.value === 'wye', 'field 1, applied before the Escape, is left exactly as it was');
+
+    inp.value = 'x';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(inp.value !== 'branch.starting-width-input = ', 'a later, unrelated Enter never resumes the walk on field 2');
+    ok(RW._cmdModalWalk === null, 'and RW._cmdModalWalk is still null');
+  }
+
+  /* ---------- 299. round 28: the modal closing mid-walk (e.g. the app's own Cancel clicked by mouse) tears the walk down quietly ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(RW._cmdModalWalk !== null, 'sanity: the walk is actually running');
+
+    fx.modal.open = false; // simulate the dialog closing by some path other than this project's own commands
+    RW._cmdModalWalkTick();
+
+    ok(RW._cmdModalWalk === null, 'the walk is torn down the moment the modal is noticed closed');
+    ok(inp.value === '', 'the bar is cleared rather than left on a field that no longer exists');
+  }
+
+  /* ---------- 300. round 28: RW._cmdModalWalkEnabled = false disables auto-start only ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkEnabled = false;
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(inp.value === '' && RW._cmdModalWalk === null, 'no walk starts while the hatch is off');
+
+    ok(RW._cmdStartModalWalk('branch') === true, 'but a manual call still works — the hatch only gates auto-start');
+    ok(inp.value === 'branch.type-select = ', 'and it opens the first field exactly like the auto-start path would');
+  }
+
+  /* ---------- 301. round 28: clicking an option row with the mouse continues the walk exactly like pressing Enter does ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: Fitting type — options are Tap (current), Wye
+    const rows = byId['rw-cmd-menu']._children;
+    const wyeRow = rows.find(function(r){ return r.innerText.indexOf('Wye') !== -1; });
+    wyeRow._fire('click', {});
+
+    ok(fx.typeSel.value === 'wye', 'the click applied the option to the real control');
+    ok(inp.value === 'branch.starting-width-input = ', 'and — unlike a plain click outside a walk — it also advanced to the next field rather than clearing/blurring');
+  }
+
+  /* ---------- 302. round 28 regression guard: `dimension`'s own chain is unaffected — no walk state is created, and an empty value still stops it (not skips it) ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.min = '1'; width.max = '48'; width.value = '24'; width.offsetParent = {};
+    const height = makeElement('input', byId);
+    height.id = 'graph-height-input'; height.type = 'number'; height.min = '1'; height.max = '48'; height.value = '12'; height.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Width (in)', width));
+    inspector.appendChild(makeGraphField(byId, 'Height (in)', height));
+    const inp = byId['rw-cmd-input'];
+
+    RW.runCommand('dimension');
+    ok(RW._cmdModalWalk === null, 'dimension never creates any modal-walk state');
+
+    inp._fire('keydown', { key: 'Enter' }); // nothing typed after "route.width-input = "
+    ok(RW._lastStatus.indexOf('not a number') !== -1, 'an empty value on a NON-walk draft is still a parse failure, not a deliberate skip');
+    ok(inp.value === '' && !inp._focused, 'and the chain stops right there, exactly as it always has');
+  }
+
+  /* ---------- 303. round 29: with no memory at all, the walk still jumps straight to field 1 — zero regression on round 28's own behavior ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    ok(Object.keys(RW._cmdModalWalkValueMemory).length === 0, 'sanity: nothing is remembered on a fresh load');
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+
+    ok(inp.value === 'branch.type-select = ', 'no offer is shown — the walk opens field 1 directly, exactly like round 28');
+    ok(RW._cmdModalWalk && RW._cmdModalWalk.reuse === false, 'and it is running in non-reuse mode');
+  }
+
+  /* ---------- 304. round 29: completing a walk records every APPLIED field's value — a SKIPPED field is never recorded ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: Fitting type
+    inp.value = 'branch.type-select = wye';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' }); // APPLIED
+
+    inp._fire('keydown', { key: 'Enter' }); // field 2 (Starting width) — SKIPPED, nothing typed
+
+    ok(RW._cmdModalWalkValueMemory.branch && RW._cmdModalWalkValueMemory.branch['type-select'] === 'wye',
+       'the applied field is remembered');
+    ok(!('starting-width-input' in (RW._cmdModalWalkValueMemory.branch || {})),
+       'the skipped field is never recorded');
+  }
+
+  /* ---------- 305. round 29: a value remembered in one page load offers "use previous" the next time the SAME modal opens in a later load ---------- */
+  // Same "two separate loadModule() calls sharing one fake localStorage instance" idiom as
+  // round 26's own persistence test (274/275).
+  {
+    const sharedLS = makeFakeLocalStorage();
+
+    const { win: winA, byId: byIdA } = makeStubWindow({ host: GRAPH_HOST });
+    winA.localStorage = sharedLS;
+    loadModule(winA, null, null, { activeTool: 'branch' });
+    makeBranchWalkFixture(winA, byIdA);
+    const inpA = byIdA['rw-cmd-input'];
+    winA.__RW._cmdModalWalkTick();
+    inpA.value = 'branch.type-select = wye';
+    inpA.dispatchEvent({ type: 'input' });
+    inpA._fire('keydown', { key: 'Enter' }); // field 1 applied, remembered
+
+    const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
+    winB.localStorage = sharedLS; // "the same browser" — reload/re-paste, not a fresh browser profile
+    loadModule(winB, null, null, { activeTool: 'branch' });
+    ok(winB.__RW._cmdModalWalkValueMemory.branch && winB.__RW._cmdModalWalkValueMemory.branch['type-select'] === 'wye',
+       'the freshly-loaded instance already has the remembered value on startup');
+
+    makeBranchWalkFixture(winB, byIdB);
+    const inpB = byIdB['rw-cmd-input'];
+    winB.__RW._cmdModalWalkTick();
+
+    ok(inpB.value === '', 'the walk does NOT jump straight into field 1 this time');
+    const rows = byIdB['rw-cmd-menu']._children;
+    ok(rows.length === 2 && rows[0].innerText === 'Edit each field' && rows[1].innerText === 'use previous for all',
+       'instead the Edit/use-previous choice is offered');
+    ok(winB.__RW._cmdModalWalk === null, 'and no walk has actually started yet — nothing was chosen');
+  }
+
+  /* ---------- 306. round 29: choosing "Edit each field" opens field 1 blank, same as a fresh walk with no memory ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' } };
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 2, 'sanity: the offer is showing');
+    rows[0]._fire('click', {}); // "Edit each field"
+
+    ok(inp.value === 'branch.type-select = ', 'field 1 opens completely blank, no prefill');
+    ok(RW._cmdModalWalk && RW._cmdModalWalk.reuse === false, 'the walk is now actually running, in non-reuse mode');
+  }
+
+  /* ---------- 307. round 29: choosing "use previous for all" pre-fills each remembered field; Enter applies it and advances ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye', 'starting-width-input': '18' } };
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    rows[1]._fire('click', {}); // "use previous for all"
+
+    ok(inp.value === 'branch.type-select = Wye', "field 1 (select) opens PRE-FILLED with the remembered option's own display text");
+    ok(fx.typeSel.value === 'tap', 'and the real control has not been touched yet — this is only a draft');
+
+    inp._fire('keydown', { key: 'Enter' }); // confirm the prefilled value
+    ok(fx.typeSel.value === 'wye', 'confirming it DOES apply the remembered value to the real control');
+    ok(inp.value === 'branch.starting-width-input = 18', 'field 2 (number) is also pre-filled from memory');
+
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.startWidth.value === '18', 'and applying it writes the real control too');
+  }
+
+  /* ---------- 308. round 29: mid-reuse-walk, a field with nothing remembered for it opens blank ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' } }; // nothing remembered for starting-width-input
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    rows[1]._fire('click', {}); // use previous for all
+    inp._fire('keydown', { key: 'Enter' }); // apply field 1's prefill
+
+    ok(inp.value === 'branch.starting-width-input = ', 'field 2 has no remembered value, so it opens blank, exactly like a non-reuse walk');
+  }
+
+  /* ---------- 309. round 29: a remembered select value that no longer matches any current option falls back to the ordinary current-value highlight ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'no-longer-an-option' } };
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    rows[1]._fire('click', {}); // use previous for all
+
+    ok(inp.value === 'branch.type-select = ', 'no bogus text is prefilled when the remembered value matches nothing real');
+    const optionRows = byId['rw-cmd-menu']._children;
+    ok(optionRows.some(function(r){ return r.innerText.indexOf('Tap') !== -1 && r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }),
+       "the field's own actual CURRENT value (\"Tap\") is highlighted instead, same as an ordinary walk would show");
+  }
+
+  /* ---------- 310. round 29: RW._cmdModalWalkMemoryEnabled = false disables both the offer and remembering new/updated values ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' } };
+    RW._cmdModalWalkMemoryEnabled = false;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(inp.value === 'branch.type-select = ', 'no offer is shown while the hatch is off — the walk goes straight to field 1, unprefilled');
+
+    inp.value = 'branch.type-select = tap'; // deliberately different from the pre-seeded "wye"
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.typeSel.value === 'tap', 'sanity: the real control WAS actually changed');
+    ok(RW._cmdModalWalkValueMemory.branch['type-select'] === 'wye',
+       'but the change was not recorded — the pre-seeded value survives untouched while the hatch is off');
+
+    inp._fire('keydown', { key: 'Enter' }); // skip field 2
+    inp.value = 'branch.damper-check = on';
+    inp._fire('keydown', { key: 'Enter' }); // apply field 3, a brand-new field never remembered before
+
+    ok(!('damper-check' in RW._cmdModalWalkValueMemory.branch), 'and a genuinely new value is not recorded either');
+  }
+
+  /* ---------- 311. round 29: RW._cmdModalWalkMemoryClear clears one tool's memory, or everything with no argument ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' }, transition: { 'size-select': 'reducer' } };
+
+    RW._cmdModalWalkMemoryClear('branch');
+    ok(!RW._cmdModalWalkValueMemory.branch, 'clearing one tool removes just that tool');
+    ok(RW._cmdModalWalkValueMemory.transition && RW._cmdModalWalkValueMemory.transition['size-select'] === 'reducer',
+       "a different tool's memory is untouched");
+
+    RW._cmdModalWalkMemoryClear();
+    ok(Object.keys(RW._cmdModalWalkValueMemory).length === 0, 'clearing with no argument wipes everything');
+  }
+
+  /* ---------- 312. round 29: ignoring the offer leaves no walk state behind, and the unchanged edge does not re-show it ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' } };
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(RW._cmdModalWalk === null, 'no walk state exists yet while the offer is merely showing');
+
+    inp.value = 'select'; // the user ignores the offer and types an unrelated command
+    inp.dispatchEvent({ type: 'input' });
+    ok(RW._cmdModalWalk === null, 'still no walk state after typing something else');
+
+    RW._cmdModalWalkTick(); // modal is still open, unchanged since the last tick
+    ok(inp.value === 'select', 'the offer is not re-shown — the edge has not changed, so the bar is left exactly as the user typed it');
   }
 
   finish();

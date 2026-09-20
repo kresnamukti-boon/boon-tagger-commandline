@@ -253,6 +253,54 @@ fields are never remembered (more likely to differ duct to duct than select/chec
 separate, independent repo, `boon-duct-workbench`, per the user's own request to split it out;
 `transition`/`grd`/`vertical` are unaffected.
 
+**Modal field-walk** (round 28, graph host, branch fitting only so far): the instant
+`graph-branch-fitting-modal` is detected open (the same edge-triggered 250ms poll modal memory
+uses, `RW._cmdModalWalkTick`/`RW._cmdModalWalkLastOpen`, its own independent edge variable —
+deliberately not shared with modal memory's, since branch is excluded from memory entirely), the
+command bar takes focus and opens a value prompt on the modal's first field, then chains into the
+next one as each is confirmed — the same mechanism `dimension` uses for width→height (see below),
+generalized from a fixed two-param array into a live re-derivation on every hop
+(`cmdWalkNextItem`), so a field that's conditionally visible (branch's own flush-boot glyphs) is
+picked up or skipped correctly without any hardcoded list. Enter with nothing typed leaves that
+field untouched and advances (a deliberate skip, distinct from `dimension`'s own empty-value
+behavior, which is a parse failure that stops the chain — scoped via `settingsDraft.walk`, a flag
+`dimension`'s own draft never carries, so the two chains can't cross-contaminate each other's
+tests or behavior). A walked checkbox opens a typed on/off draft rather than auto-toggling, unlike
+picking one from the ordinary dropdown. The walk never auto-submits: once every field's been
+visited it opens the dropdown pre-highlighted on `choose` (with `cancelbranch` listed too) and
+waits for one further, deliberate Enter — the same standing caution as every other graph-host
+action button (see Constraints). `MODAL_WALK_TOOLS` is a one-name list (`['branch']`) gating which
+modals get this — extending to change size/GRD/riser is meant to be a one-line addition, since
+every other piece of the mechanism already reads its target from `GRAPH_TOOL_MODALS`.
+`RW._cmdModalWalkEnabled = false` disables auto-start only; `RW._cmdStartModalWalk(tool)` still
+works by hand with the hatch off, and `RW._cmdModalWalk` is console-inspectable while a walk is
+in progress.
+
+**Modal walk value memory** (round 29, branch fitting only, riding the same `MODAL_WALK_TOOLS`
+gate): a **separate, independent** system from `RW._cmdModalMemory` above — not a reuse of it,
+deliberately. `RW._cmdModalMemory` excludes `branch` entirely (its field-memory lives in
+`boon-duct-workbench`) and only ever silently auto-fills select/checkbox fields; this instead
+remembers **every** field type the walk touches (`RW._cmdModalWalkValueMemory`, its own
+`localStorage` key) and always asks first rather than auto-applying anything. `cmdWalkStart`
+checks `cmdWalkHasMemory(tool)` before opening field 1: if anything's remembered, it shows a
+two-row choice ("Edit each field" / "use previous for all") via `cmdWalkOfferChoice` — and,
+load-bearing, **`modalWalk` itself is not created until a choice is actually made** (in
+`runAndClear`'s `isWalkChoiceItem` branch, the only other place it's constructed besides
+`cmdWalkStart`'s own no-memory path). This is what lets the user simply ignore the offer (type an
+unrelated command, switch tools) with nothing left to clean up — no new Escape-handling branch was
+needed for it. Recording happens once, in `cmdWalkAdvance`, only on an actual apply (never a skip)
+— it re-reads the control's own live `.current` right after applying rather than threading the
+value through every confirm path (Enter, a Tab-preview, a mouse click on an option row all funnel
+through this one spot). Prefilling reuses the existing draft/option-list machinery rather than a
+parallel one: a plain field just gets `remembered` appended into `inputEl.value` (already
+"typed", never mistaken for the empty-Enter skip); a select reuses its own unfiltered option list
+and highlights whichever index matches the remembered value (falling back to today's
+current-value highlight, unchanged, when nothing matches — e.g. the app's own option list
+changed) — the ordinary Enter-confirm path needed **no changes at all**, since it already just
+applies whichever option row is highlighted. `RW._cmdModalWalkMemoryEnabled = false` disables both
+the offer and new recording (the walk itself always still works, starting fresh);
+`RW._cmdModalWalkMemoryClear(tool)` forgets one tool or everything.
+
 ### Isolation (graph host only)
 
 While a tool is armed, the command line restricts what's typeable to: that tool's own properties
@@ -415,6 +463,18 @@ trusting this feature on it.
 - `graph-toggle-annotations` being genuinely submit-free was read from the bundle's own
   client-side state handler, not independently confirmed by watching the revision counter across a
   live click.
+- Whether the branch fitting modal's own field-walk (round 28) auto-focusing the command bar fights
+  the app's own focus handling on a real page — the app may focus the dialog's first field itself
+  the instant it opens, and which focus wins was never checked live, only in the synthetic harness.
+  Needs a real human live-test, not just automation.
+- Branch's real field ids/order/types are only partly confirmed from round 19's live session; the
+  walk reads them live so it needs no hardcoded list, but the on-screen order it actually produces
+  on a real popup (all 6-7 fields, not just the two used in that session) should still be eyeballed
+  once before trusting it fully.
+- Whether the round-29 "use previous for all" prefill reads as clearly intentional on a real popup
+  as it does in the synthetic harness — a pre-filled value sitting in the command bar next to the
+  real control's own (different, not-yet-changed) on-screen value has never been eyeballed live;
+  worth a live check that it doesn't read as confusing before trusting it on a real job.
 - A still-unreproduced, unfixed bug (deferred at the user's own request, not yet root-caused):
   tool *property* rows have been seen blending into the dropdown while `__graphDebug.activeTool`
   genuinely reads `'select'` — the code path that's supposed to gate this

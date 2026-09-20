@@ -603,11 +603,15 @@
   // focused and typed into while one is open; the auto-capture bail-out
   // narrowed below (see cmdOpenDialogs's own comment) was the only thing
   // stopping that.
+  // submitCmd/cancelCmd (round 28) name each modal's own Choose/Cancel-equivalent
+  // GRAPH_ACTIONS entry (below) — used only by the field-walk (round 28) to know
+  // which command to end on, never duplicated as a second source of the button ids
+  // themselves (those still live solely on the GRAPH_ACTIONS entries).
   const GRAPH_TOOL_MODALS = {
-    branch:     { dialogId: 'graph-branch-fitting-modal',        prefix: 'graph-branch-fitting-',        title: 'branch fitting' },
-    transition: { dialogId: 'graph-checkpoint-transition-modal', prefix: 'graph-checkpoint-transition-', title: 'change size' },
-    grd:        { dialogId: 'graph-checkpoint-grd-modal',        prefix: 'graph-checkpoint-grd-',        title: 'place GRD' },
-    vertical:   { dialogId: 'graph-checkpoint-riser-modal',      prefix: 'graph-checkpoint-riser-',      title: 'riser elevation' }
+    branch:     { dialogId: 'graph-branch-fitting-modal',        prefix: 'graph-branch-fitting-',        title: 'branch fitting', submitCmd: 'choose',     cancelCmd: 'cancelbranch' },
+    transition: { dialogId: 'graph-checkpoint-transition-modal', prefix: 'graph-checkpoint-transition-', title: 'change size',    submitCmd: 'apply',      cancelCmd: 'cancelsize'  },
+    grd:        { dialogId: 'graph-checkpoint-grd-modal',        prefix: 'graph-checkpoint-grd-',        title: 'place GRD',      submitCmd: 'place',      cancelCmd: 'cancelgrd'   },
+    vertical:   { dialogId: 'graph-checkpoint-riser-modal',      prefix: 'graph-checkpoint-riser-',      title: 'riser elevation',submitCmd: 'placeriser', cancelCmd: 'cancelriser' }
   };
   const GRAPH_MODAL_DIALOG_IDS = Object.keys(GRAPH_TOOL_MODALS).map(function(k){ return GRAPH_TOOL_MODALS[k].dialogId; });
 
@@ -1420,6 +1424,312 @@
     );
   }
 
+  // ----- graph host only: modal field-walk — auto-fill a config-dialog modal one field
+  // at a time, no param names to type (round 28) -----
+  // Kresna's own request: today, changing anything inside a modal like branch fitting
+  // means already knowing and typing each field's own name (`branch.type`, or the bare
+  // `type` via the blend). Instead, the instant a walked modal is detected open, the
+  // command bar should drop straight into a value prompt for its first field, then
+  // chain into the next one — the same idea `dimension` already uses to go width then
+  // height (above), generalized here from a fixed two-param list into however many
+  // fields a modal actually has, discovered live. Confirmed via AskUserQuestion: scoped
+  // to **branch fitting only** for now ("might expand later") — every other piece here
+  // reads its target modal from GRAPH_TOOL_MODALS, so covering one of the other three is
+  // just adding its tool name to MODAL_WALK_TOOLS below, no other change needed. Also
+  // confirmed: the walk never auto-clicks Choose — it ends on a Choose/Cancel prompt
+  // instead (cmdWalkFinish), matching this project's standing caution around graph-host
+  // action buttons, which submit real commands to the app's own autosave journal (see
+  // CLAUDE.md's Constraints) — and a bare Enter on an untouched field just skips it
+  // (handled in onInputKeydown, where the draft itself lives).
+  const MODAL_WALK_TOOLS = ['branch'];
+  RW._cmdModalWalkEnabled = true; // console escape hatch: __RW._cmdModalWalkEnabled = false stops auto-start only; RW._cmdStartModalWalk still works by hand
+
+  // ----- round 29: remember what was typed during a walk, and offer to reuse it -----
+  // Kresna's own request: the next time the SAME modal opens, offer a choice — "Edit each
+  // field" or "use previous for all" — rather than starting from scratch every time. This is
+  // a DELIBERATELY SEPARATE mechanism from RW._cmdModalMemory (round 26) — not a reuse of it —
+  // for two reasons: (1) `branch` is excluded from that mechanism entirely (its own
+  // field-memory lives in a separate repo, boon-duct-workbench, per Kresna's own earlier
+  // request to split it out) and this repo's own walk-memory is explicitly meant to cover
+  // branch anyway; (2) round 26's memory silently auto-fills select/checkbox fields with no
+  // choice offered, while this remembers EVERY field type (confirmed via AskUserQuestion) and
+  // always asks first rather than silently overwriting anything. Seeing both `RW._cmdModalMemory`
+  // (excludes branch) and `RW._cmdModalWalkValueMemory` (branch's only current user) in the same
+  // file is intentional, not a leftover inconsistency — don't try to unify them.
+  const GRAPH_MODAL_WALK_MEMORY_KEY = 'rw_graph_modal_walk_memory_v1';
+  function cmdWalkMemoryLoad(){
+    try {
+      const ls = window.localStorage;
+      const raw = ls ? ls.getItem(GRAPH_MODAL_WALK_MEMORY_KEY) : null;
+      return raw ? JSON.parse(raw) : {};
+    } catch (e){ return {}; } // private browsing / quota / disabled storage — fail to "nothing remembered", never throw
+  }
+  function cmdWalkMemorySave(){
+    try { if (window.localStorage) window.localStorage.setItem(GRAPH_MODAL_WALK_MEMORY_KEY, JSON.stringify(RW._cmdModalWalkValueMemory)); }
+    catch (e){ /* same fail-open — a value just won't persist past this page */ }
+  }
+  RW._cmdModalWalkValueMemory = RW_IS_GRAPH ? cmdWalkMemoryLoad() : {}; // {tool: {param: value}} — console-inspectable
+  RW._cmdModalWalkMemoryEnabled = true; // console escape hatch: false disables both the upfront offer AND remembering new values (the walk itself still works)
+  RW._cmdModalWalkMemoryClear = function(tool){
+    if (tool) delete RW._cmdModalWalkValueMemory[tool]; else RW._cmdModalWalkValueMemory = {};
+    cmdWalkMemorySave();
+  };
+  function cmdWalkMemoryGet(tool, param){
+    const t = RW._cmdModalWalkValueMemory[tool];
+    return t ? t[param] : undefined;
+  }
+  // Called only from cmdWalkAdvance, only on an actual apply (never a skip) — a skipped field's
+  // own previously remembered value (if any) is left exactly as it was.
+  function cmdWalkMemorySet(tool, param, value){
+    if (!RW._cmdModalWalkMemoryEnabled) return;
+    RW._cmdModalWalkValueMemory[tool] = RW._cmdModalWalkValueMemory[tool] || {};
+    RW._cmdModalWalkValueMemory[tool][param] = value;
+    cmdWalkMemorySave();
+  }
+  // True only when the hatch is on AND at least one field is actually remembered for `tool` —
+  // this is what decides whether cmdWalkStart shows the Edit/use-previous offer at all.
+  function cmdWalkHasMemory(tool){
+    const t = RW._cmdModalWalkValueMemory[tool];
+    return !!(RW._cmdModalWalkMemoryEnabled && t && Object.keys(t).length);
+  }
+
+  // The next field to prompt for — re-runs RW._cmdToolSettingsList fresh on every hop
+  // rather than snapshotting the field list once up front (unlike DIMENSION_PARAMS
+  // above, a fixed two-param array): branch's own fields are conditionally visible (the
+  // round/rect flush-boot glyph, a secondary dimension hidden for a round shape), so a
+  // field that only becomes relevant after an earlier one is set must still be walked,
+  // and one that stops being relevant must not be prompted for with nothing behind it.
+  // Same "prefer live DOM discovery over a hardcoded per-param table" doctrine the
+  // settings sweep itself follows. Returns the first item (on-screen order) whose param
+  // isn't already in `seen`, or null once every field currently on screen has been
+  // visited — always terminates, since every hop pushes onto `seen` whether the field
+  // was applied or skipped.
+  function cmdWalkNextItem(tool, seen){
+    return RW._cmdToolSettingsList(tool).find(function(item){ return seen.indexOf(item.param) === -1; }) || null;
+  }
+
+  // Opens the field-appropriate draft for `item`, stamping `walk: true` (so
+  // onInputKeydown/runAndClear know to advance the walk instead of just finishing) and
+  // reporting progress as "N/total" against the modal's own CURRENT field count (not a
+  // count frozen at walk-start, since that count can itself change mid-walk). Mirrors
+  // runAndClear's own three param paths (select/checkbox/number-text) rather than
+  // inventing a new input mechanism — the one deliberate difference is checkbox, which
+  // today toggles immediately with no draft when picked by hand (see runAndClear);
+  // auto-toggling every checkbox a walk passes over would silently flip real settings
+  // with no chance to skip it, so the walk always opens an on/off value draft for it
+  // instead, the same way `dimension` opens one for a number.
+  function cmdWalkOpenPrompt(tool, item, modal){
+    const n = modalWalk.seen.length + 1;
+    const total = RW._cmdToolSettingsList(tool).length;
+    const label = item.label || item.param;
+    const progress = modal.title + ' ' + n + '/' + total + ' — ' + label;
+    // Round 29: only consulted while modalWalk.reuse is true (the user picked "use previous
+    // for all" at the start of THIS walk) — a plain "Edit each field" walk, or a field with
+    // nothing remembered yet, behaves byte-identically to round 28.
+    const remembered = modalWalk.reuse ? cmdWalkMemoryGet(tool, item.param) : undefined;
+    if (item.type === 'select'){
+      settingsDraft = { tool: tool, param: item.param, type: 'select', options: item.options,
+        originalValue: item.current, previewed: false, walk: true };
+      menuMode = 'settings-option';
+      menuItems = item.options.map(function(o){
+        return { tool: tool, param: item.param, optionIndex: o.index, optionValue: o.value, optionText: o.text };
+      });
+      // Reuses the existing (unfiltered) option list rather than duplicating onInput's own
+      // text-filtering logic: a matching remembered value just picks a different index to
+      // highlight, so the ordinary Enter-confirm path (which reads whichever option row is
+      // highlighted) applies it correctly with no changes of its own. A remembered value that
+      // no longer matches any current option (the app's own option list changed) falls back to
+      // highlighting today's actual current value — fail toward caution, never toward a guess.
+      let highlightIdx = -1, prefillText = '';
+      if (remembered !== undefined){
+        highlightIdx = menuItems.findIndex(function(o){ return o.optionValue === remembered; });
+        if (highlightIdx !== -1) prefillText = menuItems[highlightIdx].optionText;
+      }
+      if (highlightIdx === -1){
+        const curIdx = menuItems.findIndex(function(o){ return o.optionValue === item.current; });
+        highlightIdx = curIdx !== -1 ? curIdx : (menuItems.length ? 0 : -1);
+      }
+      menuHighlight = highlightIdx;
+      inputEl.value = tool + '.' + item.param + ' = ' + prefillText;
+      renderMenuRows();
+      inputEl.focus();
+      if (inputEl.setSelectionRange) inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+      RW._commitStatus && RW._commitStatus(
+        progress + ': pick 1-' + item.options.length + ', currently "' + item.current + '"'
+        + (prefillText ? ' — using last time\'s "' + prefillText + '", press Enter to keep it' : ' — Enter to keep it, or type a number/name, or Tab to live-preview')
+      );
+      return;
+    }
+    settingsDraft = { tool: tool, param: item.param, type: item.type, walk: true };
+    // Plain string append — the existing Enter-confirm logic already reads inputEl.value
+    // verbatim (split on '='), so a prefilled, non-empty value here is naturally treated as
+    // "typed", never mistaken for the empty-Enter skip case. To skip a prefilled field, clear
+    // the text first, same as skipping any other field means leaving it genuinely empty.
+    inputEl.value = tool + '.' + item.param + ' = ' + (remembered !== undefined ? remembered : '');
+    hideMenu();
+    inputEl.focus();
+    if (inputEl.setSelectionRange) inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    const reuseHint = remembered !== undefined ? (' — using last time\'s value (' + remembered + '), press Enter to keep it') : '';
+    if (item.type === 'checkbox'){
+      RW._commitStatus && RW._commitStatus(
+        progress + ': currently ' + item.current + (reuseHint || ' — type on/off and press Enter, or Enter alone to keep it')
+      );
+    } else if (item.type === 'text'){
+      RW._commitStatus && RW._commitStatus(
+        progress + ': currently "' + item.current + '"' + (reuseHint || ' — type a new value and press Enter, or Enter alone to keep it')
+      );
+    } else {
+      RW._commitStatus && RW._commitStatus(
+        progress + ': ' + (item.min != null ? item.min : '') + '–' + (item.max != null ? item.max : '')
+        + ', currently ' + item.current + (reuseHint || ' — type a new value and press Enter, or Enter alone to keep it')
+      );
+    }
+  }
+
+  // Called from onInputKeydown/runAndClear once a walk-driven field is either applied
+  // (skip=false) or left untouched (skip=true) — records it, then either opens the next
+  // field's prompt or ends the walk (cmdWalkFinish). Aborts quietly (no status line) if
+  // the modal itself has closed in the meantime — e.g. the dialog's own Cancel button
+  // clicked by mouse mid-walk — same fail-quiet-on-uncertain-state doctrine the rest of
+  // this file's modal handling already follows.
+  // Shared teardown for every path that discovers the walk can no longer continue (the
+  // modal itself is gone) — clears both state variables AND leaves the bar itself clean
+  // (empty, hidden menu, blurred) rather than stuck showing a prompt for a control that
+  // no longer exists. `settingsDraft` is only cleared here when it's still this walk's
+  // OWN draft — a caller that already nulled it itself (onInputKeydown, before calling
+  // cmdWalkAdvance) passes nothing extra to clobber.
+  function cmdWalkAbort(){
+    modalWalk = null;
+    RW._cmdModalWalk = null;
+    settingsDraft = null;
+    inputEl.value = '';
+    hideMenu();
+    inputEl.blur();
+  }
+
+  function cmdWalkAdvance(tool, param, skip){
+    if (!modalWalk || modalWalk.tool !== tool) return;
+    modalWalk.seen.push(param);
+    if (skip) modalWalk.skipped++;
+    else {
+      modalWalk.applied++;
+      // Round 29: record what was actually applied — re-read the control's own live
+      // `.current` rather than threading the applied value through every call site (Enter
+      // confirm, Tab-preview, a mouse click on an option row); one place, one representation,
+      // the same shape RW._cmdToolSettingsList already produces for every field type. A
+      // skipped field (above) never reaches here, so its own previously remembered value is
+      // left untouched.
+      const applied = RW._cmdToolSettingsList(tool).find(function(i){ return i.param === param; });
+      if (applied) cmdWalkMemorySet(tool, param, applied.current);
+    }
+    const modal = cmdOpenToolModal(tool);
+    if (!modal){ cmdWalkAbort(); return; }
+    const next = cmdWalkNextItem(tool, modalWalk.seen);
+    if (next){ cmdWalkOpenPrompt(tool, next, modal); return; }
+    cmdWalkFinish(tool, modal);
+  }
+
+  // Ends the walk on the modal's own Choose/Cancel prompt rather than clicking anything
+  // automatically — Kresna's own explicit choice (AskUserQuestion): graph-host action
+  // buttons submit real commands to the app's own autosave journal (see CLAUDE.md's
+  // Constraints), so the walk stops one deliberate Enter short of actually applying.
+  // Reuses the existing findEntry/cmdActionUsable helpers rather than a new lookup, so
+  // an unusable button (missing/disabled/hidden) is quietly left off exactly the way
+  // the ordinary dropdown already omits one.
+  function cmdWalkFinish(tool, modal){
+    const applied = modalWalk.applied, skipped = modalWalk.skipped;
+    modalWalk = null;
+    RW._cmdModalWalk = null;
+    settingsDraft = null;
+    const reg = GRAPH_TOOL_MODALS[tool];
+    const submitEntry = reg && findEntry(reg.submitCmd);
+    const cancelEntry = reg && findEntry(reg.cancelCmd);
+    const rows = [submitEntry, cancelEntry].filter(function(e){ return e && cmdActionUsable(e); });
+    inputEl.value = '';
+    menuItems = rows;
+    menuMode = 'command';
+    menuHighlight = rows.length ? 0 : -1;
+    renderMenuRows();
+    inputEl.focus();
+    RW._commitStatus && RW._commitStatus(
+      modal.title + ': ' + applied + ' set' + (skipped ? ', ' + skipped + ' skipped' : '')
+      + (submitEntry ? ' — Enter to ' + submitEntry.name : '') + (cancelEntry ? ', or pick ' + cancelEntry.name : '')
+    );
+  }
+
+  // Entry point for both the auto-start tick (below) and a manual console call
+  // (RW._cmdStartModalWalk) — opens the first field's prompt if the modal actually has
+  // any walkable fields, else leaves the bar untouched (mirrors cmdStartDimension's own
+  // "nothing to do" no-op). Never starts over an already-open draft — the tick guards
+  // this on the auto-start side; a manual call while mid-edit would be surprising, so it
+  // refuses too rather than clobbering whatever's already being typed.
+  function cmdWalkStart(tool){
+    const modal = cmdOpenToolModal(tool);
+    if (!modal) return false;
+    if (settingsDraft) return false;
+    if (modalWalk) return false; // a walk is already in progress — never stomp it (defensive; the two are normally kept in sync)
+    const first = cmdWalkNextItem(tool, []);
+    if (!first) return false;
+    mountCommandBar();
+    // Round 29: when something's actually remembered for this tool, offer the choice instead
+    // of jumping straight into field 1 — deliberately WITHOUT creating `modalWalk` yet (see
+    // cmdWalkOfferChoice's own comment for why that matters). No memory yet (the common case,
+    // and every existing round-28 test's case, since none of them seed
+    // RW._cmdModalWalkValueMemory) falls through to exactly today's behavior, unchanged.
+    if (cmdWalkHasMemory(tool)){ cmdWalkOfferChoice(tool); return true; }
+    modalWalk = { tool: tool, seen: [], applied: 0, skipped: 0, reuse: false };
+    RW._cmdModalWalk = modalWalk;
+    cmdWalkOpenPrompt(tool, first, modal);
+    return true;
+  }
+  RW._cmdStartModalWalk = cmdWalkStart; // console escape hatch to (re-)trigger the walk by hand, without closing/reopening the dialog
+
+  // Shows the one-time "Edit each field" vs "use previous for all" choice, WITHOUT creating
+  // `modalWalk` — that's the load-bearing part of this design: if the user ignores the offer
+  // (types an unrelated command, switches tools) there is no half-started walk state left
+  // behind to clean up, and no new Escape-handling branch is needed either. `modalWalk` is
+  // only ever created once the choice is actually made (see the isWalkChoiceItem branch in
+  // runAndClear). Reuses menuMode = 'command' — the same choice cmdWalkFinish already made for
+  // its own end-of-walk Choose/Cancel prompt, since the Enter/Space confirm path doesn't
+  // branch on menuMode's value at all.
+  function cmdWalkOfferChoice(tool){
+    const reg = GRAPH_TOOL_MODALS[tool];
+    menuMode = 'command';
+    menuItems = [
+      { walkChoice: 'edit', tool: tool, label: 'Edit each field' },
+      { walkChoice: 'reuse', tool: tool, label: 'use previous for all' }
+    ];
+    menuHighlight = 0;
+    renderMenuRows();
+    inputEl.value = '';
+    inputEl.focus();
+    RW._commitStatus && RW._commitStatus(
+      reg.title + ': you have values saved from last time — Edit each field from scratch, or reuse them all'
+    );
+  }
+
+  // Auto-starts the walk the instant a walked modal (MODAL_WALK_TOOLS) transitions from
+  // closed to open. A separate edge variable from RW._cmdModalMemoryLastOpen —
+  // deliberately not shared: branch is excluded from modal memory entirely
+  // (MODAL_MEMORY_EXCLUDED_TOOLS above), so memory's own tick never fires for it, and
+  // even for a tool that had both eventually, the two features should stay free to
+  // evolve independently rather than being coupled through one shared edge. Ticked from
+  // the same shared timer as the others (see RW._cmdStartToolWatch below), not a second
+  // interval. The mid-walk teardown below runs regardless of RW._cmdModalWalkEnabled —
+  // a walk already in progress when the hatch gets flipped off should still clean up
+  // properly if its modal closes, exactly like every other "fail toward doing nothing,
+  // not toward a stuck half-state" rule in this file.
+  RW._cmdModalWalkLastOpen = null;
+  RW._cmdModalWalkTick = function(){
+    if (!RW_IS_GRAPH || !RW.enabled) return;
+    const cur = cmdOpenModalTool();
+    if (!cur && modalWalk) cmdWalkAbort();
+    if (!RW._cmdModalWalkEnabled) return;
+    if (cur === RW._cmdModalWalkLastOpen) return;
+    RW._cmdModalWalkLastOpen = cur;
+    if (cur && MODAL_WALK_TOOLS.indexOf(cur) !== -1) cmdWalkStart(cur);
+  };
+
   /* ---------- tag auto-detection (# search) ---------- */
   // This codebase has never referenced anything beyond annotationState.currentTag
   // (the currently-selected tag, {id,name}) before. Tries a short list of
@@ -1868,7 +2178,13 @@
     // already-seen and skipped. Harmless either way if nothing's remembered yet, and idempotent
     // if a field already matches what's remembered.
     RW._cmdModalMemoryLastOpen = null;
-    RW._cmdToolWatchTimer = setInterval(function(){ RW._cmdToolWatchTick(); RW._cmdModalMemoryTick(); }, AUTOSEL_POLL_MS);
+    // Round 28: same re-seed-to-null reasoning as modal memory just above, so a
+    // walked modal already open at (re-)paste time still gets its own walk started.
+    // Ticked after RW._cmdModalMemoryTick, not before — load-bearing once a tool
+    // is ever added to both MODAL_WALK_TOOLS and modal memory: memory's auto-fill
+    // must land on the real controls before the walk reads their `current` value.
+    RW._cmdModalWalkLastOpen = null;
+    RW._cmdToolWatchTimer = setInterval(function(){ RW._cmdToolWatchTick(); RW._cmdModalMemoryTick(); RW._cmdModalWalkTick(); }, AUTOSEL_POLL_MS);
   };
 
   // A separate, always-on document keydown listener (capture phase) purely
@@ -1903,6 +2219,13 @@
   // Sticky across a value-entry step (unlike menuMode, which is re-derived from inputEl.value on
   // every keystroke) — {tool, param} once a setting's been picked and we're awaiting its value.
   let settingsDraft = null;
+  // Round 28: the modal field-walk's own progress — {tool, seen:[param,...], applied, skipped} —
+  // separate from settingsDraft (which only ever describes the CURRENT field's prompt; this
+  // survives across the whole walk). settingsDraft.walk===true marks a draft as walk-driven so
+  // onInputKeydown/runAndClear can tell it apart from an ordinary one-off param edit. Mirrored onto
+  // RW._cmdModalWalk for console inspection, matching this file's existing _cmd* probe convention.
+  let modalWalk = null;
+  RW._cmdModalWalk = null;
 
   // Gap between the dropdown and whichever edge of the panel it's anchored
   // to, its "prefer this much room" height, and the floor it's still
@@ -2001,6 +2324,11 @@
   // too (so it happens to also satisfy isSettingsItem), which is exactly why this must be checked
   // FIRST wherever both are possible, rather than relying on the two shapes being exclusive.
   function isOptionItem(item){ return !!item && typeof item.optionIndex === 'number'; }
+  // Round 29: the two transient "Edit each field" / "use previous for all" rows
+  // cmdWalkOfferChoice builds — carries `.tool` (a string) like a settings item does, but never
+  // `.param`, so it can never be mistaken for one; checked explicitly rather than relying on
+  // that absence, same defensive style as isOptionItem's own comment above.
+  function isWalkChoiceItem(item){ return !!item && typeof item.walkChoice === 'string'; }
 
   function renderMenuRows(){
     if (!menuItems.length){ hideMenu(); return; }
@@ -2018,6 +2346,9 @@
       } else if (isOptionItem(item)){
         label = item.optionIndex + '. ' + item.optionText;
         color = SETTINGS_COLOR;
+      } else if (isWalkChoiceItem(item)){
+        label = item.label;
+        color = KIND_COLOR.action;
       } else if (isSettingsItem(item)){
         // Prefer the control's own live on-screen label (round 18, graph host
         // only) over its fixed DOM-id-derived param name — so a row picked by
@@ -2190,12 +2521,36 @@
   }
 
   function runAndClear(item){
+    if (isWalkChoiceItem(item)){
+      // Round 29: this is the ONLY place `modalWalk` gets created on the reuse path — mirrors
+      // exactly what cmdWalkStart does on the no-memory path, just with `reuse` set from
+      // whichever row was picked. Re-resolves the modal/first-field fresh rather than trusting
+      // anything cached from when the offer was shown, in case the dialog closed in the
+      // meantime.
+      const tool = item.tool;
+      const modal = cmdOpenToolModal(tool);
+      const first = modal && cmdWalkNextItem(tool, []);
+      if (!modal || !first){
+        inputEl.value = ''; hideMenu(); menuItems = []; menuMode = 'command'; inputEl.blur();
+        return;
+      }
+      modalWalk = { tool: tool, seen: [], applied: 0, skipped: 0, reuse: item.walkChoice === 'reuse' };
+      RW._cmdModalWalk = modalWalk;
+      cmdWalkOpenPrompt(tool, first, modal);
+      return;
+    }
     if (isOptionItem(item)){
       // Picking a numbered option (click, or Enter while one's highlighted) applies it
       // immediately — choosing IS the value, unlike number/checkbox which need a
       // separate typed value.
+      const optionDraft = settingsDraft;
       settingsDraft = null;
       RW._cmdApplySetting(item.tool, item.param, String(item.optionIndex));
+      // Round 28: a mouse click on an option row is the only OTHER place a select
+      // value gets confirmed (onInputKeydown's own Enter branch handles the
+      // keyboard case) — it needs the same "continue the walk" hop, so clicking
+      // through a walk behaves identically to pressing Enter on each field.
+      if (optionDraft && optionDraft.walk){ cmdWalkAdvance(item.tool, item.param, false); return; }
       inputEl.value = '';
       hideMenu();
       inputEl.blur();
@@ -2300,13 +2655,34 @@
       // RW._cmdApplySetting's own matching handles the no-highlight case.
       e.preventDefault(); e.stopPropagation();
       const draft = settingsDraft;
+      const raw = inputEl.value;
+      const eq = raw.indexOf('=');
+      const typedText = (eq !== -1 ? raw.slice(eq + 1) : raw).trim();
+      // Round 28: on a walk-driven draft, Enter with nothing typed leaves the field
+      // untouched and just advances to the next one — the whole point of a walk is to
+      // only touch fields you actually want to change. A select only counts as
+      // "nothing typed" when its highlighted option is still the one the draft opened
+      // on (never Tab-previewed) — its highlight always starts ON the field's own
+      // current value (see cmdWalkOpenPrompt), so without the `!draft.previewed`
+      // check every bare Enter would fall into the ordinary apply path below and
+      // silently re-apply (and re-record into modal memory) that same value on every
+      // single field instead of skipping it. Scoped to draft.walk only — `dimension`'s
+      // own chain (an ordinary draft; walk is undefined there) keeps its existing
+      // behavior unchanged: an empty value is a parse failure that stops the chain,
+      // not a deliberate skip.
+      if (draft.walk){
+        const nothingTyped = draft.type === 'select' ? (!typedText && !draft.previewed) : !typedText;
+        if (nothingTyped){
+          settingsDraft = null;
+          cmdWalkAdvance(draft.tool, draft.param, true);
+          return;
+        }
+      }
       let valueText;
       if (draft.type === 'select' && menuHighlight >= 0 && menuItems[menuHighlight] && isOptionItem(menuItems[menuHighlight])){
         valueText = String(menuItems[menuHighlight].optionIndex);
       } else {
-        const raw = inputEl.value;
-        const eq = raw.indexOf('=');
-        valueText = (eq !== -1 ? raw.slice(eq + 1) : raw).trim();
+        valueText = typedText;
       }
       settingsDraft = null;
       const applied = RW._cmdApplySetting(draft.tool, draft.param, valueText);
@@ -2320,6 +2696,15 @@
       if (applied && draft.chain && draft.chain.length){
         cmdDimensionPrompt(draft.tool, draft.chain);
         return;
+      }
+      // Round 28: a walk-driven draft that applied cleanly advances to the next
+      // field (or ends the walk) exactly the same way the dimension chain above
+      // does; a failed apply (e.g. a bad number typed by hand) stops the walk right
+      // here instead of skipping ahead — same "stop, don't guess" rule dimension's
+      // own chain already follows.
+      if (draft.walk){
+        if (applied){ cmdWalkAdvance(draft.tool, draft.param, false); return; }
+        modalWalk = null; RW._cmdModalWalk = null;
       }
       inputEl.value = '';
       hideMenu();
@@ -2387,6 +2772,9 @@
         } else {
           inputEl.value = menuMode === 'tag' ? ('#' + item.tag.name)
             : isSettingsItem(item) ? (item.tool + '.' + item.param)
+            // Round 29: a walk-choice row has no .name — fill its own label instead,
+            // so Tab never fills the literal string "undefined" here.
+            : isWalkChoiceItem(item) ? item.label
             : item.name;
         }
       }
@@ -2426,6 +2814,18 @@
         // genuinely current before any previewing started. Skipped when nothing was
         // ever previewed, to avoid a pointless extra dispatch on a plain cancel.
         if (settingsDraft.previewed) RW._cmdApplySetting(settingsDraft.tool, settingsDraft.param, settingsDraft.originalValue);
+        // Round 28: Escape on a walk-driven draft ends the WHOLE walk, not just this
+        // one field's prompt — fields already set earlier in the walk are left exactly
+        // as they are (this only reverts a Tab-preview on the CURRENT field, above);
+        // the modal stays open so the ordinary tool.param/# blend is reachable again.
+        if (settingsDraft.walk && modalWalk){
+          const walkTool = modalWalk.tool, applied = modalWalk.applied;
+          modalWalk = null; RW._cmdModalWalk = null;
+          RW._commitStatus && RW._commitStatus(
+            applied ? walkTool + ': walk stopped — ' + applied + ' field' + (applied === 1 ? '' : 's') + ' already set, the rest untouched'
+                    : walkTool + ': walk stopped, nothing set yet'
+          );
+        }
         settingsDraft = null; inputEl.value = ''; hideMenu(); inputEl.blur(); return;
       }
       if (menuEl && menuEl.style.display !== 'none'){ hideMenu(); }
