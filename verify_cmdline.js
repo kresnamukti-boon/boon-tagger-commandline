@@ -204,6 +204,23 @@ function makeSelect(byId, id, optionPairs, currentValue){
   return el;
 }
 
+// A minimal, real-enough localStorage stub (round 26) — the module reads it as
+// `window.localStorage`, never a bare global, specifically so a fake store can be handed to a
+// stub window with no change to loadModule's own sandbox globals list (see rw_cmdline.js's own
+// comment on cmdModalMemoryLoad/Save). NOT attached to every makeStubWindow() by default — the
+// module's own fail-open path (window.localStorage undefined) is the default, matching a real
+// browser with storage disabled. Pass the SAME instance to two separate stub windows' own
+// `.localStorage` to simulate two different page loads/reloads sharing one browser's storage.
+function makeFakeLocalStorage(){
+  const store = {};
+  return {
+    getItem(k){ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+    setItem(k, v){ store[k] = String(v); },
+    removeItem(k){ delete store[k]; },
+    _store: store
+  };
+}
+
 // A #rw-panel fixture matching both what RW._cmdRepositionOverlay would have
 // already pinned it to (style.left/bottom/width + a rect) AND rw_panelux.js's
 // real structural layout: a header with NO id (the drag handle, identified
@@ -4078,6 +4095,9 @@ function loadCoreModule(win){
        'graph table has the rest of the confirmed data-tool set (grd, damper, ...)');
     ok(!RW._cmdTable.some(e => e.name === 'linear' || e.name === 'wand'),
        'graph table does not carry annotate-host-only tool names');
+    ok(RW._cmdTable.some(e => e.name === 'connect') && RW._cmdTable.some(e => e.name === 'adjust'),
+       'round 27: two more tools discovered live — connect and adjust — are in the fallback table');
+    ok(RW._cmdGraphTableInfo.source === 'fallback', 'round 27: no toolbar in this fixture, so the built-in table is in force');
   }
 
   /* ---------- 181. Graph host: a real tool dispatches ONLY its own key — no defensive "d" draw-mode prefix ---------- */
@@ -4095,6 +4115,10 @@ function loadCoreModule(win){
     ok(keys.length === 1 && keys[0] === 'r', 'route dispatches exactly one key ("r"), with no leading "d"');
     RW.runCommand('grd');
     ok(keys[1] === 'g', 'grd dispatches its own key too, same one-key pattern');
+    RW.runCommand('connect');
+    ok(keys[2] === 'j', 'round 27: connect dispatches its own key ("j"), same one-key pattern');
+    RW.runCommand('adjust');
+    ok(keys[3] === 'a', 'round 27: adjust dispatches its own key ("a"), same one-key pattern');
   }
 
   /* ---------- 182. Graph host: `select` is a mode switch, not a repeat-tracked tool — same contract as the annotate host ---------- */
@@ -4194,6 +4218,56 @@ function loadCoreModule(win){
     win.document.body.appendChild(aside);
     return aside;
   }
+
+  // Round 27: synthesizes the real graph toolbar — <aside aria-label="Duct
+  // graph tools"> with one <button data-tool="..."> per pair, each carrying
+  // the app's own <span class="graph-tool-key">KEY</span> badge (rendered
+  // uppercase, same as the real app) plus a prose label span. Attached to
+  // doc.body because this stub's querySelectorAll walks from there, and
+  // '[data-tool]' is exactly the bare-attribute form its hand-rolled matcher
+  // supports. The badge itself is NOT findable by any selector the stub
+  // knows — that's the point: cmdToolKeyBadge reaches it via a manual
+  // .children walk, the same discipline cmdControlLiveLabel already uses, so
+  // this fixture exercises the real code path rather than a stub-only
+  // shortcut. Pass [name, null] for a button with no badge at all.
+  //
+  // IMPORTANT ordering: derivation runs at module LOAD time, so this must be
+  // called BEFORE loadModule(...) — unlike every other graph fixture in this
+  // file, which is built after loading.
+  function makeGraphToolbar(win, byId, pairs){
+    const aside = makeElement('aside', byId);
+    aside.setAttribute('aria-label', 'Duct graph tools');
+    pairs.forEach(function(p){
+      const btn = makeElement('button', byId);
+      btn.setAttribute('data-tool', p[0]);
+      if (p[1] !== null && p[1] !== undefined){
+        const badge = makeElement('span', byId);
+        badge.className = 'graph-tool-key';
+        badge.innerText = String(p[1]).toUpperCase();
+        btn.appendChild(badge);
+      }
+      const label = makeElement('span', byId);
+      label.innerText = p[2] || (p[0] + ' tool');
+      btn.appendChild(label);
+      aside.appendChild(btn);
+    });
+    win.document.body.appendChild(aside);
+    return aside;
+  }
+  // The real duct-pack toolbar, badges as confirmed live (round 27) — 13
+  // pairs including the two newly-discovered tools.
+  const DUCT_TOOLBAR = [['select','S'],['route','R'],['flex','F'],['extend','E'],['branch','B'],
+    ['transition','T'],['grd','G'],['unit','U'],['vertical','V'],['cut','C'],['damper','D'],
+    ['connect','J','Connect two open ends'],['adjust','A','Adjust duct length']];
+  // The real PIPE_TOOL_KEYS from pipe-session-ui.js (read from the bundle,
+  // never rendered/seen live) — same tool ids as the duct pack in several
+  // cases, DIFFERENT key letters, plus tools the duct pack doesn't have at
+  // all (terminate, valve, equipment, service, fixture, terminal, fitting,
+  // occlusion) — including `evidence`, which collides with this host's own
+  // `evidence` action.
+  const PIPE_TOOLBAR = [['select','S'],['route','R'],['extend','X'],['terminate','P'],['transition','N'],
+    ['cut','U'],['valve','V'],['equipment','Q'],['vertical','Z'],['service','A'],['evidence','D'],
+    ['fixture','F'],['terminal','T'],['fitting','G'],['occlusion','O']];
 
   /* ---------- 187. Graph host: RW._cmdToolSettingsList filters the shared "graph-" prefix by DOM visibility ---------- */
   // Unlike wand/wrap/mline's own confirmed-unique id prefixes, every graph
@@ -4567,23 +4641,84 @@ function loadCoreModule(win){
        'the identical decoy on the annotate host still captures — the dialog guard is graph-only');
   }
 
-  /* ---------- 205. table integrity: no duplicate names/aliases, and no action name/alias shadows a tool's ---------- */
+  /* ---------- 205. table integrity, now that the graph tool half is runtime-derived (round 27) ---------- */
+  // The old blanket rule ("no action name/alias equals or prefixes ANY tool
+  // name") can only be enforced over tools this repo actually controls — the
+  // built-in fallback table. Against a live toolbar it isn't enforceable at
+  // all: the piping pack ships a tool literally named `evidence`, colliding
+  // exactly with this host's `evidence` action. So the rule splits in two:
+  // the strict form still holds for the fallback table (block below), and a
+  // weaker but universal one holds for ANY derived table (this loop) — a
+  // collision may never make either entry unreachable, and precedence is
+  // pinned to table order (a tool always wins its own name; an action always
+  // keeps at least one of its own tokens).
   {
-    const { win: graphWin } = makeStubWindow({ host: GRAPH_HOST });
-    loadModule(graphWin, null, null, { activeTool: 'select' });
-    const table = graphWin.__RW._cmdTable;
-    const names = table.map(e => e.name);
-    ok(new Set(names).size === names.length, 'no two graph-table entries share a name');
-    const allAliases = [].concat(...table.map(e => e.aliases || []));
-    ok(new Set(allAliases).size === allAliases.length, 'no two graph-table entries share an alias');
-    const toolNames = table.filter(e => e.kind === 'native' && e.name !== 'select').map(e => e.name);
-    table.filter(e => e.kind === 'action').forEach(function(action){
-      const tokens = [action.name].concat(action.aliases || []);
-      tokens.forEach(function(tok){
-        ok(!toolNames.some(t => t === tok || t.indexOf(tok) === 0),
-           '"' + tok + '" (action "' + action.name + '") does not equal or prefix any tool name (' + toolNames.join(',') + ')');
+    const FIXTURES = [['fallback', null], ['duct toolbar', DUCT_TOOLBAR], ['piping toolbar', PIPE_TOOLBAR]];
+    FIXTURES.forEach(function(fx){
+      const label = fx[0];
+      const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+      if (fx[1]) makeGraphToolbar(win, byId, fx[1]);
+      loadModule(win, null, null, { activeTool: 'select' });
+      const RW = win.__RW, table = RW._cmdTable;
+      const tools = table.filter(function(e){ return e.kind === 'native'; });
+      const actions = table.filter(function(e){ return e.kind === 'action'; });
+
+      const toolNames = tools.map(function(e){ return e.name; });
+      ok(new Set(toolNames).size === toolNames.length, label + ': no two tools share a name');
+      const actionNames = actions.map(function(e){ return e.name; });
+      ok(new Set(actionNames).size === actionNames.length, label + ': no two actions share a name');
+      const toolAliases = [].concat(...tools.map(function(e){ return e.aliases || []; }));
+      ok(new Set(toolAliases).size === toolAliases.length, label + ': no two tools share an alias (the key letters, in particular)');
+      const actionAliases = [].concat(...actions.map(function(e){ return e.aliases || []; }));
+      ok(new Set(actionAliases).size === actionAliases.length, label + ': no two actions share an alias');
+
+      // Precedence, pinned: a tool always wins its own name.
+      toolNames.forEach(function(n){
+        const m = RW._cmdMatch(n)[0];
+        ok(m && m.name === n && m.kind === 'native',
+           label + ': "' + n + '" resolves to the TOOL, whatever else carries that token');
+      });
+      // Reachability, pinned: every action keeps at least one token of its own.
+      actions.forEach(function(a){
+        const tokens = [a.name].concat(a.aliases || []);
+        ok(tokens.some(function(t){ const m = RW._cmdMatch(t)[0]; return m === a; }),
+           label + ': action "' + a.name + '" is still reachable by at least one of its own tokens');
+      });
+      // No action ever takes a single letter — every letter is some pack's key.
+      actions.forEach(function(a){
+        [a.name].concat(a.aliases || []).forEach(function(t){
+          ok(t.length > 1, label + ': action token "' + t + '" is not a single letter');
+        });
       });
     });
+
+    // The strict original rule, kept for the table this repo fully controls.
+    {
+      const { win } = makeStubWindow({ host: GRAPH_HOST });
+      loadModule(win, null, null, { activeTool: 'select' });
+      const table = win.__RW._cmdTable;
+      ok(win.__RW._cmdGraphTableInfo.source === 'fallback', 'sanity: no toolbar in this fixture, so the built-in table is in force');
+      const toolNames = table.filter(e => e.kind === 'native' && e.name !== 'select').map(e => e.name);
+      table.filter(e => e.kind === 'action').forEach(function(action){
+        [action.name].concat(action.aliases || []).forEach(function(tok){
+          ok(!toolNames.some(t => t === tok || t.indexOf(tok) === 0),
+             '"' + tok + '" (action "' + action.name + '") does not equal or prefix any built-in tool name (' + toolNames.join(',') + ')');
+        });
+      });
+    }
+
+    // The one known live collision (piping's `evidence` tool) is ASSERTED as
+    // correctly reported, not merely tolerated by the loop above.
+    {
+      const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+      makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+      loadModule(win, null, null, { activeTool: 'select' });
+      const rows = win.__RW._cmdGraphTableInfo.shadowedActions;
+      const ev = rows.find(function(r){ return r.action === 'evidence'; });
+      ok(!!ev && ev.shadowed.indexOf('evidence') !== -1, 'the piping `evidence` TOOL is reported as shadowing the `evidence` ACTION');
+      ok(!!ev && ev.reachableAs.indexOf('attach') !== -1, 'and the action is reported as still reachable by "attach"');
+      ok(rows.every(function(r){ return r.reachableAs.length > 0; }), 'no action is left with zero reachable tokens');
+    }
   }
 
   /* ---------- 206. boundary guard: no table entry ever carries a forbidden button id, and the guard is enforced in code ---------- */
@@ -4654,17 +4789,32 @@ function loadCoreModule(win){
     ok(annotateWin.__RW._cmdIsolatedTool() === null, 'always null on the annotate host, regardless of what is armed');
   }
 
-  /* ---------- 210. isolated: typing a different tool's name matches nothing and reports why ---------- */
+  /* ---------- 210. round 25: isolated, typing a DIFFERENT tool's name now matches — switching tools directly is exempt from isolation ---------- */
+  // Reversed from this test's own pre-round-25 behavior (Kresna's own
+  // request, scoped narrowly: "only for the tool" — everything ELSE
+  // isolation restricts, e.g. an action button or another tool's own
+  // properties, stays refused; see tests 210b/213 below for that).
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
     const inp = byId['rw-cmd-input'];
     inp.value = 'flex';
     inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('flex') === 0),
+       'typing a different tool\'s name while route is armed matches it — switching tools directly is allowed');
+    ok(win.__RW._lastStatus.indexOf('route is active') === -1, 'no isolation refusal is reported for a tool switch');
+  }
+
+  /* ---------- 210b. round 25: an ACTION button (not a tool) is still refused while isolated — the widened exemption is tool-switching only ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'undo';
+    inp.dispatchEvent({ type: 'input' });
     ok(!byId['rw-cmd-menu'] || byId['rw-cmd-menu']._children.length === 0,
-       'typing a blocked tool name while route is armed matches nothing');
-    ok(win.__RW._lastStatus.indexOf('route is active') !== -1 && win.__RW._lastStatus.indexOf('switch tools') !== -1,
-       'status explains why, naming the active tool');
+       '"undo" — an action, not a tool switch — still matches nothing while route is isolated');
+    ok(win.__RW._lastStatus.indexOf('route is active') !== -1, 'status still explains why');
   }
 
   /* ---------- 211. isolated: the active tool's own params still match bare, and via "route." ---------- */
@@ -4700,9 +4850,18 @@ function loadCoreModule(win){
   }
 
   /* ---------- 212. isolated: select/finish/cancel still match — the allowed escapes and route-lifecycle actions ---------- */
+  // finish/cancel are genuinely usable here (present, visible, not disabled) —
+  // a route actually in progress, not just armed — since round 24 also drops
+  // an allowed-but-currently-unusable action from the list (see its own test
+  // 262 below for that case on its own).
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
+    ['graph-finish-route', 'graph-cancel-route'].forEach(function(id){
+      const btn = makeElement('button', byId);
+      btn.id = id; btn.offsetParent = {};
+      win.document.body.appendChild(btn);
+    });
     const inp = byId['rw-cmd-input'];
     ['select', 'finish', 'cancel'].forEach(function(name){
       inp.value = name;
@@ -4727,7 +4886,7 @@ function loadCoreModule(win){
        'status explains why');
   }
 
-  /* ---------- 214. isolated: RW.runCommand refuses a blocked tool in code, not just via the dropdown; the tool's own re-arm is exempted ---------- */
+  /* ---------- 214. round 25: RW.runCommand allows switching directly to a different tool in code too, not just via the dropdown; a non-tool action stays refused ---------- */
   {
     const { win } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
@@ -4735,12 +4894,14 @@ function loadCoreModule(win){
     const keys = [];
     RW._cmdDispatchAppKey = function(k){ keys.push(k); };
 
-    ok(RW.runCommand('flex') === false, 'runCommand refuses a different tool directly, bypassing the dropdown entirely');
-    ok(JSON.stringify(keys) === JSON.stringify([]), 'no key is dispatched for the refused command');
-    ok(RW._lastStatus.indexOf('route is active') !== -1, 'status names the active tool');
+    ok(RW.runCommand('flex') === true, 'runCommand switches directly to a different tool, bypassing the dropdown entirely');
+    ok(JSON.stringify(keys) === JSON.stringify(['f']), 'and it actually dispatches the new tool\'s own key');
 
     ok(RW.runCommand('route') === true, 'runCommand still allows re-arming the SAME tool that is isolated');
-    ok(JSON.stringify(keys) === JSON.stringify(['r']), 'and it actually dispatches — the exemption RW._cmdApplySetting\'s re-arm depends on');
+    ok(JSON.stringify(keys) === JSON.stringify(['f', 'r']), 'and it actually dispatches — the exemption RW._cmdApplySetting\'s re-arm depends on');
+
+    ok(RW.runCommand('undo') === false, 'a non-tool ACTION is still refused directly via runCommand — the widened exemption is tool-switching only');
+    ok(RW._lastStatus.indexOf('route is active') !== -1, 'status names the active tool');
   }
 
   /* ---------- 215. isolated: RW._cmdApplySetting's own re-arm still works end-to-end under isolation ---------- */
@@ -4814,6 +4975,68 @@ function loadCoreModule(win){
     dialog.open = open !== false;
     win.document.body.appendChild(dialog);
     return dialog;
+  }
+
+  // Round 26 fixture: a real, open branch-fitting modal with one categorical field (the Fitting
+  // type select) and one non-categorical field (Starting width, a number) — enough to exercise the
+  // remember/auto-fill split without rebuilding all seven of branch's real fields every time.
+  function makeBranchFittingFixture(win, byId){
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap'], ['wye', 'Wye']]);
+    typeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+    const startWidth = makeElement('input', byId);
+    startWidth.id = 'graph-branch-fitting-starting-width-input'; startWidth.type = 'number'; startWidth.value = '12'; startWidth.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Starting width (in)', startWidth));
+    return { modal: modal, typeSel: typeSel, startWidth: startWidth };
+  }
+
+  // Round 26 follow-up: branch fitting's own modal memory was carved out into a dedicated
+  // standalone repo (boon-duct-workbench) — every remaining round-26 test that needs a live
+  // categorical field now exercises `transition` (change size) instead, via this sibling fixture.
+  // transition's own real field shapes were never individually confirmed live (same still-open
+  // item as grd/vertical), so this mirrors branch fitting's fixture shape rather than a
+  // live-confirmed one — fine, since RW._cmdModalMemory's own remember/auto-fill rule reads each
+  // control's live TYPE, never a specific id.
+  function makeTransitionFixture(win, byId){
+    const modal = makeGraphModal(win, byId, 'graph-checkpoint-transition-modal');
+    const sizeSel = makeSelect(byId, 'graph-checkpoint-transition-size-select', [['reducer', 'Reducer'], ['increaser', 'Increaser']]);
+    sizeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Change type', sizeSel));
+    const newWidth = makeElement('input', byId);
+    newWidth.id = 'graph-checkpoint-transition-new-width-input'; newWidth.type = 'number'; newWidth.value = '10'; newWidth.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'New width (in)', newWidth));
+    return { modal: modal, sizeSel: sizeSel, newWidth: newWidth };
+  }
+
+  // Round 28 fixture: a branch fitting modal with all four field TYPES the walk has to
+  // handle (select, number, checkbox, select), appended in this deliberate document
+  // order so the walk's own "first unvisited field in on-screen order" rule has
+  // something real to walk through. Also carries real, usable submit/cancel buttons
+  // (offsetParent set) since cmdActionUsable would otherwise drop them from the
+  // end-of-walk prompt — see round 24's own comment on why a button needs to be
+  // genuinely present/visible/enabled to be offered.
+  function makeBranchWalkFixture(win, byId){
+    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
+    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap'], ['wye', 'Wye']]);
+    typeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+    const startWidth = makeElement('input', byId);
+    startWidth.id = 'graph-branch-fitting-starting-width-input'; startWidth.type = 'number'; startWidth.value = '12'; startWidth.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Starting width (in)', startWidth));
+    const damper = makeElement('input', byId);
+    damper.id = 'graph-branch-fitting-damper-check'; damper.type = 'checkbox'; damper.checked = false; damper.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Damper', damper));
+    const alignmentSel = makeSelect(byId, 'graph-branch-fitting-alignment-select', [['top', 'Top'], ['center', 'Center'], ['bottom', 'Bottom']]);
+    alignmentSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Alignment', alignmentSel));
+    const chooseBtn = makeElement('button', byId);
+    chooseBtn.id = 'graph-branch-fitting-submit'; chooseBtn.offsetParent = {};
+    modal.appendChild(chooseBtn);
+    const cancelBtn = makeElement('button', byId);
+    cancelBtn.id = 'graph-branch-fitting-cancel'; cancelBtn.offsetParent = {};
+    modal.appendChild(cancelBtn);
+    return { modal: modal, typeSel: typeSel, startWidth: startWidth, damper: damper, alignmentSel: alignmentSel, chooseBtn: chooseBtn, cancelBtn: cancelBtn };
   }
 
   /* ---------- 218. round profile flips route's own width control's live label to "Diameter (in)" — "diameter" now matches it, "width" still does too ---------- */
@@ -4989,7 +5212,7 @@ function loadCoreModule(win){
     inspector.appendChild(dialog); // deliberately inside the inspector, same as test 192
 
     const tools = RW._cmdTable.filter(e => e.kind === 'native' && e.name !== 'select').map(e => e.name);
-    ok(tools.length === 10, 'sanity: 10 real graph tools besides select');
+    ok(tools.length === 12, 'sanity: 12 real graph tools besides select in the built-in fallback table (connect/adjust added round 27)');
     tools.forEach(function(tool){
       const params = RW._cmdToolSettingsList(tool);
       ok(params.every(p => p.id !== 'graph-calibrate-feet'), tool + '. never lists a control inside the non-recognized calibrate dialog');
@@ -5304,6 +5527,31 @@ function loadCoreModule(win){
        'a real graph tool (route) is offered');
     ok(rows && !rows.some(function(r){ return r.innerText.indexOf('undo') === 0; }),
        'undo — an action, not a tool — is never offered in this starting menu');
+    // Round 27: the fallback table is now 13 tools long (connect/adjust
+    // added), so "first 8" genuinely excludes some real tools — pins that
+    // the cap is table order, not "every tool always fits."
+    ok(rows && rows.length === 8, 'round 27: still capped at 8 rows even though the fallback table is now 13 tools');
+    ok(rows && !rows.some(function(r){ return r.innerText.indexOf('connect') === 0; }),
+       'round 27: connect (13th in table order) does not fit in the first-8 starting menu');
+  }
+
+  /* ---------- 241b. round 27: the first-Space starting menu's first 8 follows the LIVE toolbar's own DOM order when one is derived ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    // adjust first, connect second — the opposite of DUCT_TOOLBAR's order —
+    // so this can only pass if the menu order really tracks the derived
+    // table's order, not a coincidence of the fallback table's own order.
+    makeGraphToolbar(win, byId, [['select','S'],['adjust','A'],['connect','J'],['route','R'],
+      ['flex','F'],['extend','E'],['branch','B'],['transition','T'],['grd','G']]);
+    loadModule(win, null, null, { activeTool: null });
+    win.document._fire('keydown', { target: makeElement('div', byId), key: ' ' });
+    const rows = byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children;
+    ok(rows && rows.length === 8, 'still 8 rows against a 9-tool derived toolbar');
+    ok(rows && rows.some(function(r){ return r.innerText.indexOf('adjust') === 0; })
+       && rows.some(function(r){ return r.innerText.indexOf('connect') === 0; }),
+       'adjust and connect — first in THIS toolbar\'s DOM order — are offered');
+    ok(rows && !rows.some(function(r){ return r.innerText.indexOf('grd') === 0; }),
+       'grd (9th in this toolbar\'s DOM order) does not fit in the first 8');
   }
 
   /* ---------- 242. Space also "initializes the console" while a config-dialog modal is open — no synthetic key dispatch, just its own dropdown (Kresna: "I want that behaviour also be in branch mode") ---------- */
@@ -5324,6 +5572,12 @@ function loadCoreModule(win){
     const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap']]);
     typeSel.offsetParent = {};
     modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
+    // A real, usable submit button — round 24 also drops an unusable action
+    // from the list, so "choose" needs a genuine graph-branch-fitting-submit
+    // present/visible/enabled to still be offered here.
+    const chooseBtn = makeElement('button', byId);
+    chooseBtn.id = 'graph-branch-fitting-submit'; chooseBtn.offsetParent = {};
+    modal.appendChild(chooseBtn);
 
     const keys = [];
     const origDispatch = RW._cmdDispatchAppKey;
@@ -5768,6 +6022,975 @@ function loadCoreModule(win){
     doc._fire('keydown', { target: bodyTarget, key: '3', preventDefault(){ defaultPrevented = true; } });
     ok(defaultPrevented, 'the console escape hatch restores capture on the graph host too');
     ok(byId['rw-cmd-input'].value === '3', 'and the digit seeds the bar exactly as it did before this round');
+  }
+
+  /* ---------- 262. round 24: an action with no button on the page at all is not offered in the dropdown ---------- */
+  // Kresna's own request: "command that didn't applicable for a specific
+  // state, its best not to include in the dropdown list" — instead of
+  // listing it and refusing it after the fact (the pre-round-24 behavior,
+  // still true for a direct RW.runCommand() console call).
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'elevation';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || !byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('elevation') === 0),
+       '"elevation" is not offered — graph-edit-riser-elevation is not on the page (no riser selected)');
+  }
+
+  /* ---------- 263. round 24: a visible-but-disabled action's button is not offered either ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-finish-route'; btn.offsetParent = {}; btn.disabled = true; // idle idiom, per test 199
+    win.document.body.appendChild(btn);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'finish';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || !byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('finish') === 0),
+       '"finish" is on the page but disabled (no route in progress) — not offered');
+  }
+
+  /* ---------- 264. round 24: a hidden-but-not-disabled action's button is not offered either ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-toggle-damper'; btn.offsetParent = null; // hidden idiom, per test 200
+    win.document.body.appendChild(btn);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'toggledamper';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!byId['rw-cmd-menu'] || !byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('toggledamper') === 0),
+       '"toggledamper" is on the page but hidden (nothing selected) — not offered');
+  }
+
+  /* ---------- 265. round 24: once genuinely usable, the same action IS offered — this isn't a blanket removal ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-finish-route'; btn.offsetParent = {}; // present, visible, enabled
+    win.document.body.appendChild(btn);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'finish';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('finish') === 0),
+       '"finish" is offered once its button is genuinely present, visible, and enabled');
+  }
+
+  /* ---------- 266. round 24: native tool entries (no `.btn` at all) are never gated by this — untouched ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('route') === 0),
+       'a plain native tool (route) is still offered with no button/DOM state to check at all');
+  }
+
+  /* ---------- 266b. round 27: the same no-`.btn`-means-never-gated invariant holds for a DERIVED (piping) tool this repo doesn't hardcode ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'valve';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('valve') === 0),
+       'a derived native tool (valve, piping-only) is offered too, with no button/DOM state to check');
+  }
+
+  /* ---------- 267. round 24: the annotate host is unaffected — it has no button-backed action entries at all ---------- */
+  {
+    const { win, byId } = makeStubWindow(); // annotate host
+    loadModule(win);
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'pan';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('pan') === 0),
+       'the annotate host\'s own vocabulary is untouched by a graph-only gate');
+  }
+
+  /* ---------- 268. round 26: writing a SELECT field inside transition's own open modal is remembered (in-memory and persisted) ---------- */
+  // Round 26 follow-up: was branch fitting's own modal — branch was carved out into a dedicated
+  // standalone repo (boon-duct-workbench), so this and its siblings below now exercise
+  // `transition` (change size) instead. See test 277 for branch's own exclusion.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    const fakeLS = makeFakeLocalStorage();
+    win.localStorage = fakeLS;
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    makeTransitionFixture(win, byId);
+
+    RW._cmdApplySetting('transition', 'size-select', 'increaser');
+    ok(RW._cmdModalMemory.transition && RW._cmdModalMemory.transition['size-select'] === 'increaser',
+       'the select write is remembered in RW._cmdModalMemory, keyed by tool and param');
+    const rawPersisted = fakeLS.getItem('rw_graph_modal_memory_v1');
+    const persisted = rawPersisted ? JSON.parse(rawPersisted) : null;
+    ok(!!persisted && !!persisted.transition && persisted.transition['size-select'] === 'increaser',
+       'and persisted to localStorage under the same shape');
+  }
+
+  /* ---------- 269. round 26: writing a NUMBER field inside the same modal is NOT remembered — only select/checkbox are ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    win.localStorage = makeFakeLocalStorage();
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    makeTransitionFixture(win, byId);
+
+    RW._cmdApplySetting('transition', 'new-width-input', '20');
+    ok(!RW._cmdModalMemory.transition || RW._cmdModalMemory.transition['new-width-input'] === undefined,
+       'a numeric field — more likely to differ duct to duct — is never remembered');
+  }
+
+  /* ---------- 270. round 26: writing a select/checkbox field in the ORDINARY (non-modal) inspector is NOT remembered — scoped to "branch windows" only ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    win.localStorage = makeFakeLocalStorage();
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const gaugeSel = makeSelect(byId, 'graph-gauge-select', [['26', '26ga'], ['24', '24ga']]);
+    gaugeSel.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Gauge', gaugeSel));
+
+    RW._cmdApplySetting('route', 'gauge-select', '24');
+    ok(!RW._cmdModalMemory.route,
+       'a select field on the ordinary always-visible inspector (no modal open) is never remembered — this only applies inside the four config-dialog modals');
+  }
+
+  /* ---------- 271. round 26: opening the modal auto-fills a remembered value, and reports one combined status ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    win.localStorage = makeFakeLocalStorage();
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
+    const fixture = makeTransitionFixture(win, byId);
+    ok(fixture.sizeSel.value === 'reducer', 'sanity: the field starts on its own default, not the remembered value');
+
+    RW._cmdModalMemoryTick();
+    ok(fixture.sizeSel.value === 'increaser', 'the remembered value was applied to the real control the moment the modal was detected open');
+    ok(RW._lastStatus.indexOf('transition') !== -1 && RW._lastStatus.indexOf('auto-filled') !== -1 && RW._lastStatus.indexOf('Change type') !== -1,
+       'one combined status names the tool and the field(s) that were filled in');
+  }
+
+  /* ---------- 272. round 26: auto-fill only fires ONCE per open — it does not re-apply or re-report every tick while the modal stays open ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    win.localStorage = makeFakeLocalStorage();
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
+    const fixture = makeTransitionFixture(win, byId);
+
+    RW._cmdModalMemoryTick();
+    fixture.sizeSel.value = 'reducer'; // simulate the user changing it back by hand after the auto-fill
+    RW._lastStatus = '';
+    RW._cmdModalMemoryTick(); // still open — must NOT re-apply over the user's own change
+    ok(fixture.sizeSel.value === 'reducer', 'a second tick while the SAME modal stays open does not re-apply the remembered value');
+    ok(RW._lastStatus === '', 'and does not re-report the auto-fill status either');
+  }
+
+  /* ---------- 273. round 26: RW._cmdModalMemoryEnabled = false disables both remembering and auto-fill ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    win.localStorage = makeFakeLocalStorage();
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    RW._cmdModalMemoryEnabled = false;
+    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
+    const fixture = makeTransitionFixture(win, byId);
+
+    RW._cmdModalMemoryTick();
+    ok(fixture.sizeSel.value === 'reducer', 'auto-fill is skipped entirely with the hatch off');
+
+    RW._cmdApplySetting('transition', 'size-select', 'increaser');
+    ok(RW._cmdModalMemory.transition['size-select'] === undefined || Object.keys(RW._cmdModalMemory.transition || {}).length === 1,
+       'and a fresh write is not (re-)remembered either — the pre-seeded value above is untouched, nothing new is added');
+  }
+
+  /* ---------- 274. round 26: RW._cmdModalMemoryClear clears one tool, or everything with no argument ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    const fakeLS = makeFakeLocalStorage();
+    win.localStorage = fakeLS;
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' }, grd: { 'type-select': 'ceiling' } };
+
+    RW._cmdModalMemoryClear('transition');
+    ok(!RW._cmdModalMemory.transition, '"transition" alone is cleared');
+    ok(!!RW._cmdModalMemory.grd, 'a different tool\'s memory is untouched');
+    ok(JSON.parse(fakeLS.getItem('rw_graph_modal_memory_v1')).transition === undefined, 'the clear is persisted too');
+
+    RW._cmdModalMemoryClear();
+    ok(Object.keys(RW._cmdModalMemory).length === 0, 'no argument clears everything');
+  }
+
+  /* ---------- 275. round 26: a value remembered in one page load is auto-filled in a later one that shares the same browser storage ---------- */
+  // Simulates "next instance" most literally: two separate loadModule() calls
+  // (two separate page loads/reloads) sharing one fake localStorage instance.
+  {
+    const sharedLS = makeFakeLocalStorage();
+
+    const { win: winA, byId: byIdA } = makeStubWindow({ host: GRAPH_HOST });
+    winA.localStorage = sharedLS;
+    loadModule(winA, null, null, { activeTool: 'transition' });
+    makeTransitionFixture(winA, byIdA);
+    winA.__RW._cmdApplySetting('transition', 'size-select', 'increaser');
+
+    const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
+    winB.localStorage = sharedLS; // "the same browser" — reload/re-paste, not a fresh browser profile
+    loadModule(winB, null, null, { activeTool: 'transition' });
+    ok(winB.__RW._cmdModalMemory.transition && winB.__RW._cmdModalMemory.transition['size-select'] === 'increaser',
+       'the freshly-loaded instance already has the remembered value on startup, before anything is typed');
+
+    const fixtureB = makeTransitionFixture(winB, byIdB);
+    winB.__RW._cmdModalMemoryTick();
+    ok(fixtureB.sizeSel.value === 'increaser', 'and auto-fills it into the real control once its own modal is detected open — no re-typing needed');
+  }
+
+  /* ---------- 276. round 26: no localStorage available — remembering/loading never throws, falls back to in-memory only ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST }); // no win.localStorage at all — the default
+    let threw = false;
+    let RW;
+    try {
+      loadModule(win, null, null, { activeTool: 'transition' });
+      RW = win.__RW;
+      makeTransitionFixture(win, byId);
+      RW._cmdApplySetting('transition', 'size-select', 'increaser');
+    } catch (e) { threw = true; }
+    ok(!threw, 'no localStorage on the page never throws, on load or on write');
+    ok(RW._cmdModalMemory.transition && RW._cmdModalMemory.transition['size-select'] === 'increaser',
+       'the value is still remembered in-memory for the rest of this page — it just will not survive a reload');
+  }
+
+  /* ---------- 277. round 26 follow-up: branch fitting's own memory is EXCLUDED — carved out into a dedicated standalone repo (boon-duct-workbench) ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    const fakeLS = makeFakeLocalStorage();
+    win.localStorage = fakeLS;
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fixture = makeBranchFittingFixture(win, byId);
+
+    RW._cmdApplySetting('branch', 'type-select', 'wye');
+    ok(!RW._cmdModalMemory.branch, 'a select write inside branch\'s own modal is no longer remembered at all');
+    const rawPersisted = fakeLS.getItem('rw_graph_modal_memory_v1');
+    ok(!rawPersisted || !JSON.parse(rawPersisted).branch, 'nor persisted');
+
+    RW._cmdModalMemory = { branch: { 'type-select': 'wye' } }; // even a manually-seeded value (e.g. old data from before this round)
+    fixture.typeSel.value = 'tap';
+    RW._cmdModalMemoryTick();
+    ok(fixture.typeSel.value === 'tap', 'is never auto-filled either — branch\'s own dedicated repo is the only place this now lives');
+  }
+
+  /* ---------- 278. round 27: derives the real duct toolbar, badges and all ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, DUCT_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdGraphTableInfo.source === 'toolbar', 'source reports "toolbar" once a real one is present');
+    ok(RW._cmdGraphTableInfo.count === 13, 'all 13 duct-toolbar tools were derived');
+    ok(RW._cmdGraphTableInfo.skipped.length === 0 && RW._cmdGraphTableInfo.aliasDropped.length === 0,
+       'nothing skipped, no alias dropped, against a clean toolbar');
+    const table = RW._cmdTable;
+    ok(table.filter(function(e){ return e.kind === 'native'; }).length === 13, 'RW._cmdTable carries all 13 derived tools');
+    const connect = table.find(function(e){ return e.name === 'connect'; });
+    ok(!!connect && connect.aliases[0] === 'j' && connect.aliases.indexOf('join') !== -1,
+       'connect: key "j" from the badge, curated alias "join" merged in');
+    const adjust = table.find(function(e){ return e.name === 'adjust'; });
+    ok(!!adjust && adjust.aliases[0] === 'a' && adjust.aliases.indexOf('stretch') !== -1,
+       'adjust: key "a" from the badge, curated alias "stretch" merged in');
+    ok(table.filter(function(e){ return e.name === 'select'; })[0].run.__isModeSwitch === true,
+       'select is still the mode switch when derived');
+    ok(connect.run.__isDrawTool === true, 'a real derived tool is still __isDrawTool');
+  }
+
+  /* ---------- 279. round 27: the badge is authoritative — a piping-shaped toolbar dispatches ITS keys, not the duct pack's ---------- */
+  // This is the test that would have caught the exact silent-wrong-key bug
+  // this round exists to prevent, had the table stayed hardcoded.
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('extend');
+    ok(keys[0] === 'x', 'piping toolbar: extend dispatches "x" (not "e", the duct pack\'s key)');
+    RW.runCommand('vertical');
+    ok(keys[1] === 'z', 'piping toolbar: vertical dispatches "z" (not "v")');
+    RW.runCommand('cut');
+    ok(keys[2] === 'u', 'piping toolbar: cut dispatches "u" (not "c")');
+    RW.runCommand('transition');
+    ok(keys[3] === 'n', 'piping toolbar: transition dispatches "n" (not "t")');
+  }
+
+  /* ---------- 280. round 27: no toolbar on the page ⇒ falls back to the built-in table, and says so ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdGraphTableInfo.source === 'fallback', 'source reports "fallback" with no toolbar present');
+    const keys = [];
+    RW._cmdDispatchAppKey = function(k){ keys.push(k); };
+    RW.runCommand('route'); ok(keys[0] === 'r', 'fallback route still dispatches "r"');
+    RW.runCommand('connect'); ok(keys[1] === 'j', 'fallback connect still dispatches "j"');
+    // The tail report fires after RW._cmdDetectTags, so it's the last status
+    // set by the end of module load.
+    ok(RW._lastStatus && RW._lastStatus.indexOf('built-in') !== -1,
+       'the fallback case reports itself via RW._commitStatus, unlike the ordinary success case');
+  }
+
+  /* ---------- 281. round 27: select stays a mode switch on a derived table, same contract as the fallback ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    RW.runCommand('route');
+    ok(RW._cmdLastTool === 'route', 'a real derived tool becomes the Space-repeat target');
+    RW.runCommand('select');
+    ok(RW._cmdToolArmed === false, 'select clears the armed flag on a derived table too');
+    ok(RW._cmdLastTool === 'route', 'select never overwrites the last-repeated tool');
+  }
+
+  /* ---------- 282. round 27: a button with a missing/unreadable badge inherits its built-in key when the id is known, else is dropped ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, [['select','S'], ['route', null], ['mystery', null], ['flex','F']]);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    const route = RW._cmdTable.find(function(e){ return e.name === 'route'; });
+    ok(!!route && route.aliases[0] === 'r', 'route with no badge inherits its built-in key "r"');
+    ok(!RW._cmdTable.some(function(e){ return e.name === 'mystery'; }), 'an unknown id with no badge is dropped entirely, not a dead command');
+    ok(RW._cmdGraphTableInfo.skipped.some(function(s){ return s.indexOf('route') === 0 && s.indexOf('built-in') !== -1; }),
+       'route\'s fallback is recorded in `skipped`');
+    ok(RW._cmdGraphTableInfo.skipped.some(function(s){ return s.indexOf('mystery') === 0; }),
+       'mystery\'s drop is recorded in `skipped` too');
+  }
+
+  /* ---------- 283. round 27: two buttons claiming the same badge letter — first in DOM order keeps it, the later one is dropped and recorded ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, [['select','S'], ['route','R'], ['duplicate','R'], ['flex','F']]);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdTable.some(function(e){ return e.name === 'route'; }), 'route (first with "r") is kept');
+    ok(!RW._cmdTable.some(function(e){ return e.name === 'duplicate'; }), 'duplicate (second with "r") is dropped');
+    ok(RW._cmdGraphTableInfo.skipped.some(function(s){ return s.indexOf('duplicate') === 0 && s.indexOf('already taken') !== -1; }),
+       'the drop is recorded in `skipped`, naming the letter');
+  }
+
+  /* ---------- 284. round 27: a derived tool gets <tool>. drill-in and isolation for free — no per-tool wiring needed ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'valve' });
+    const RW = win.__RW;
+    ok(RW._cmdActiveSettingsTool() === 'valve', 'a piping-only tool (valve) is recognized as the active settings tool');
+    ok(RW._cmdIsolatedTool() === 'valve', 'and isolation picks it up too');
+    ok(!!RW._toolSettingsMap.valve, 'RW._toolSettingsMap has an entry for it');
+    ok(!RW._toolSettingsMap.select, 'but not for select, same rule as the fallback table');
+    ok(Array.isArray(RW._cmdToolSettingsList('valve')) && RW._cmdToolSettingsList('valve').length === 0,
+       'RW._cmdToolSettingsList returns [] (no DOM to find), never throws or reports "unknown tool"');
+    // The NATIVE exemption in cmdIsolationEscapes covers derived tools too —
+    // switching to a different real tool is never blocked by isolation.
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'route';
+    inp.dispatchEvent({ type: 'input' });
+    ok(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('route') === 0),
+       'typing a different tool (route) while valve is isolated still matches — the NATIVE exemption covers derived tools');
+  }
+
+  /* ---------- 285. round 27: curated aliases merge by id, and drop on collision with another derived tool's own name/key ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win, byId, DUCT_TOOLBAR);
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdMatch('duct')[0] && RW._cmdMatch('duct')[0].name === 'route', 'curated alias "duct" resolves to route');
+    ok(RW._cmdMatch('join')[0] && RW._cmdMatch('join')[0].name === 'connect', 'curated alias "join" resolves to connect');
+
+    // A synthetic toolbar carrying BOTH `unit` and a real `equipment` tool —
+    // `equipment` is `unit`'s own curated alias, so it must be dropped.
+    const { win: win2, byId: byId2 } = makeStubWindow({ host: GRAPH_HOST });
+    makeGraphToolbar(win2, byId2, [['select','S'], ['unit','U'], ['equipment','Q']]);
+    loadModule(win2, null, null, { activeTool: 'select' });
+    const RW2 = win2.__RW;
+    ok(RW2._cmdGraphTableInfo.aliasDropped.some(function(s){ return s.indexOf('unit') === 0 && s.indexOf('equipment') !== -1; }),
+       'unit\'s curated alias "equipment" is dropped and recorded once a real "equipment" tool exists');
+    ok(RW2._cmdMatch('equipment')[0] && RW2._cmdMatch('equipment')[0].name === 'equipment',
+       '"equipment" now resolves to the TOOL, not unit\'s dropped alias');
+  }
+
+  /* ---------- 286. round 27: RW._cmdRebuildGraphTable() re-derives without a page reload; n/a on the annotate host ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const RW = win.__RW;
+    ok(RW._cmdGraphTableInfo.source === 'fallback', 'starts on the fallback (no toolbar yet)');
+    makeGraphToolbar(win, byId, PIPE_TOOLBAR);
+    const info = RW._cmdRebuildGraphTable();
+    ok(info.source === 'toolbar', 'rebuild picks up the toolbar that has since appeared');
+    ok(RW._cmdTable.some(function(e){ return e.name === 'valve'; }), 'RW._cmdTable itself is refreshed');
+    ok(!!RW._toolSettingsMap.valve, 'RW._toolSettingsMap is refreshed too');
+    ok(RW._lastStatus && RW._lastStatus.indexOf('toolbar') !== -1, 'reports the outcome via _commitStatus');
+
+    const { win: annWin } = makeStubWindow(); // annotate host
+    loadModule(annWin);
+    ok(annWin.__RW._cmdRebuildGraphTable() === null, 'n/a on the annotate host — returns null');
+  }
+
+  /* ---------- 287. round 27: the "annotations" action (Hide/Show Annotations) ---------- */
+  {
+    // (a) button absent — refused, and never offered in the dropdown (round-24 gate).
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    ok(win.__RW.runCommand('annotations') === false, 'refuses when the button is not on the page');
+    ok(win.__RW._lastStatus.indexOf('not on the page') !== -1, 'status says so');
+    const inp = byId['rw-cmd-input'];
+    inp.value = 'annotations';
+    inp.dispatchEvent({ type: 'input' });
+    ok(!(byId['rw-cmd-menu'] && byId['rw-cmd-menu']._children.some(r => r.innerText.indexOf('annotations') === 0)),
+       'and it is not offered in the dropdown at all while unusable');
+  }
+  {
+    // (b) button present + visible — clicks it.
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-toggle-annotations'; btn.offsetParent = {};
+    win.document.body.appendChild(btn);
+    ok(win.__RW.runCommand('annotations') === true && btn._clicked === 1, 'clicks graph-toggle-annotations when present');
+  }
+  {
+    // (c) the "anno" alias resolves to it.
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'select' });
+    ok(win.__RW._cmdMatch('anno')[0] && win.__RW._cmdMatch('anno')[0].name === 'annotations', '"anno" resolves to the annotations action');
+  }
+  {
+    // (d) refused while a tool is isolated — pinning the deliberate decision
+    // NOT to add it to GRAPH_ISOLATION_ALLOWED.
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const btn = makeElement('button', byId);
+    btn.id = 'graph-toggle-annotations'; btn.offsetParent = {};
+    win.document.body.appendChild(btn);
+    ok(win.__RW.runCommand('annotations') === false, 'refused while route is isolated, even with its button present');
+    ok(win.__RW._lastStatus.indexOf('is active') !== -1, 'the refusal is the isolation message, not "not on the page"');
+    ok(btn._clicked === 0, 'and the button was never actually clicked');
+  }
+
+  /* ---------- 288. round 28: opening the branch fitting modal auto-starts a field walk on the FIRST field ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+
+    ok(inp.value === 'branch.type-select = ', 'the tick opens a value draft on the first field in document order (Fitting type)');
+    ok(inp._focused === true, 'the command bar takes focus on its own — no keystroke needed to start');
+    ok(RW._lastStatus.indexOf('Fitting type') !== -1, 'the status names the live label');
+    ok(RW._lastStatus.indexOf('1/4') !== -1, "and reports progress against the modal's own current field count (4)");
+    ok(RW._cmdModalWalk && RW._cmdModalWalk.tool === 'branch', 'RW._cmdModalWalk is console-inspectable while the walk is running');
+  }
+
+  /* ---------- 289. round 28: the auto-start is edge-triggered — a second tick with the same modal still open never resets the walk ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    inp.value = 'something the user is mid-typing';
+    RW._cmdModalWalkTick();
+
+    ok(inp.value === 'something the user is mid-typing', 'a second tick while the SAME modal stays open never touches the bar again');
+  }
+
+  /* ---------- 290. round 28: scoped to branch fitting only — a transition modal opening does not start a walk ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    makeTransitionFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+
+    ok(inp.value === '', 'no walk starts for a modal outside MODAL_WALK_TOOLS');
+    ok(inp._focused !== true, 'the bar is never focused either');
+    ok(RW._cmdModalWalk === null, 'RW._cmdModalWalk stays null');
+  }
+
+  /* ---------- 291. round 28: a typed value on each field type walks select -> number -> checkbox -> select, writing every real control ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // opens field 1: Fitting type (select)
+    inp.value = 'branch.type-select = wye';
+    inp.dispatchEvent({ type: 'input' }); // filters the option list down to "wye" so it's the one highlighted
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.typeSel.value === 'wye', 'field 1 (select) was applied to the real control');
+    ok(inp.value === 'branch.starting-width-input = ', 'confirming field 1 immediately opens field 2 (Starting width), no re-typing the tool name');
+
+    inp.value = 'branch.starting-width-input = 20';
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.startWidth.value === '20', 'field 2 (number) was applied');
+    ok(inp.value === 'branch.damper-check = ', 'and field 3 (Damper, a checkbox) opens next');
+
+    inp.value = 'branch.damper-check = on';
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.damper.checked === true, 'field 3 (checkbox) was applied via a typed on/off value, not auto-toggled');
+    ok(inp.value === 'branch.alignment-select = ', 'and field 4 (Alignment, a select) opens last');
+
+    inp.value = 'branch.alignment-select = bottom';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.alignmentSel.value === 'bottom', 'field 4 (select) was applied, completing the walk');
+  }
+
+  /* ---------- 292. round 28: Enter with nothing typed leaves the field untouched and advances — it is a skip, not a re-apply ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: Fitting type (select), opened on its own current value
+    inp._fire('keydown', { key: 'Enter' }); // nothing typed, nothing Tab-previewed
+    ok(fx.typeSel.value === 'tap', 'an untouched select is left at its ORIGINAL value, not silently re-applied to itself');
+    ok(inp.value === 'branch.starting-width-input = ', 'and the walk still advances to field 2');
+
+    inp._fire('keydown', { key: 'Enter' }); // field 2: number, also untouched
+    ok(fx.startWidth.value === '12', 'an untouched number field keeps its original value too');
+    ok(inp.value === 'branch.damper-check = ', 'and advances to field 3');
+  }
+
+  /* ---------- 293. round 28: a Tab-previewed select is KEPT on a bare Enter, not treated as a skip ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: Fitting type, starts on "tap"
+    inp._fire('keydown', { key: 'Tab' }); // live-previews the next option ("wye") for real
+    ok(fx.typeSel.value === 'wye', 'sanity: Tab actually previewed a different value on the real control');
+
+    inp._fire('keydown', { key: 'Enter' }); // nothing further typed
+    ok(fx.typeSel.value === 'wye', 'a bare Enter after a Tab-preview KEEPS the previewed value — it is not treated as an untouched skip');
+    ok(inp.value === 'branch.starting-width-input = ', 'and the walk still advances normally');
+  }
+
+  /* ---------- 294. round 28: a walk-driven checkbox is a typed on/off draft, never an immediate auto-toggle ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    inp._fire('keydown', { key: 'Enter' }); // skip field 1
+    inp._fire('keydown', { key: 'Enter' }); // skip field 2 -> lands on field 3, Damper (checkbox)
+    ok(inp.value === 'branch.damper-check = ', 'the walk opened a value draft on the checkbox, exactly like any other field');
+    ok(fx.damper.checked === false, 'and it has NOT been auto-toggled just by walking onto it');
+
+    inp.value = 'branch.damper-check = on';
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.damper.checked === true, 'typing "on" and confirming it DOES flip the real control');
+  }
+
+  /* ---------- 295. round 28: the walk ends on a Choose/Cancel prompt, never clicking Choose automatically ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    for (let i = 0; i < 4; i++) inp._fire('keydown', { key: 'Enter' }); // skip through every field
+
+    ok(fx.chooseBtn._clicked === 0, 'Choose has NOT been clicked automatically once every field is walked');
+    ok(inp.value === '', 'the bar itself is empty, not left mid-command');
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 2 && rows[0].innerText.indexOf('choose') === 0 && rows[1].innerText.indexOf('cancelbranch') === 0,
+       'exactly the two modal actions are offered, choose first');
+    ok(rows[0].style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1, 'choose is the one highlighted');
+    ok(RW._cmdModalWalk === null, 'the walk itself has ended (no longer in progress)');
+
+    inp._fire('keydown', { key: 'Enter' }); // confirm the highlighted row
+    ok(fx.chooseBtn._clicked === 1, 'one further, deliberate Enter now actually clicks Choose');
+  }
+
+  /* ---------- 296. round 28: an unusable Choose button is left off the end-of-walk prompt, same as the ordinary dropdown ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    fx.chooseBtn.disabled = true;
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    for (let i = 0; i < 4; i++) inp._fire('keydown', { key: 'Enter' });
+
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 1 && rows[0].innerText.indexOf('cancelbranch') === 0, 'only cancelbranch is offered when choose is disabled');
+    ok(rows[0].style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1, 'and it is the one highlighted, since it is now the only option');
+  }
+
+  /* ---------- 297. round 28: the next field is re-discovered live on every hop, not snapshotted at walk-start ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    fx.alignmentSel.offsetParent = null; // hidden at walk-start — e.g. conditional on Fitting type, like branch's real flush-boot fields
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    inp._fire('keydown', { key: 'Enter' }); // skip field 1
+    inp._fire('keydown', { key: 'Enter' }); // skip field 2 -> lands on field 3 (damper); alignment is still hidden, so it's skipped over entirely
+    ok(inp.value === 'branch.damper-check = ', 'alignment is not prompted for while hidden — only the 3 currently-visible fields are walked');
+
+    fx.alignmentSel.offsetParent = {}; // becomes visible, as if the app just revealed it
+    inp._fire('keydown', { key: 'Enter' }); // skip field 3 (damper)
+    ok(inp.value === 'branch.alignment-select = ', "and it IS picked up the moment it becomes visible, on the very next hop — the field list is re-read live, not frozen at walk-start");
+  }
+
+  /* ---------- 298. round 28: Escape mid-walk ends the WHOLE walk, and it cannot be resumed by a later Enter ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    inp.value = 'branch.type-select = wye';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' }); // field 1 applied for real, walk now on field 2
+    ok(fx.typeSel.value === 'wye', 'sanity: field 1 really was applied before Escape');
+
+    inp._fire('keydown', { key: 'Escape' });
+    ok(RW._cmdModalWalk === null, 'the walk itself is torn down');
+    ok(inp.value === '' && inp._focused === false, 'the bar clears and blurs, same as any other cancelled draft');
+    ok(fx.typeSel.value === 'wye', 'field 1, applied before the Escape, is left exactly as it was');
+
+    inp.value = 'x';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(inp.value !== 'branch.starting-width-input = ', 'a later, unrelated Enter never resumes the walk on field 2');
+    ok(RW._cmdModalWalk === null, 'and RW._cmdModalWalk is still null');
+  }
+
+  /* ---------- 299. round 28: the modal closing mid-walk (e.g. the app's own Cancel clicked by mouse) tears the walk down quietly ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(RW._cmdModalWalk !== null, 'sanity: the walk is actually running');
+
+    fx.modal.open = false; // simulate the dialog closing by some path other than this project's own commands
+    RW._cmdModalWalkTick();
+
+    ok(RW._cmdModalWalk === null, 'the walk is torn down the moment the modal is noticed closed');
+    ok(inp.value === '', 'the bar is cleared rather than left on a field that no longer exists');
+  }
+
+  /* ---------- 300. round 28: RW._cmdModalWalkEnabled = false disables auto-start only ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkEnabled = false;
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(inp.value === '' && RW._cmdModalWalk === null, 'no walk starts while the hatch is off');
+
+    ok(RW._cmdStartModalWalk('branch') === true, 'but a manual call still works — the hatch only gates auto-start');
+    ok(inp.value === 'branch.type-select = ', 'and it opens the first field exactly like the auto-start path would');
+  }
+
+  /* ---------- 301. round 28: clicking an option row with the mouse continues the walk exactly like pressing Enter does ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: Fitting type — options are Tap (current), Wye
+    const rows = byId['rw-cmd-menu']._children;
+    const wyeRow = rows.find(function(r){ return r.innerText.indexOf('Wye') !== -1; });
+    wyeRow._fire('click', {});
+
+    ok(fx.typeSel.value === 'wye', 'the click applied the option to the real control');
+    ok(inp.value === 'branch.starting-width-input = ', 'and — unlike a plain click outside a walk — it also advanced to the next field rather than clearing/blurring');
+  }
+
+  /* ---------- 302. round 28 regression guard: `dimension`'s own chain is unaffected — no walk state is created, and an empty value still stops it (not skips it) ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'route' });
+    const RW = win.__RW;
+    const inspector = makeGraphInspector(win, byId);
+    const width = makeElement('input', byId);
+    width.id = 'graph-width-input'; width.type = 'number'; width.min = '1'; width.max = '48'; width.value = '24'; width.offsetParent = {};
+    const height = makeElement('input', byId);
+    height.id = 'graph-height-input'; height.type = 'number'; height.min = '1'; height.max = '48'; height.value = '12'; height.offsetParent = {};
+    inspector.appendChild(makeGraphField(byId, 'Width (in)', width));
+    inspector.appendChild(makeGraphField(byId, 'Height (in)', height));
+    const inp = byId['rw-cmd-input'];
+
+    RW.runCommand('dimension');
+    ok(RW._cmdModalWalk === null, 'dimension never creates any modal-walk state');
+
+    inp._fire('keydown', { key: 'Enter' }); // nothing typed after "route.width-input = "
+    ok(RW._lastStatus.indexOf('not a number') !== -1, 'an empty value on a NON-walk draft is still a parse failure, not a deliberate skip');
+    ok(inp.value === '' && !inp._focused, 'and the chain stops right there, exactly as it always has');
+  }
+
+  /* ---------- 303. round 29: with no memory at all, the walk still jumps straight to field 1 — zero regression on round 28's own behavior ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    ok(Object.keys(RW._cmdModalWalkValueMemory).length === 0, 'sanity: nothing is remembered on a fresh load');
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+
+    ok(inp.value === 'branch.type-select = ', 'no offer is shown — the walk opens field 1 directly, exactly like round 28');
+    ok(RW._cmdModalWalk && RW._cmdModalWalk.reuse === false, 'and it is running in non-reuse mode');
+  }
+
+  /* ---------- 304. round 29: completing a walk records every APPLIED field's value — a SKIPPED field is never recorded ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: Fitting type
+    inp.value = 'branch.type-select = wye';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' }); // APPLIED
+
+    inp._fire('keydown', { key: 'Enter' }); // field 2 (Starting width) — SKIPPED, nothing typed
+
+    ok(RW._cmdModalWalkValueMemory.branch && RW._cmdModalWalkValueMemory.branch['type-select'] === 'wye',
+       'the applied field is remembered');
+    ok(!('starting-width-input' in (RW._cmdModalWalkValueMemory.branch || {})),
+       'the skipped field is never recorded');
+  }
+
+  /* ---------- 305. round 29: a value remembered in one page load offers "use previous" the next time the SAME modal opens in a later load ---------- */
+  // Same "two separate loadModule() calls sharing one fake localStorage instance" idiom as
+  // round 26's own persistence test (274/275).
+  {
+    const sharedLS = makeFakeLocalStorage();
+
+    const { win: winA, byId: byIdA } = makeStubWindow({ host: GRAPH_HOST });
+    winA.localStorage = sharedLS;
+    loadModule(winA, null, null, { activeTool: 'branch' });
+    makeBranchWalkFixture(winA, byIdA);
+    const inpA = byIdA['rw-cmd-input'];
+    winA.__RW._cmdModalWalkTick();
+    inpA.value = 'branch.type-select = wye';
+    inpA.dispatchEvent({ type: 'input' });
+    inpA._fire('keydown', { key: 'Enter' }); // field 1 applied, remembered
+
+    const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
+    winB.localStorage = sharedLS; // "the same browser" — reload/re-paste, not a fresh browser profile
+    loadModule(winB, null, null, { activeTool: 'branch' });
+    ok(winB.__RW._cmdModalWalkValueMemory.branch && winB.__RW._cmdModalWalkValueMemory.branch['type-select'] === 'wye',
+       'the freshly-loaded instance already has the remembered value on startup');
+
+    makeBranchWalkFixture(winB, byIdB);
+    const inpB = byIdB['rw-cmd-input'];
+    winB.__RW._cmdModalWalkTick();
+
+    ok(inpB.value === '', 'the walk does NOT jump straight into field 1 this time');
+    const rows = byIdB['rw-cmd-menu']._children;
+    ok(rows.length === 2 && rows[0].innerText === 'Edit each field' && rows[1].innerText === 'use previous for all',
+       'instead the Edit/use-previous choice is offered');
+    ok(winB.__RW._cmdModalWalk === null, 'and no walk has actually started yet — nothing was chosen');
+  }
+
+  /* ---------- 306. round 29: choosing "Edit each field" opens field 1 blank, same as a fresh walk with no memory ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' } };
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 2, 'sanity: the offer is showing');
+    rows[0]._fire('click', {}); // "Edit each field"
+
+    ok(inp.value === 'branch.type-select = ', 'field 1 opens completely blank, no prefill');
+    ok(RW._cmdModalWalk && RW._cmdModalWalk.reuse === false, 'the walk is now actually running, in non-reuse mode');
+  }
+
+  /* ---------- 307. round 29: choosing "use previous for all" pre-fills each remembered field; Enter applies it and advances ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye', 'starting-width-input': '18' } };
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    rows[1]._fire('click', {}); // "use previous for all"
+
+    ok(inp.value === 'branch.type-select = Wye', "field 1 (select) opens PRE-FILLED with the remembered option's own display text");
+    ok(fx.typeSel.value === 'tap', 'and the real control has not been touched yet — this is only a draft');
+
+    inp._fire('keydown', { key: 'Enter' }); // confirm the prefilled value
+    ok(fx.typeSel.value === 'wye', 'confirming it DOES apply the remembered value to the real control');
+    ok(inp.value === 'branch.starting-width-input = 18', 'field 2 (number) is also pre-filled from memory');
+
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.startWidth.value === '18', 'and applying it writes the real control too');
+  }
+
+  /* ---------- 308. round 29: mid-reuse-walk, a field with nothing remembered for it opens blank ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' } }; // nothing remembered for starting-width-input
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    rows[1]._fire('click', {}); // use previous for all
+    inp._fire('keydown', { key: 'Enter' }); // apply field 1's prefill
+
+    ok(inp.value === 'branch.starting-width-input = ', 'field 2 has no remembered value, so it opens blank, exactly like a non-reuse walk');
+  }
+
+  /* ---------- 309. round 29: a remembered select value that no longer matches any current option falls back to the ordinary current-value highlight ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'no-longer-an-option' } };
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    rows[1]._fire('click', {}); // use previous for all
+
+    ok(inp.value === 'branch.type-select = ', 'no bogus text is prefilled when the remembered value matches nothing real');
+    const optionRows = byId['rw-cmd-menu']._children;
+    ok(optionRows.some(function(r){ return r.innerText.indexOf('Tap') !== -1 && r.style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1; }),
+       "the field's own actual CURRENT value (\"Tap\") is highlighted instead, same as an ordinary walk would show");
+  }
+
+  /* ---------- 310. round 29: RW._cmdModalWalkMemoryEnabled = false disables both the offer and remembering new/updated values ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' } };
+    RW._cmdModalWalkMemoryEnabled = false;
+    const fx = makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(inp.value === 'branch.type-select = ', 'no offer is shown while the hatch is off — the walk goes straight to field 1, unprefilled');
+
+    inp.value = 'branch.type-select = tap'; // deliberately different from the pre-seeded "wye"
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.typeSel.value === 'tap', 'sanity: the real control WAS actually changed');
+    ok(RW._cmdModalWalkValueMemory.branch['type-select'] === 'wye',
+       'but the change was not recorded — the pre-seeded value survives untouched while the hatch is off');
+
+    inp._fire('keydown', { key: 'Enter' }); // skip field 2
+    inp.value = 'branch.damper-check = on';
+    inp._fire('keydown', { key: 'Enter' }); // apply field 3, a brand-new field never remembered before
+
+    ok(!('damper-check' in RW._cmdModalWalkValueMemory.branch), 'and a genuinely new value is not recorded either');
+  }
+
+  /* ---------- 311. round 29: RW._cmdModalWalkMemoryClear clears one tool's memory, or everything with no argument ---------- */
+  {
+    const { win } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' }, transition: { 'size-select': 'reducer' } };
+
+    RW._cmdModalWalkMemoryClear('branch');
+    ok(!RW._cmdModalWalkValueMemory.branch, 'clearing one tool removes just that tool');
+    ok(RW._cmdModalWalkValueMemory.transition && RW._cmdModalWalkValueMemory.transition['size-select'] === 'reducer',
+       "a different tool's memory is untouched");
+
+    RW._cmdModalWalkMemoryClear();
+    ok(Object.keys(RW._cmdModalWalkValueMemory).length === 0, 'clearing with no argument wipes everything');
+  }
+
+  /* ---------- 312. round 29: ignoring the offer leaves no walk state behind, and the unchanged edge does not re-show it ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'branch' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { branch: { 'type-select': 'wye' } };
+    makeBranchWalkFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(RW._cmdModalWalk === null, 'no walk state exists yet while the offer is merely showing');
+
+    inp.value = 'select'; // the user ignores the offer and types an unrelated command
+    inp.dispatchEvent({ type: 'input' });
+    ok(RW._cmdModalWalk === null, 'still no walk state after typing something else');
+
+    RW._cmdModalWalkTick(); // modal is still open, unchanged since the last tick
+    ok(inp.value === 'select', 'the offer is not re-shown — the edge has not changed, so the bar is left exactly as the user typed it');
   }
 
   finish();

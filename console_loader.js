@@ -459,25 +459,154 @@
     { name:'mirror',   kind:NATIVE, aliases:['m'],  run: nativeKey('m') },
   ];
 
-  // ----- graph ("Duct Takeoff") host: confirmed live via opencli — every
-  // data-tool value and its key hint (S R F E B T G U V C D) matched exactly,
-  // and dispatching each key from `document` flipped __graphDebug.activeTool
-  // with pageEntities/history staying at 0 throughout. `select` is this
+  // ----- graph ("Duct Takeoff") host: tool table (round 27: now derived live
+  // from the toolbar — see cmdDeriveGraphTools/cmdApplyGraphTable below) -----
+  // This literal is the FALLBACK only, reached when the live toolbar can't be
+  // read. Originally confirmed live via opencli — every data-tool value and
+  // its key hint (S R F E B T G U V C D) matched exactly, and dispatching
+  // each key from `document` flipped __graphDebug.activeTool with
+  // pageEntities/history staying at 0 throughout — widened round 27 to add
+  // two tools discovered live since (connect=J, adjust=A). `select` is this
   // host's own resting state already, so it's a mode switch here too, same
   // as the annotate host's `select` — everything else is a real tool.
-  const GRAPH_TABLE = [
-    { name:'select',     kind:NATIVE, aliases:['s'], run: nativeKey('s') },
-    { name:'route',      kind:NATIVE, aliases:['r','duct'],      run: nativeToolPlain('r') },
-    { name:'flex',       kind:NATIVE, aliases:['f'],             run: nativeToolPlain('f') },
-    { name:'extend',     kind:NATIVE, aliases:['e'],             run: nativeToolPlain('e') },
-    { name:'branch',     kind:NATIVE, aliases:['b'],             run: nativeToolPlain('b') },
-    { name:'transition', kind:NATIVE, aliases:['t'],             run: nativeToolPlain('t') },
-    { name:'grd',        kind:NATIVE, aliases:['g','diffuser'],  run: nativeToolPlain('g') },
-    { name:'unit',       kind:NATIVE, aliases:['u','equipment'], run: nativeToolPlain('u') },
-    { name:'vertical',   kind:NATIVE, aliases:['v','riser'],     run: nativeToolPlain('v') },
-    { name:'cut',        kind:NATIVE, aliases:['c','split'],     run: nativeToolPlain('c') },
-    { name:'damper',     kind:NATIVE, aliases:['d'],             run: nativeToolPlain('d') },
+  //
+  // Round 27: a SECOND trade pack was found to exist on this same host
+  // (pipe-session-ui.js's PIPE_TOOL_KEYS, active when
+  // bootstrap.workspace.tradePack === "piping" — a module-local const with no
+  // global we can read) that reuses several of these same tool ids with
+  // DIFFERENT key letters (extend=x not e, vertical=z not v, cut=u not c,
+  // transition=n not t) and filters which tools even appear per project. A
+  // hardcoded table can silently dispatch the WRONG key there — the reason
+  // the real table is now read from the app's own toolbar (each button's own
+  // `.graph-tool-key` badge, which the app itself derives from whichever
+  // TOOL_KEYS map is actually active) rather than trusted as a static list.
+  // This literal is what's used when that read fails or finds nothing.
+  const GRAPH_TOOL_ALIASES = {
+    route:['duct'], grd:['diffuser'], unit:['equipment'], vertical:['riser'],
+    cut:['split'], connect:['join'], adjust:['stretch']
+  };
+
+  const GRAPH_FALLBACK_KEYS = [
+    ['select','s'], ['route','r'], ['flex','f'], ['extend','e'], ['branch','b'],
+    ['transition','t'], ['grd','g'], ['unit','u'], ['vertical','v'], ['cut','c'],
+    ['damper','d'], ['connect','j'], ['adjust','a']
   ];
+
+  // One entry factory shared by the fallback table AND every live-derived
+  // table, so a derived entry and a fallback entry are structurally
+  // identical — the invariant every existing graph-table test leans on.
+  // `select` is special-cased by NAME, never by key position: the piping
+  // pack also calls its own resting tool `select` (with the same key, `s`,
+  // on both packs, but this must not rely on that coincidence), and
+  // GRAPH_SETTINGS_MAP/RW._cmdActiveSettingsTool already key off that name.
+  function cmdGraphToolEntry(name, key){
+    return {
+      name: name,
+      kind: NATIVE,
+      key: key, // metadata for the derivation diagnostics below; dispatch itself goes through run()
+      aliases: [key].concat(GRAPH_TOOL_ALIASES[name] || []),
+      run: (name === 'select') ? nativeKey(key) : nativeToolPlain(key)
+    };
+  }
+
+  const GRAPH_TABLE = GRAPH_FALLBACK_KEYS.map(function(p){ return cmdGraphToolEntry(p[0], p[1]); });
+
+  // Reads the app's own live toolbar to build the real tool table — see the
+  // GRAPH_TABLE comment above for why this can't be a static list. Walks
+  // .children by hand (no querySelector('.class'), no .closest(), no
+  // .dataset) for the same reason cmdControlLiveLabel does further below:
+  // this project's Node test harness supports only getAttribute/.children/
+  // #id lookups, and this must run unchanged against both it and the real
+  // DOM. GRAPH_TOOL_KEY_CLASS/cmdToolKeyBadge/cmdDeriveGraphTools/
+  // cmdShadowedActions are pure functions — none of them touch RW._cmdTable
+  // themselves; cmdApplyGraphTable (declared further below, once
+  // GRAPH_SETTINGS_PREFIX/GRAPH_ACTIONS are in scope) is what actually wires
+  // the result in.
+  const GRAPH_TOOL_KEY_CLASS = 'graph-tool-key';
+
+  function cmdToolKeyBadge(el, depth){
+    for (const child of (el.children || [])){
+      if (String(child.className || '').split(/\s+/).indexOf(GRAPH_TOOL_KEY_CLASS) !== -1){
+        const text = (child.innerText || child.textContent || '').trim().toLowerCase();
+        if (text) return text;
+      }
+      if ((depth || 0) < 3){
+        const nested = cmdToolKeyBadge(child, (depth || 0) + 1);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
+
+  // Returns {source, entries, skipped, aliasDropped}. `entries` is null when
+  // nothing usable was found on the page, so the caller falls back to the
+  // built-in GRAPH_TABLE above — this never throws and never returns a
+  // half-built table.
+  function cmdDeriveGraphTools(){
+    const out = { source:'fallback', entries:null, skipped:[], aliasDropped:[] };
+    let els = [];
+    try { els = Array.from(document.querySelectorAll('[data-tool]')); } catch (e){ els = []; }
+    const tools = [], seenName = {}, seenKey = {};
+    for (const el of els){
+      const name = (el.getAttribute('data-tool') || '').trim().toLowerCase();
+      if (!name) continue;
+      if (seenName[name]){ out.skipped.push(name + ': duplicate data-tool'); continue; }
+      let key = cmdToolKeyBadge(el);
+      if (!key || !/^[a-z0-9]$/.test(key)){
+        // No readable badge. Inherit this tool's own built-in key if we know
+        // one, else drop it — a keyless entry could dispatch nothing at all,
+        // and a dead row in the dropdown would be worse than not listing it.
+        const known = GRAPH_TABLE.find(function(e){ return e.name === name; });
+        if (!known){ out.skipped.push(name + ': no key badge, no built-in key'); continue; }
+        key = known.key;
+        out.skipped.push(name + ': no key badge, used built-in "' + key + '"');
+      }
+      if (seenKey[key]){ out.skipped.push(name + ': key "' + key + '" already taken'); continue; }
+      seenName[name] = true; seenKey[key] = true;
+      tools.push(cmdGraphToolEntry(name, key));
+    }
+    if (!tools.length) return out;
+    // A curated alias that collides with another DERIVED tool's own name or
+    // key is dropped, so the alias namespace stays unambiguous whatever pack
+    // is loaded — the piping pack has a tool literally named `equipment`,
+    // which is also `unit`'s curated alias on the duct pack. The key itself
+    // (index 0) is never dropped here; it was already deduped above.
+    tools.forEach(function(t){
+      t.aliases = t.aliases.filter(function(a, i){
+        if (i === 0) return true;
+        if (seenName[a] || seenKey[a]){ out.aliasDropped.push(t.name + ': "' + a + '"'); return false; }
+        return true;
+      });
+    });
+    out.source = 'toolbar'; out.entries = tools;
+    return out;
+  }
+
+  // Which ACTION entries a given tool table shadows, and what each is still
+  // reachable by. Table order IS the resolution rule — RW._cmdTable is
+  // tools-then-actions, and both findEntry and RW._cmdMatch scan it in
+  // order (exact name before exact alias), so a collision is deterministic,
+  // never ambiguous: the TOOL wins its own name and the action keeps every
+  // other token it has. The live case is the piping pack, whose `evidence`
+  // tool collides exactly with this host's `evidence` action (still
+  // reachable as `attach`). `fitting`/`fixture` vs. the `fit` alias is only
+  // ever a RANKING question, never a reachability one: `fit` is an exact
+  // alias (rank 1) and beats `fitting` as a name-prefix (rank 2), while
+  // typing `fitting` in full is an exact name (rank 0) either way.
+  function cmdShadowedActions(tools){
+    const names = tools.map(function(t){ return t.name; });
+    const rows = [];
+    GRAPH_ACTIONS.forEach(function(a){
+      const tokens = [a.name].concat(a.aliases || []);
+      const clashed = tokens.filter(function(t){ return names.indexOf(t) !== -1; });
+      if (clashed.length) rows.push({
+        action: a.name,
+        shadowed: clashed,
+        reachableAs: tokens.filter(function(t){ return names.indexOf(t) === -1; })
+      });
+    });
+    return rows;
+  }
 
   // Enforced in RW.runCommand's button-dispatch path, not just by omission
   // from GRAPH_ACTIONS below — see that function's own comment. Save is a
@@ -504,9 +633,18 @@
   // manual-commit mode — CommandJournal flushes within 300ms-2s regardless
   // of the Save button, which is a force-flush/retry control, not a commit
   // gate) — exactly the same as a user clicking that same button by hand.
-  // No single-letter aliases: every one of s/r/f/e/b/t/g/u/v/c/d is already
-  // a GRAPH_TABLE tool key, so these take word names/aliases only, chosen so
-  // no name or alias collides with (or prefixes) a tool's own name/alias.
+  // No single-letter aliases, and no name/alias that equals or prefixes a
+  // tool name. As of round 27, WHICH letters are tool keys isn't known until
+  // the toolbar is actually read at runtime (the piping pack uses x/z/u/n
+  // where the duct pack uses e/v/c/t — see GRAPH_TABLE's own comment), so the
+  // rule is now: no action takes a single letter at all, and no action token
+  // may equal or prefix a tool name in EITHER known pack. Where a collision
+  // is unavoidable anyway — the piping pack ships a tool literally named
+  // `evidence` — resolution is deterministic by table order (see
+  // cmdShadowedActions above): the TOOL wins its own name, and the action
+  // stays reachable by its own remaining token (`attach`).
+  // cmdApplyGraphTable reports every such case and console.warns if one is
+  // ever left with no reachable token at all; test 205 asserts both halves.
   const GRAPH_ACTIONS = [
     { name:'undo',         kind:ACTION, aliases:[],                       btn:'graph-undo-command' },
     { name:'redo',         kind:ACTION, aliases:['re'],                   btn:'graph-redo-command' },
@@ -525,6 +663,18 @@
     { name:'rationale',    kind:ACTION, aliases:['why'],                  btn:'graph-attach-rationale' },
     { name:'toggledamper', kind:ACTION, aliases:['tdamper'],              btn:'graph-toggle-damper' },
     { name:'elevation',    kind:ACTION, aliases:['riserelev'],            btn:'graph-edit-riser-elevation', conditional:'only appears with a riser selected' },
+    // Round 27: the canvas toolbar's own "Hide Annotations"/"Show Annotations"
+    // button, next to undo/redo — a pure client-side view toggle
+    // (`annotationsHidden`), submits nothing, and flips its own label in
+    // place, so one neutral noun covers both directions rather than a
+    // hide/show pair. No single-letter alias: `a` is `adjust`'s own key on
+    // the duct pack (and `service`'s on the piping pack). Deliberately NOT
+    // added to GRAPH_ISOLATION_ALLOWED below — it's a view control in the
+    // same class as zoomfit/zoomin/ruler, every one of which is already
+    // refused while a tool is armed; admitting it would be the first
+    // widening of that allowlist beyond a tool's own lifecycle/dialog/
+    // dimension edits, for a one-keystroke (Escape) inconvenience.
+    { name:'annotations',  kind:ACTION, aliases:['anno'],                 btn:'graph-toggle-annotations' },
 
     // ----- round 19: each config-dialog modal's own Choose/Cancel-equivalent
     // buttons — reuses RW.runCommand's existing button-dispatch path
@@ -643,12 +793,64 @@
   // which may round up empty) so `<tool>.` still drills in cleanly instead
   // of reporting "unknown tool."
   const GRAPH_SETTINGS_PREFIX = 'graph-';
-  const GRAPH_SETTINGS_MAP = GRAPH_TABLE.reduce(function(map, entry){
-    if (entry.name !== 'select') map[entry.name] = { dataTool: entry.name, prefix: GRAPH_SETTINGS_PREFIX };
-    return map;
-  }, {});
 
-  RW._toolSettingsMap = RW_IS_GRAPH ? GRAPH_SETTINGS_MAP : ANNOTATE_SETTINGS_MAP;
+  // Round 27: whichever graph tool table is actually in force — derived from
+  // the live toolbar when possible, else the GRAPH_TABLE fallback above. A
+  // `let`, not a const, so RW._cmdRebuildGraphTable below can re-derive
+  // without a page reload: this module's own `if (RW.vcmd) return` re-entry
+  // guard makes re-pasting the loader onto an already-injected page a no-op,
+  // so re-deriving needs its own entry point.
+  let GRAPH_TOOLS = GRAPH_TABLE;
+  RW._cmdGraphTableInfo = { source: 'n/a' }; // graph host only; overwritten below
+
+  // Builds RW._cmdTable AND RW._toolSettingsMap from ONE derivation, so the
+  // two can never disagree about which tools exist — GRAPH_SETTINGS_MAP has
+  // been derived from the tool table since round 15, and that stays true
+  // here, which is what gives every derived tool its `<tool>.` drill-in for
+  // free, with no extra code. Also reports the outcome — see cmdDeriveGraphTools/
+  // cmdShadowedActions above for what each field means.
+  function cmdApplyGraphTable(){
+    const res = cmdDeriveGraphTools();
+    GRAPH_TOOLS = res.entries || GRAPH_TABLE;
+    RW._cmdTable = GRAPH_TOOLS.concat(GRAPH_ACTIONS);
+    RW._toolSettingsMap = GRAPH_TOOLS.reduce(function(map, entry){
+      if (entry.name !== 'select') map[entry.name] = { dataTool: entry.name, prefix: GRAPH_SETTINGS_PREFIX };
+      return map;
+    }, {});
+    const shadowed = cmdShadowedActions(GRAPH_TOOLS);
+    RW._cmdGraphTableInfo = {
+      source: res.source,
+      count: GRAPH_TOOLS.length,
+      tools: GRAPH_TOOLS.map(function(e){ return e.name + ' (' + e.aliases[0] + ')'; }),
+      skipped: res.skipped,
+      aliasDropped: res.aliasDropped,
+      shadowedActions: shadowed
+    };
+    console.log('[RW] graph tools: ' + GRAPH_TOOLS.length + ' from the ' + res.source
+      + ' — ' + RW._cmdGraphTableInfo.tools.join(', ')
+      + (res.skipped.length ? ' | skipped: ' + res.skipped.join('; ') : '')
+      + (res.aliasDropped.length ? ' | aliases dropped: ' + res.aliasDropped.join('; ') : '')
+      + (shadowed.length ? ' | shadowed actions: ' + shadowed.map(function(r){ return r.action; }).join(', ') : ''));
+    shadowed.forEach(function(r){
+      if (!r.reachableAs.length) console.warn('[RW] action "' + r.action + '" is fully shadowed by a tool of the same name and has no other token — it is no longer reachable from the command line');
+    });
+    return RW._cmdGraphTableInfo;
+  }
+
+  RW._toolSettingsMap = ANNOTATE_SETTINGS_MAP;
+  if (RW_IS_GRAPH) cmdApplyGraphTable();
+
+  // Console escape hatch: re-derive the graph tool table without a page
+  // reload (see the `let GRAPH_TOOLS` comment above for why re-pasting the
+  // loader can't do this on its own). Read-only apart from the table itself
+  // — never re-arms a tool, never dispatches anything. n/a on the annotate
+  // host, matching this file's other host-scoped console probes.
+  RW._cmdRebuildGraphTable = function(){
+    if (!RW_IS_GRAPH){ console.log('[RW] graph tool table: n/a on this host'); return null; }
+    const info = cmdApplyGraphTable();
+    RW._commitStatus && RW._commitStatus('graph tools: ' + info.count + ' from the ' + info.source);
+    return info;
+  };
 
   // ----- graph host: scoping the settings sweep to the real inspector (round 15) -----
   // Confirmed live: "every graph- id that's currently visible" (the rule
@@ -699,11 +901,15 @@
   // focused and typed into while one is open; the auto-capture bail-out
   // narrowed below (see cmdOpenDialogs's own comment) was the only thing
   // stopping that.
+  // submitCmd/cancelCmd (round 28) name each modal's own Choose/Cancel-equivalent
+  // GRAPH_ACTIONS entry (below) — used only by the field-walk (round 28) to know
+  // which command to end on, never duplicated as a second source of the button ids
+  // themselves (those still live solely on the GRAPH_ACTIONS entries).
   const GRAPH_TOOL_MODALS = {
-    branch:     { dialogId: 'graph-branch-fitting-modal',        prefix: 'graph-branch-fitting-',        title: 'branch fitting' },
-    transition: { dialogId: 'graph-checkpoint-transition-modal', prefix: 'graph-checkpoint-transition-', title: 'change size' },
-    grd:        { dialogId: 'graph-checkpoint-grd-modal',        prefix: 'graph-checkpoint-grd-',        title: 'place GRD' },
-    vertical:   { dialogId: 'graph-checkpoint-riser-modal',      prefix: 'graph-checkpoint-riser-',      title: 'riser elevation' }
+    branch:     { dialogId: 'graph-branch-fitting-modal',        prefix: 'graph-branch-fitting-',        title: 'branch fitting', submitCmd: 'choose',     cancelCmd: 'cancelbranch' },
+    transition: { dialogId: 'graph-checkpoint-transition-modal', prefix: 'graph-checkpoint-transition-', title: 'change size',    submitCmd: 'apply',      cancelCmd: 'cancelsize'  },
+    grd:        { dialogId: 'graph-checkpoint-grd-modal',        prefix: 'graph-checkpoint-grd-',        title: 'place GRD',      submitCmd: 'place',      cancelCmd: 'cancelgrd'   },
+    vertical:   { dialogId: 'graph-checkpoint-riser-modal',      prefix: 'graph-checkpoint-riser-',      title: 'riser elevation',submitCmd: 'placeriser', cancelCmd: 'cancelriser' }
   };
   const GRAPH_MODAL_DIALOG_IDS = Object.keys(GRAPH_TOOL_MODALS).map(function(k){ return GRAPH_TOOL_MODALS[k].dialogId; });
 
@@ -740,6 +946,30 @@
   // button-usability check in RW.runCommand (see GRAPH_ACTIONS).
   function cmdIsVisible(el){
     return !!(el.offsetParent || (el.getClientRects && el.getClientRects().length));
+  }
+
+  // ----- Round 24: is a GRAPH_ACTIONS entry actually runnable RIGHT NOW? -----
+  // Read-only mirror of RW.runCommand's own button-resolution steps (never
+  // clicks anything) — extracted so the dropdown can hide an action that
+  // would just be refused if picked, instead of listing it and only reporting
+  // "not available right now" after the fact (Kresna's own request: "command
+  // that didn't applicable for a specific state, its best not to include in
+  // the dropdown list"). Confirmed live (see RW.runCommand's own comment):
+  // this page uses two different disabled idioms — visible-but-disabled
+  // (finish/cancel while a route is idle) and hidden-but-not-disabled
+  // (assign-network/toggle-damper with nothing selected) — both covered here
+  // the same way runCommand already covers them. Entries with no `.btn` at
+  // all (every native tool, and `dimension`, which has its own dedicated
+  // isolation exemption) always return true — this only ever gates the
+  // button-backed GRAPH_ACTIONS vocabulary, never a tool switch.
+  function cmdActionUsable(entry){
+    if (!entry.btn) return true;
+    if (FORBIDDEN_BUTTON_IDS.indexOf(entry.btn) !== -1) return false;
+    const btn = document.getElementById(entry.btn);
+    if (!btn) return false;
+    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return false;
+    if (!cmdIsVisible(btn)) return false;
+    return true;
   }
 
   // Upward parentNode walk to the nearest ancestor with the given tagName.
@@ -1060,8 +1290,8 @@
   // additive, unchanged below. While a duct tool (route, flex, ...) is armed, the
   // command line becomes modal: only that tool's own properties, the ways out
   // (select/Escape/Space), and the route-lifecycle actions (finish/cancel) are
-  // reachable. Everything else — other tools, other action buttons, # system search —
-  // is refused with a status message rather than silently vanishing.
+  // reachable. Everything else — other action buttons, # system search — is
+  // refused with a status message rather than silently vanishing.
   // Round 19: the 8 new modal-action commands are appended flat, matching
   // the finish/cancel precedent above rather than scoping per-tool —
   // finish/cancel are already globally allowed despite being route-specific,
@@ -1078,6 +1308,29 @@
     // finish/cancel already are, not scoped per-tool.
     'dimension'
   ];
+  // Round 25 (Kresna's own request, scoped narrowly: "only for the tool"):
+  // switching directly to a DIFFERENT native tool while one is ARMED is no
+  // longer refused — every `kind === NATIVE` entry (route, flex, select, ...)
+  // escapes isolation the same way the GRAPH_ISOLATION_ALLOWED actions above
+  // do, so typing/picking another tool's name arms it immediately with no
+  // "type select first" detour. Everything else isolation was ever meant to
+  // restrict is unchanged: that tool's own properties via a DIFFERENT tool's
+  // `tool.` prefix, `#` system search, and every non-tool action (undo,
+  // zoomfit, ...) are still refused exactly as before.
+  //
+  // Deliberately narrower than "isolated at all": the exemption only applies
+  // while isolation comes from an actually-ARMED tool, never while it comes
+  // from an OPEN CONFIG-DIALOG MODAL (`cmdOpenModalTool()`'s own fallback in
+  // RW._cmdIsolatedTool). Dispatching a tool-switch key while one of the four
+  // modals (branch fitting, change size, GRD, riser elevation) sits open on
+  // screen was never a considered scenario — this file's own modal-dispatch
+  // comment elsewhere already flags that as untested — and "switch tools"
+  // isn't really what picking a different tool WHILE A DIALOG IS OPEN would
+  // mean anyway; Cancel/Escape is the way out of a modal, unchanged.
+  function cmdIsolationEscapes(entry, modalOpen){
+    if (entry.kind === NATIVE && !modalOpen) return true;
+    return GRAPH_ISOLATION_ALLOWED.indexOf(entry.name) !== -1;
+  }
   RW._cmdIsolateTools = true; // console escape hatch: __RW._cmdIsolateTools = false restores the old additive behavior
   // Round 23: console escape hatch for the digit-passthrough bail-out in the global
   // auto-capture listener below — __RW._cmdDigitPassthrough = false restores the old
@@ -1219,6 +1472,7 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       const armNote = cmdArmOrNoteModal(tool, modal);
+      cmdRememberModalValue(tool, modal, param, v ? 'on' : 'off');
       RW._commitStatus && RW._commitStatus(
         tool + '.' + param + ' set to ' + (v ? 'on' : 'off') + ' — ' + armNote + revealNote
         + (confirmed ? '' : ' (confirm it actually applied)')
@@ -1234,6 +1488,7 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       const armNote = cmdArmOrNoteModal(tool, modal);
+      cmdRememberModalValue(tool, modal, param, matched.value);
       RW._commitStatus && RW._commitStatus(
         tool + '.' + param + ' set to "' + matched.text + '" — ' + armNote + revealNote
         + (confirmed ? '' : ' (confirm it actually applied)')
@@ -1267,6 +1522,120 @@
       + (confirmed ? '' : ' (confirm it actually applied)')
     );
     return true;
+  };
+
+  // ----- graph host only: remember & auto-fill the four config-dialog modals' own categorical fields (round 26) -----
+  // Kresna's own request, confirmed via AskUserQuestion: all four modals (branch fitting, change
+  // size, GRD placement, riser elevation) get this, persisted across reloads (localStorage), no
+  // typed command needed — the remembered fields are auto-filled the instant a modal opens.
+  //
+  // "Fields that tend to repeat" is drawn from live control TYPE (select/checkbox), not a
+  // hardcoded per-modal field list — this project's own live-discovery convention
+  // (RW._cmdToolSettingsList's id-prefix sweep, no hardcoded per-param table) applies here too,
+  // and it happens to land exactly on the split Kresna was steered toward: branch fitting's own
+  // Fitting type/Branch shape/Alignment/Damper (select/checkbox) get remembered; Starting
+  // width/Width/Height (number) don't, since those are more likely to differ duct to duct. Change
+  // size/GRD/riser's own real field shapes were never individually confirmed live (see round 19's
+  // still-open item) — this rule needs no such confirmation to be correct, since it reads each
+  // control's live type, never a specific id.
+  const GRAPH_MODAL_MEMORY_KEY = 'rw_graph_modal_memory_v1';
+
+  // window.localStorage, not a bare `localStorage` global reference — this file already relies on
+  // `window` for everything else host-environment-shaped (window.innerHeight, window.__graphDebug,
+  // ...), and it's what lets the synthetic test harness (verify_cmdline.js) supply its own fake
+  // store per test via the stub window object, with no change needed to loadModule's own sandbox
+  // globals list.
+  function cmdModalMemoryLoad(){
+    try {
+      const ls = window.localStorage;
+      const raw = ls ? ls.getItem(GRAPH_MODAL_MEMORY_KEY) : null;
+      return raw ? JSON.parse(raw) : {};
+    } catch (e){ return {}; } // private browsing / quota / disabled storage — fail to "nothing remembered", never throw
+  }
+  function cmdModalMemorySave(){
+    try { if (window.localStorage) window.localStorage.setItem(GRAPH_MODAL_MEMORY_KEY, JSON.stringify(RW._cmdModalMemory)); }
+    catch (e){ /* same fail-open — a value just won't persist past this page */ }
+  }
+  RW._cmdModalMemory = RW_IS_GRAPH ? cmdModalMemoryLoad() : {}; // {tool: {param: 'on'/'off'/<select value>}} — console-inspectable
+  RW._cmdModalMemoryEnabled = true; // console escape hatch: __RW._cmdModalMemoryEnabled = false stops both remembering and auto-filling
+  // Round 26 follow-up: branch fitting's own memory moved to a dedicated standalone repo
+  // (boon-duct-workbench, ~/Projects/boon-projects/) — no dependency in either direction, but
+  // this is now the ONE place branch's own fields are remembered, so this repo excludes it
+  // entirely rather than keep two independent copies of the same idea that could drift apart.
+  // change size/GRD/riser (transition/grd/vertical) are unaffected.
+  const MODAL_MEMORY_EXCLUDED_TOOLS = ['branch'];
+  // Console helper: clears one tool's remembered values, or everything with no argument.
+  // Clearing 'branch' is a documented no-op now — nothing is ever recorded there to begin with.
+  RW._cmdModalMemoryClear = function(tool){
+    if (tool) delete RW._cmdModalMemory[tool]; else RW._cmdModalMemory = {};
+    cmdModalMemorySave();
+  };
+
+  // Called from RW._cmdApplySetting's own checkbox/select branches right after a real write —
+  // `modal` is only truthy when that write happened while the tool's OWN config-dialog modal was
+  // open (RW._cmdApplySetting already resolves this fresh per call), which is exactly what scopes
+  // remembering to "change-size/GRD/riser windows" and not the ordinary always-visible inspector —
+  // a write to route's own `gauge-select`, say, is never remembered by this. `branch` is excluded
+  // here too (see MODAL_MEMORY_EXCLUDED_TOOLS above).
+  function cmdRememberModalValue(tool, modal, param, value){
+    if (!modal || !RW._cmdModalMemoryEnabled) return;
+    if (MODAL_MEMORY_EXCLUDED_TOOLS.indexOf(tool) !== -1) return;
+    RW._cmdModalMemory[tool] = RW._cmdModalMemory[tool] || {};
+    RW._cmdModalMemory[tool][param] = value;
+    cmdModalMemorySave();
+  }
+
+  // Silently applies a remembered value to a real control — no status line, no arm/re-arm note,
+  // no re-recording into memory (this only ever reads from it). Only ever called with type
+  // 'select'/'checkbox', the only two kinds this remembers.
+  function cmdWriteRememberedValue(el, type, value){
+    if (type === 'checkbox') el.checked = (value === 'on');
+    else el.value = value; // select — the option's own .value, exactly as stored
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Called once each time a recognized modal transitions from closed to open (see
+  // RW._cmdModalMemoryTick below) — fills in whichever of its own select/checkbox fields have a
+  // remembered value that differs from the field's current one, then reports ONE combined status
+  // line rather than spamming one per field (RW._commitStatus is a single overwritten line, not a
+  // log — see rw_core.js).
+  function cmdAutoFillModalMemory(tool){
+    if (!RW._cmdModalMemoryEnabled) return;
+    if (MODAL_MEMORY_EXCLUDED_TOOLS.indexOf(tool) !== -1) return; // branch — see its own dedicated repo instead
+    const remembered = RW._cmdModalMemory[tool];
+    if (!remembered) return;
+    const filled = [];
+    RW._cmdToolSettingsList(tool).forEach(function(item){
+      if (item.type !== 'select' && item.type !== 'checkbox') return;
+      const value = remembered[item.param];
+      if (value === undefined || value === item.current) return;
+      const el = document.getElementById(item.id);
+      if (!el) return;
+      cmdWriteRememberedValue(el, item.type, value);
+      filled.push(item.label || item.param);
+    });
+    if (filled.length){
+      RW._commitStatus && RW._commitStatus(
+        tool + ': auto-filled ' + filled.length + ' remembered field' + (filled.length === 1 ? '' : 's')
+        + ' from last time (' + filled.join(', ') + ')'
+      );
+    }
+  }
+
+  // Edge-triggered the same way RW._cmdToolWatchTick is (see below): only a transition INTO a
+  // recognized modal being open fires the auto-fill, never every tick it stays open, and never a
+  // transition to closed. Deliberately independent of RW._cmdAutoSelect (that gate is specific to
+  // the unrelated auto-select-to-select feature) — only RW.enabled and this feature's own hatch
+  // apply. Ticked from the same timer RW._cmdToolWatchTick already runs on (RW._cmdStartToolWatch
+  // below), rather than a second interval.
+  RW._cmdModalMemoryLastOpen = null;
+  RW._cmdModalMemoryTick = function(){
+    if (!RW_IS_GRAPH || !RW.enabled || !RW._cmdModalMemoryEnabled) return;
+    const cur = cmdOpenModalTool();
+    if (cur === RW._cmdModalMemoryLastOpen) return;
+    RW._cmdModalMemoryLastOpen = cur;
+    if (cur) cmdAutoFillModalMemory(cur);
   };
 
   // ----- graph host only: `dimension` — width then height, one after another (round 20) -----
@@ -1352,6 +1721,312 @@
       + ', currently ' + item.current + ' — type a new value and press Enter' + nextHint
     );
   }
+
+  // ----- graph host only: modal field-walk — auto-fill a config-dialog modal one field
+  // at a time, no param names to type (round 28) -----
+  // Kresna's own request: today, changing anything inside a modal like branch fitting
+  // means already knowing and typing each field's own name (`branch.type`, or the bare
+  // `type` via the blend). Instead, the instant a walked modal is detected open, the
+  // command bar should drop straight into a value prompt for its first field, then
+  // chain into the next one — the same idea `dimension` already uses to go width then
+  // height (above), generalized here from a fixed two-param list into however many
+  // fields a modal actually has, discovered live. Confirmed via AskUserQuestion: scoped
+  // to **branch fitting only** for now ("might expand later") — every other piece here
+  // reads its target modal from GRAPH_TOOL_MODALS, so covering one of the other three is
+  // just adding its tool name to MODAL_WALK_TOOLS below, no other change needed. Also
+  // confirmed: the walk never auto-clicks Choose — it ends on a Choose/Cancel prompt
+  // instead (cmdWalkFinish), matching this project's standing caution around graph-host
+  // action buttons, which submit real commands to the app's own autosave journal (see
+  // CLAUDE.md's Constraints) — and a bare Enter on an untouched field just skips it
+  // (handled in onInputKeydown, where the draft itself lives).
+  const MODAL_WALK_TOOLS = ['branch'];
+  RW._cmdModalWalkEnabled = true; // console escape hatch: __RW._cmdModalWalkEnabled = false stops auto-start only; RW._cmdStartModalWalk still works by hand
+
+  // ----- round 29: remember what was typed during a walk, and offer to reuse it -----
+  // Kresna's own request: the next time the SAME modal opens, offer a choice — "Edit each
+  // field" or "use previous for all" — rather than starting from scratch every time. This is
+  // a DELIBERATELY SEPARATE mechanism from RW._cmdModalMemory (round 26) — not a reuse of it —
+  // for two reasons: (1) `branch` is excluded from that mechanism entirely (its own
+  // field-memory lives in a separate repo, boon-duct-workbench, per Kresna's own earlier
+  // request to split it out) and this repo's own walk-memory is explicitly meant to cover
+  // branch anyway; (2) round 26's memory silently auto-fills select/checkbox fields with no
+  // choice offered, while this remembers EVERY field type (confirmed via AskUserQuestion) and
+  // always asks first rather than silently overwriting anything. Seeing both `RW._cmdModalMemory`
+  // (excludes branch) and `RW._cmdModalWalkValueMemory` (branch's only current user) in the same
+  // file is intentional, not a leftover inconsistency — don't try to unify them.
+  const GRAPH_MODAL_WALK_MEMORY_KEY = 'rw_graph_modal_walk_memory_v1';
+  function cmdWalkMemoryLoad(){
+    try {
+      const ls = window.localStorage;
+      const raw = ls ? ls.getItem(GRAPH_MODAL_WALK_MEMORY_KEY) : null;
+      return raw ? JSON.parse(raw) : {};
+    } catch (e){ return {}; } // private browsing / quota / disabled storage — fail to "nothing remembered", never throw
+  }
+  function cmdWalkMemorySave(){
+    try { if (window.localStorage) window.localStorage.setItem(GRAPH_MODAL_WALK_MEMORY_KEY, JSON.stringify(RW._cmdModalWalkValueMemory)); }
+    catch (e){ /* same fail-open — a value just won't persist past this page */ }
+  }
+  RW._cmdModalWalkValueMemory = RW_IS_GRAPH ? cmdWalkMemoryLoad() : {}; // {tool: {param: value}} — console-inspectable
+  RW._cmdModalWalkMemoryEnabled = true; // console escape hatch: false disables both the upfront offer AND remembering new values (the walk itself still works)
+  RW._cmdModalWalkMemoryClear = function(tool){
+    if (tool) delete RW._cmdModalWalkValueMemory[tool]; else RW._cmdModalWalkValueMemory = {};
+    cmdWalkMemorySave();
+  };
+  function cmdWalkMemoryGet(tool, param){
+    const t = RW._cmdModalWalkValueMemory[tool];
+    return t ? t[param] : undefined;
+  }
+  // Called only from cmdWalkAdvance, only on an actual apply (never a skip) — a skipped field's
+  // own previously remembered value (if any) is left exactly as it was.
+  function cmdWalkMemorySet(tool, param, value){
+    if (!RW._cmdModalWalkMemoryEnabled) return;
+    RW._cmdModalWalkValueMemory[tool] = RW._cmdModalWalkValueMemory[tool] || {};
+    RW._cmdModalWalkValueMemory[tool][param] = value;
+    cmdWalkMemorySave();
+  }
+  // True only when the hatch is on AND at least one field is actually remembered for `tool` —
+  // this is what decides whether cmdWalkStart shows the Edit/use-previous offer at all.
+  function cmdWalkHasMemory(tool){
+    const t = RW._cmdModalWalkValueMemory[tool];
+    return !!(RW._cmdModalWalkMemoryEnabled && t && Object.keys(t).length);
+  }
+
+  // The next field to prompt for — re-runs RW._cmdToolSettingsList fresh on every hop
+  // rather than snapshotting the field list once up front (unlike DIMENSION_PARAMS
+  // above, a fixed two-param array): branch's own fields are conditionally visible (the
+  // round/rect flush-boot glyph, a secondary dimension hidden for a round shape), so a
+  // field that only becomes relevant after an earlier one is set must still be walked,
+  // and one that stops being relevant must not be prompted for with nothing behind it.
+  // Same "prefer live DOM discovery over a hardcoded per-param table" doctrine the
+  // settings sweep itself follows. Returns the first item (on-screen order) whose param
+  // isn't already in `seen`, or null once every field currently on screen has been
+  // visited — always terminates, since every hop pushes onto `seen` whether the field
+  // was applied or skipped.
+  function cmdWalkNextItem(tool, seen){
+    return RW._cmdToolSettingsList(tool).find(function(item){ return seen.indexOf(item.param) === -1; }) || null;
+  }
+
+  // Opens the field-appropriate draft for `item`, stamping `walk: true` (so
+  // onInputKeydown/runAndClear know to advance the walk instead of just finishing) and
+  // reporting progress as "N/total" against the modal's own CURRENT field count (not a
+  // count frozen at walk-start, since that count can itself change mid-walk). Mirrors
+  // runAndClear's own three param paths (select/checkbox/number-text) rather than
+  // inventing a new input mechanism — the one deliberate difference is checkbox, which
+  // today toggles immediately with no draft when picked by hand (see runAndClear);
+  // auto-toggling every checkbox a walk passes over would silently flip real settings
+  // with no chance to skip it, so the walk always opens an on/off value draft for it
+  // instead, the same way `dimension` opens one for a number.
+  function cmdWalkOpenPrompt(tool, item, modal){
+    const n = modalWalk.seen.length + 1;
+    const total = RW._cmdToolSettingsList(tool).length;
+    const label = item.label || item.param;
+    const progress = modal.title + ' ' + n + '/' + total + ' — ' + label;
+    // Round 29: only consulted while modalWalk.reuse is true (the user picked "use previous
+    // for all" at the start of THIS walk) — a plain "Edit each field" walk, or a field with
+    // nothing remembered yet, behaves byte-identically to round 28.
+    const remembered = modalWalk.reuse ? cmdWalkMemoryGet(tool, item.param) : undefined;
+    if (item.type === 'select'){
+      settingsDraft = { tool: tool, param: item.param, type: 'select', options: item.options,
+        originalValue: item.current, previewed: false, walk: true };
+      menuMode = 'settings-option';
+      menuItems = item.options.map(function(o){
+        return { tool: tool, param: item.param, optionIndex: o.index, optionValue: o.value, optionText: o.text };
+      });
+      // Reuses the existing (unfiltered) option list rather than duplicating onInput's own
+      // text-filtering logic: a matching remembered value just picks a different index to
+      // highlight, so the ordinary Enter-confirm path (which reads whichever option row is
+      // highlighted) applies it correctly with no changes of its own. A remembered value that
+      // no longer matches any current option (the app's own option list changed) falls back to
+      // highlighting today's actual current value — fail toward caution, never toward a guess.
+      let highlightIdx = -1, prefillText = '';
+      if (remembered !== undefined){
+        highlightIdx = menuItems.findIndex(function(o){ return o.optionValue === remembered; });
+        if (highlightIdx !== -1) prefillText = menuItems[highlightIdx].optionText;
+      }
+      if (highlightIdx === -1){
+        const curIdx = menuItems.findIndex(function(o){ return o.optionValue === item.current; });
+        highlightIdx = curIdx !== -1 ? curIdx : (menuItems.length ? 0 : -1);
+      }
+      menuHighlight = highlightIdx;
+      inputEl.value = tool + '.' + item.param + ' = ' + prefillText;
+      renderMenuRows();
+      inputEl.focus();
+      if (inputEl.setSelectionRange) inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+      RW._commitStatus && RW._commitStatus(
+        progress + ': pick 1-' + item.options.length + ', currently "' + item.current + '"'
+        + (prefillText ? ' — using last time\'s "' + prefillText + '", press Enter to keep it' : ' — Enter to keep it, or type a number/name, or Tab to live-preview')
+      );
+      return;
+    }
+    settingsDraft = { tool: tool, param: item.param, type: item.type, walk: true };
+    // Plain string append — the existing Enter-confirm logic already reads inputEl.value
+    // verbatim (split on '='), so a prefilled, non-empty value here is naturally treated as
+    // "typed", never mistaken for the empty-Enter skip case. To skip a prefilled field, clear
+    // the text first, same as skipping any other field means leaving it genuinely empty.
+    inputEl.value = tool + '.' + item.param + ' = ' + (remembered !== undefined ? remembered : '');
+    hideMenu();
+    inputEl.focus();
+    if (inputEl.setSelectionRange) inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    const reuseHint = remembered !== undefined ? (' — using last time\'s value (' + remembered + '), press Enter to keep it') : '';
+    if (item.type === 'checkbox'){
+      RW._commitStatus && RW._commitStatus(
+        progress + ': currently ' + item.current + (reuseHint || ' — type on/off and press Enter, or Enter alone to keep it')
+      );
+    } else if (item.type === 'text'){
+      RW._commitStatus && RW._commitStatus(
+        progress + ': currently "' + item.current + '"' + (reuseHint || ' — type a new value and press Enter, or Enter alone to keep it')
+      );
+    } else {
+      RW._commitStatus && RW._commitStatus(
+        progress + ': ' + (item.min != null ? item.min : '') + '–' + (item.max != null ? item.max : '')
+        + ', currently ' + item.current + (reuseHint || ' — type a new value and press Enter, or Enter alone to keep it')
+      );
+    }
+  }
+
+  // Called from onInputKeydown/runAndClear once a walk-driven field is either applied
+  // (skip=false) or left untouched (skip=true) — records it, then either opens the next
+  // field's prompt or ends the walk (cmdWalkFinish). Aborts quietly (no status line) if
+  // the modal itself has closed in the meantime — e.g. the dialog's own Cancel button
+  // clicked by mouse mid-walk — same fail-quiet-on-uncertain-state doctrine the rest of
+  // this file's modal handling already follows.
+  // Shared teardown for every path that discovers the walk can no longer continue (the
+  // modal itself is gone) — clears both state variables AND leaves the bar itself clean
+  // (empty, hidden menu, blurred) rather than stuck showing a prompt for a control that
+  // no longer exists. `settingsDraft` is only cleared here when it's still this walk's
+  // OWN draft — a caller that already nulled it itself (onInputKeydown, before calling
+  // cmdWalkAdvance) passes nothing extra to clobber.
+  function cmdWalkAbort(){
+    modalWalk = null;
+    RW._cmdModalWalk = null;
+    settingsDraft = null;
+    inputEl.value = '';
+    hideMenu();
+    inputEl.blur();
+  }
+
+  function cmdWalkAdvance(tool, param, skip){
+    if (!modalWalk || modalWalk.tool !== tool) return;
+    modalWalk.seen.push(param);
+    if (skip) modalWalk.skipped++;
+    else {
+      modalWalk.applied++;
+      // Round 29: record what was actually applied — re-read the control's own live
+      // `.current` rather than threading the applied value through every call site (Enter
+      // confirm, Tab-preview, a mouse click on an option row); one place, one representation,
+      // the same shape RW._cmdToolSettingsList already produces for every field type. A
+      // skipped field (above) never reaches here, so its own previously remembered value is
+      // left untouched.
+      const applied = RW._cmdToolSettingsList(tool).find(function(i){ return i.param === param; });
+      if (applied) cmdWalkMemorySet(tool, param, applied.current);
+    }
+    const modal = cmdOpenToolModal(tool);
+    if (!modal){ cmdWalkAbort(); return; }
+    const next = cmdWalkNextItem(tool, modalWalk.seen);
+    if (next){ cmdWalkOpenPrompt(tool, next, modal); return; }
+    cmdWalkFinish(tool, modal);
+  }
+
+  // Ends the walk on the modal's own Choose/Cancel prompt rather than clicking anything
+  // automatically — Kresna's own explicit choice (AskUserQuestion): graph-host action
+  // buttons submit real commands to the app's own autosave journal (see CLAUDE.md's
+  // Constraints), so the walk stops one deliberate Enter short of actually applying.
+  // Reuses the existing findEntry/cmdActionUsable helpers rather than a new lookup, so
+  // an unusable button (missing/disabled/hidden) is quietly left off exactly the way
+  // the ordinary dropdown already omits one.
+  function cmdWalkFinish(tool, modal){
+    const applied = modalWalk.applied, skipped = modalWalk.skipped;
+    modalWalk = null;
+    RW._cmdModalWalk = null;
+    settingsDraft = null;
+    const reg = GRAPH_TOOL_MODALS[tool];
+    const submitEntry = reg && findEntry(reg.submitCmd);
+    const cancelEntry = reg && findEntry(reg.cancelCmd);
+    const rows = [submitEntry, cancelEntry].filter(function(e){ return e && cmdActionUsable(e); });
+    inputEl.value = '';
+    menuItems = rows;
+    menuMode = 'command';
+    menuHighlight = rows.length ? 0 : -1;
+    renderMenuRows();
+    inputEl.focus();
+    RW._commitStatus && RW._commitStatus(
+      modal.title + ': ' + applied + ' set' + (skipped ? ', ' + skipped + ' skipped' : '')
+      + (submitEntry ? ' — Enter to ' + submitEntry.name : '') + (cancelEntry ? ', or pick ' + cancelEntry.name : '')
+    );
+  }
+
+  // Entry point for both the auto-start tick (below) and a manual console call
+  // (RW._cmdStartModalWalk) — opens the first field's prompt if the modal actually has
+  // any walkable fields, else leaves the bar untouched (mirrors cmdStartDimension's own
+  // "nothing to do" no-op). Never starts over an already-open draft — the tick guards
+  // this on the auto-start side; a manual call while mid-edit would be surprising, so it
+  // refuses too rather than clobbering whatever's already being typed.
+  function cmdWalkStart(tool){
+    const modal = cmdOpenToolModal(tool);
+    if (!modal) return false;
+    if (settingsDraft) return false;
+    if (modalWalk) return false; // a walk is already in progress — never stomp it (defensive; the two are normally kept in sync)
+    const first = cmdWalkNextItem(tool, []);
+    if (!first) return false;
+    mountCommandBar();
+    // Round 29: when something's actually remembered for this tool, offer the choice instead
+    // of jumping straight into field 1 — deliberately WITHOUT creating `modalWalk` yet (see
+    // cmdWalkOfferChoice's own comment for why that matters). No memory yet (the common case,
+    // and every existing round-28 test's case, since none of them seed
+    // RW._cmdModalWalkValueMemory) falls through to exactly today's behavior, unchanged.
+    if (cmdWalkHasMemory(tool)){ cmdWalkOfferChoice(tool); return true; }
+    modalWalk = { tool: tool, seen: [], applied: 0, skipped: 0, reuse: false };
+    RW._cmdModalWalk = modalWalk;
+    cmdWalkOpenPrompt(tool, first, modal);
+    return true;
+  }
+  RW._cmdStartModalWalk = cmdWalkStart; // console escape hatch to (re-)trigger the walk by hand, without closing/reopening the dialog
+
+  // Shows the one-time "Edit each field" vs "use previous for all" choice, WITHOUT creating
+  // `modalWalk` — that's the load-bearing part of this design: if the user ignores the offer
+  // (types an unrelated command, switches tools) there is no half-started walk state left
+  // behind to clean up, and no new Escape-handling branch is needed either. `modalWalk` is
+  // only ever created once the choice is actually made (see the isWalkChoiceItem branch in
+  // runAndClear). Reuses menuMode = 'command' — the same choice cmdWalkFinish already made for
+  // its own end-of-walk Choose/Cancel prompt, since the Enter/Space confirm path doesn't
+  // branch on menuMode's value at all.
+  function cmdWalkOfferChoice(tool){
+    const reg = GRAPH_TOOL_MODALS[tool];
+    menuMode = 'command';
+    menuItems = [
+      { walkChoice: 'edit', tool: tool, label: 'Edit each field' },
+      { walkChoice: 'reuse', tool: tool, label: 'use previous for all' }
+    ];
+    menuHighlight = 0;
+    renderMenuRows();
+    inputEl.value = '';
+    inputEl.focus();
+    RW._commitStatus && RW._commitStatus(
+      reg.title + ': you have values saved from last time — Edit each field from scratch, or reuse them all'
+    );
+  }
+
+  // Auto-starts the walk the instant a walked modal (MODAL_WALK_TOOLS) transitions from
+  // closed to open. A separate edge variable from RW._cmdModalMemoryLastOpen —
+  // deliberately not shared: branch is excluded from modal memory entirely
+  // (MODAL_MEMORY_EXCLUDED_TOOLS above), so memory's own tick never fires for it, and
+  // even for a tool that had both eventually, the two features should stay free to
+  // evolve independently rather than being coupled through one shared edge. Ticked from
+  // the same shared timer as the others (see RW._cmdStartToolWatch below), not a second
+  // interval. The mid-walk teardown below runs regardless of RW._cmdModalWalkEnabled —
+  // a walk already in progress when the hatch gets flipped off should still clean up
+  // properly if its modal closes, exactly like every other "fail toward doing nothing,
+  // not toward a stuck half-state" rule in this file.
+  RW._cmdModalWalkLastOpen = null;
+  RW._cmdModalWalkTick = function(){
+    if (!RW_IS_GRAPH || !RW.enabled) return;
+    const cur = cmdOpenModalTool();
+    if (!cur && modalWalk) cmdWalkAbort();
+    if (!RW._cmdModalWalkEnabled) return;
+    if (cur === RW._cmdModalWalkLastOpen) return;
+    RW._cmdModalWalkLastOpen = cur;
+    if (cur && MODAL_WALK_TOOLS.indexOf(cur) !== -1) cmdWalkStart(cur);
+  };
 
   /* ---------- tag auto-detection (# search) ---------- */
   // This codebase has never referenced anything beyond annotationState.currentTag
@@ -1496,7 +2171,7 @@
     // write, so without this exemption every property edit would be refused by its
     // own guard the instant isolation is in force.
     const iso = RW._cmdIsolatedTool();
-    if (iso && entry.name !== iso && GRAPH_ISOLATION_ALLOWED.indexOf(entry.name) === -1){
+    if (iso && entry.name !== iso && !cmdIsolationEscapes(entry, !!cmdOpenModalTool())){
       cmdIsolationRefuse(iso, 'run "' + entry.name + '"');
       return false;
     }
@@ -1795,7 +2470,19 @@
     RW._cmdStopToolWatch();
     resetWatchState(); // seed with the ACTUAL current value, not an assumed null, so an immediate
                         // start can never spuriously fire — a revert needs a non-null->null edge.
-    RW._cmdToolWatchTimer = setInterval(function(){ RW._cmdToolWatchTick(); }, AUTOSEL_POLL_MS);
+    // Round 26: deliberately re-seeded to null (not the actual current state) every start — unlike
+    // resetWatchState() just above, this means a modal that's ALREADY open at the moment the
+    // loader is (re-)pasted still gets one auto-fill pass, rather than being treated as
+    // already-seen and skipped. Harmless either way if nothing's remembered yet, and idempotent
+    // if a field already matches what's remembered.
+    RW._cmdModalMemoryLastOpen = null;
+    // Round 28: same re-seed-to-null reasoning as modal memory just above, so a
+    // walked modal already open at (re-)paste time still gets its own walk started.
+    // Ticked after RW._cmdModalMemoryTick, not before — load-bearing once a tool
+    // is ever added to both MODAL_WALK_TOOLS and modal memory: memory's auto-fill
+    // must land on the real controls before the walk reads their `current` value.
+    RW._cmdModalWalkLastOpen = null;
+    RW._cmdToolWatchTimer = setInterval(function(){ RW._cmdToolWatchTick(); RW._cmdModalMemoryTick(); RW._cmdModalWalkTick(); }, AUTOSEL_POLL_MS);
   };
 
   // A separate, always-on document keydown listener (capture phase) purely
@@ -1830,6 +2517,13 @@
   // Sticky across a value-entry step (unlike menuMode, which is re-derived from inputEl.value on
   // every keystroke) — {tool, param} once a setting's been picked and we're awaiting its value.
   let settingsDraft = null;
+  // Round 28: the modal field-walk's own progress — {tool, seen:[param,...], applied, skipped} —
+  // separate from settingsDraft (which only ever describes the CURRENT field's prompt; this
+  // survives across the whole walk). settingsDraft.walk===true marks a draft as walk-driven so
+  // onInputKeydown/runAndClear can tell it apart from an ordinary one-off param edit. Mirrored onto
+  // RW._cmdModalWalk for console inspection, matching this file's existing _cmd* probe convention.
+  let modalWalk = null;
+  RW._cmdModalWalk = null;
 
   // Gap between the dropdown and whichever edge of the panel it's anchored
   // to, its "prefer this much room" height, and the floor it's still
@@ -1928,6 +2622,11 @@
   // too (so it happens to also satisfy isSettingsItem), which is exactly why this must be checked
   // FIRST wherever both are possible, rather than relying on the two shapes being exclusive.
   function isOptionItem(item){ return !!item && typeof item.optionIndex === 'number'; }
+  // Round 29: the two transient "Edit each field" / "use previous for all" rows
+  // cmdWalkOfferChoice builds — carries `.tool` (a string) like a settings item does, but never
+  // `.param`, so it can never be mistaken for one; checked explicitly rather than relying on
+  // that absence, same defensive style as isOptionItem's own comment above.
+  function isWalkChoiceItem(item){ return !!item && typeof item.walkChoice === 'string'; }
 
   function renderMenuRows(){
     if (!menuItems.length){ hideMenu(); return; }
@@ -1945,6 +2644,9 @@
       } else if (isOptionItem(item)){
         label = item.optionIndex + '. ' + item.optionText;
         color = SETTINGS_COLOR;
+      } else if (isWalkChoiceItem(item)){
+        label = item.label;
+        color = KIND_COLOR.action;
       } else if (isSettingsItem(item)){
         // Prefer the control's own live on-screen label (round 18, graph host
         // only) over its fixed DOM-id-derived param name — so a row picked by
@@ -2083,16 +2785,26 @@
         // empty query (e.g. backspacing the bar clear) still shows the allowed
         // rows quietly, matching every other empty-query case in this file.
         const allMatches = RW._cmdMatch(v);
-        const allowed = allMatches.filter(function(e){ return GRAPH_ISOLATION_ALLOWED.indexOf(e.name) !== -1; });
-        if (v && allMatches.length > allowed.length) cmdIsolationRefuse(isolatedTool, 'switch tools');
-        items = paramItems.concat(allowed);
+        const modalOpen = !!cmdOpenModalTool();
+        const allowed = allMatches.filter(function(e){ return cmdIsolationEscapes(e, modalOpen); });
+        if (v && allMatches.length > allowed.length) cmdIsolationRefuse(isolatedTool, 'use it');
+        // Usability is filtered SEPARATELY from the isolation accounting just
+        // above (round 24) — an allowed-but-currently-unusable action (e.g.
+        // "finish" while isolated to route but no route is actually in
+        // progress yet) is dropped from the LIST quietly here, without being
+        // counted as something isolation itself blocked.
+        items = paramItems.concat(allowed.filter(cmdActionUsable));
       } else {
         // Additive, not exclusive (confirmed via AskUserQuestion): whatever
         // tool is currently armed has its own param names typable bare, with
         // no "tool." prefix needed, blended ahead of the ordinary command
         // matches — every other command (switching tools included) keeps
         // working exactly as it does today, unaffected by this.
-        items = paramItems.concat(RW._cmdMatch(v));
+        // Round 24: also drops any GRAPH_ACTIONS match that isn't actually
+        // usable right now (its button missing, disabled, or hidden) — see
+        // cmdActionUsable's own comment. Native tool entries have no `.btn`
+        // at all, so they're never affected by this.
+        items = paramItems.concat(RW._cmdMatch(v).filter(cmdActionUsable));
       }
       menuItems = items.slice(0, 8);
     }
@@ -2107,12 +2819,36 @@
   }
 
   function runAndClear(item){
+    if (isWalkChoiceItem(item)){
+      // Round 29: this is the ONLY place `modalWalk` gets created on the reuse path — mirrors
+      // exactly what cmdWalkStart does on the no-memory path, just with `reuse` set from
+      // whichever row was picked. Re-resolves the modal/first-field fresh rather than trusting
+      // anything cached from when the offer was shown, in case the dialog closed in the
+      // meantime.
+      const tool = item.tool;
+      const modal = cmdOpenToolModal(tool);
+      const first = modal && cmdWalkNextItem(tool, []);
+      if (!modal || !first){
+        inputEl.value = ''; hideMenu(); menuItems = []; menuMode = 'command'; inputEl.blur();
+        return;
+      }
+      modalWalk = { tool: tool, seen: [], applied: 0, skipped: 0, reuse: item.walkChoice === 'reuse' };
+      RW._cmdModalWalk = modalWalk;
+      cmdWalkOpenPrompt(tool, first, modal);
+      return;
+    }
     if (isOptionItem(item)){
       // Picking a numbered option (click, or Enter while one's highlighted) applies it
       // immediately — choosing IS the value, unlike number/checkbox which need a
       // separate typed value.
+      const optionDraft = settingsDraft;
       settingsDraft = null;
       RW._cmdApplySetting(item.tool, item.param, String(item.optionIndex));
+      // Round 28: a mouse click on an option row is the only OTHER place a select
+      // value gets confirmed (onInputKeydown's own Enter branch handles the
+      // keyboard case) — it needs the same "continue the walk" hop, so clicking
+      // through a walk behaves identically to pressing Enter on each field.
+      if (optionDraft && optionDraft.walk){ cmdWalkAdvance(item.tool, item.param, false); return; }
       inputEl.value = '';
       hideMenu();
       inputEl.blur();
@@ -2217,13 +2953,34 @@
       // RW._cmdApplySetting's own matching handles the no-highlight case.
       e.preventDefault(); e.stopPropagation();
       const draft = settingsDraft;
+      const raw = inputEl.value;
+      const eq = raw.indexOf('=');
+      const typedText = (eq !== -1 ? raw.slice(eq + 1) : raw).trim();
+      // Round 28: on a walk-driven draft, Enter with nothing typed leaves the field
+      // untouched and just advances to the next one — the whole point of a walk is to
+      // only touch fields you actually want to change. A select only counts as
+      // "nothing typed" when its highlighted option is still the one the draft opened
+      // on (never Tab-previewed) — its highlight always starts ON the field's own
+      // current value (see cmdWalkOpenPrompt), so without the `!draft.previewed`
+      // check every bare Enter would fall into the ordinary apply path below and
+      // silently re-apply (and re-record into modal memory) that same value on every
+      // single field instead of skipping it. Scoped to draft.walk only — `dimension`'s
+      // own chain (an ordinary draft; walk is undefined there) keeps its existing
+      // behavior unchanged: an empty value is a parse failure that stops the chain,
+      // not a deliberate skip.
+      if (draft.walk){
+        const nothingTyped = draft.type === 'select' ? (!typedText && !draft.previewed) : !typedText;
+        if (nothingTyped){
+          settingsDraft = null;
+          cmdWalkAdvance(draft.tool, draft.param, true);
+          return;
+        }
+      }
       let valueText;
       if (draft.type === 'select' && menuHighlight >= 0 && menuItems[menuHighlight] && isOptionItem(menuItems[menuHighlight])){
         valueText = String(menuItems[menuHighlight].optionIndex);
       } else {
-        const raw = inputEl.value;
-        const eq = raw.indexOf('=');
-        valueText = (eq !== -1 ? raw.slice(eq + 1) : raw).trim();
+        valueText = typedText;
       }
       settingsDraft = null;
       const applied = RW._cmdApplySetting(draft.tool, draft.param, valueText);
@@ -2237,6 +2994,15 @@
       if (applied && draft.chain && draft.chain.length){
         cmdDimensionPrompt(draft.tool, draft.chain);
         return;
+      }
+      // Round 28: a walk-driven draft that applied cleanly advances to the next
+      // field (or ends the walk) exactly the same way the dimension chain above
+      // does; a failed apply (e.g. a bad number typed by hand) stops the walk right
+      // here instead of skipping ahead — same "stop, don't guess" rule dimension's
+      // own chain already follows.
+      if (draft.walk){
+        if (applied){ cmdWalkAdvance(draft.tool, draft.param, false); return; }
+        modalWalk = null; RW._cmdModalWalk = null;
       }
       inputEl.value = '';
       hideMenu();
@@ -2304,6 +3070,9 @@
         } else {
           inputEl.value = menuMode === 'tag' ? ('#' + item.tag.name)
             : isSettingsItem(item) ? (item.tool + '.' + item.param)
+            // Round 29: a walk-choice row has no .name — fill its own label instead,
+            // so Tab never fills the literal string "undefined" here.
+            : isWalkChoiceItem(item) ? item.label
             : item.name;
         }
       }
@@ -2343,6 +3112,18 @@
         // genuinely current before any previewing started. Skipped when nothing was
         // ever previewed, to avoid a pointless extra dispatch on a plain cancel.
         if (settingsDraft.previewed) RW._cmdApplySetting(settingsDraft.tool, settingsDraft.param, settingsDraft.originalValue);
+        // Round 28: Escape on a walk-driven draft ends the WHOLE walk, not just this
+        // one field's prompt — fields already set earlier in the walk are left exactly
+        // as they are (this only reverts a Tab-preview on the CURRENT field, above);
+        // the modal stays open so the ordinary tool.param/# blend is reachable again.
+        if (settingsDraft.walk && modalWalk){
+          const walkTool = modalWalk.tool, applied = modalWalk.applied;
+          modalWalk = null; RW._cmdModalWalk = null;
+          RW._commitStatus && RW._commitStatus(
+            applied ? walkTool + ': walk stopped — ' + applied + ' field' + (applied === 1 ? '' : 's') + ' already set, the rest untouched'
+                    : walkTool + ': walk stopped, nothing set yet'
+          );
+        }
         settingsDraft = null; inputEl.value = ''; hideMenu(); inputEl.blur(); return;
       }
       if (menuEl && menuEl.style.display !== 'none'){ hideMenu(); }
@@ -2726,6 +3507,16 @@
 
   mountCommandBar();
   RW._cmdDetectTags();
+
+  // Round 27: report the fallback case specifically — RW._cmdDetectTags just
+  // set the status line above, and a successful toolbar derivation shouldn't
+  // stomp that; only the noteworthy "couldn't read the live toolbar" case
+  // gets a status line of its own here, mirroring RW._cmdDetectTags' own
+  // "could not auto-detect" convention.
+  if (RW_IS_GRAPH && RW._cmdGraphTableInfo.source !== 'toolbar'){
+    RW._commitStatus && RW._commitStatus('graph toolbar not readable — using the built-in '
+      + RW._cmdGraphTableInfo.count + '-tool table; keys may be wrong on a non-duct project');
+  }
 
   // Global auto-capture: typing anywhere (nothing else focused) seeds the
   // command input and focuses it — only the FIRST character needs this;
@@ -3307,6 +4098,7 @@
   return 'vcmd up: command line (native tools only, ' + RW_HOST + ' host) — just start typing a tool name '
     + '(or # for a ' + (RW_IS_GRAPH ? 'system' : 'tag') + '), ' + RW._cmdTable.length + ' commands, '
     + (RW._cmdTagList ? RW._cmdTagList.length + ' ' + listNoun : 'no ' + listNoun + ' detected')
+    + (RW_IS_GRAPH ? ', tools from the ' + RW._cmdGraphTableInfo.source : '')
     + '. select is the resting state (Escape returns here); '
     + (RW_IS_GRAPH
         ? 'this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.'
@@ -3314,5 +4106,5 @@
 })()
 
 
-  console.log('[RW] command line ready (' + __RW._host.id + ' host): ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' ' + (__RW._host.id === 'graph' ? 'systems' : 'tags') : 'none detected') + '. Type a tool name (or # for a ' + (__RW._host.id === 'graph' ? 'system' : 'tag') + ') anywhere on the page. select is the resting state (Escape returns here);' + (__RW._host.id === 'graph' ? ' this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.' : ' hold the middle mouse button to pan.'));
+  console.log('[RW] command line ready (' + __RW._host.id + ' host): ' + __RW._cmdTable.length + ' commands, ' + (__RW._cmdTagList ? __RW._cmdTagList.length + ' ' + (__RW._host.id === 'graph' ? 'systems' : 'tags') : 'none detected') + (__RW._host.id === 'graph' ? ' (tools from the ' + __RW._cmdGraphTableInfo.source + ')' : '') + '. Type a tool name (or # for a ' + (__RW._host.id === 'graph' ? 'system' : 'tag') + ') anywhere on the page. select is the resting state (Escape returns here);' + (__RW._host.id === 'graph' ? ' this host pans/zooms natively (wheel, Shift+wheel, middle-click, Ctrl+wheel) — middle-drag pan is off here.' : ' hold the middle mouse button to pan.'));
 })()

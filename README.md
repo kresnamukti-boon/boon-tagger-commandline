@@ -459,12 +459,38 @@ On `/graph/projects/<project>/session/?page=<page>` — a full-screen node-graph
 app chrome, no `annotationState` at all — the command line detects this automatically (the
 console log names it) and switches over:
 
-**Tool vocabulary** (every entry a plain one-key dispatch — **no defensive `d` draw-mode prefix**,
-this host has no draw-mode concept): `select` (`s`, the resting state), `route`/`duct` (`r`),
-`flex` (`f`), `extend` (`e`), `branch` (`b`), `transition` (`t`), `grd`/`diffuser` (`g`),
-`unit`/`equipment` (`u`), `vertical`/`riser` (`v`), `cut`/`split` (`c`), `damper` (`d`). This
-table is entirely separate from the annotate host's own — nothing above (`linear`, `wand`, tag
-digits, `pan`/`label`/`crop`/`mirror`, ...) applies here.
+**Tool vocabulary is read live off the app's own toolbar** (round 27), not hardcoded — every
+`[data-tool]` button's id becomes a command name, and its own `<span class="graph-tool-key">`
+badge (the app's own key hint, derived from its own `TOOL_KEYS` map — the single source of truth)
+becomes that command's key. Curated descriptive aliases are merged in by id on top: `route`/`duct`,
+`grd`/`diffuser`, `unit`/`equipment`, `vertical`/`riser`, `cut`/`split`, `connect`/`join`,
+`adjust`/`stretch`. On today's duct ("Duct Takeoff") project that yields 13 commands: `select`
+(`s`, the resting state), `route` (`r`), `flex` (`f`), `extend` (`e`), `branch` (`b`), `transition`
+(`t`), `grd` (`g`), `unit` (`u`), `vertical` (`v`), `cut` (`c`), `damper` (`d`), `connect` (`j`,
+"Connect two open ends"), `adjust` (`a`, "Adjust duct length") — the last two discovered live this
+round. Every entry is a plain one-key dispatch — **no defensive `d` draw-mode prefix**, this host
+has no draw-mode concept. This table is entirely separate from the annotate host's own — nothing
+above (`linear`, `wand`, tag digits, `pan`/`label`/`crop`/`mirror`, ...) applies here.
+
+**Why derived, not hardcoded**: this same host also runs a *second* trade pack (piping), which
+reuses several of the same tool ids with **different** key letters (`extend`=`x` not `e`,
+`vertical`=`z` not `v`, `cut`=`u` not `c`, `transition`=`n` not `t`) and filters which tools even
+appear per project — a static table would silently dispatch the wrong key there. If the live
+toolbar can't be read (nothing found, or the page isn't ready yet), the command line falls back to
+the built-in 13-tool table above and reports it: a status-bar message on load
+(`"graph toolbar not readable — using the built-in ... table"`), a `console.log` naming the source,
+and `__RW._cmdGraphTableInfo` (`{source, count, tools, skipped, aliasDropped, shadowedActions}`) —
+console-inspectable any time. `__RW._cmdRebuildGraphTable()` re-derives without a page reload
+(useful since re-pasting the loader onto an already-injected page is a no-op — see "Injection"
+above); it refreshes `RW._cmdTable`/`RW._toolSettingsMap` but never touches `RW._cmdLastTool`, so if
+the tool Space would repeat has disappeared from the toolbar, Space simply dispatches a key the app
+no longer maps (harmless — an unmapped key is ignored).
+
+**When a tool's own name collides with an action's** (only known case: the piping pack's `evidence`
+tool vs. this host's own `evidence` action), the **tool always wins its own name** — typing
+`evidence` arms the tool, and the action stays reachable by its other alias (`attach`).
+`__RW._cmdGraphTableInfo.shadowedActions` reports any such collision and what each action is still
+reachable by.
 
 **`#` search finds systems/networks, not tags.** There's no tag list on this host — `#fptu` (say)
 searches the live `#graph-system-select` options (e.g. "FPTU (Supply)") instead, same
@@ -482,19 +508,26 @@ diagnostic that reports every `graph-` control and why it was or wasn't included
 
 **Tool isolation: the command line is modal on this host while a duct tool is armed** — the
 opposite of the annotate host's "additive, not exclusive" behavior above (confirmed via
-`AskUserQuestion`). Once `route`/`flex`/`extend`/... is armed, only three things still match:
-that tool's own properties (bare, or via `route.`), the ways out (`select`, Escape, Space), and
-the route-lifecycle actions `finish`/`cancel`. Everything else — every other tool name, every
-other action button (`undo`, `zoomfit`, ...), and `#` system search — matches nothing, and the
-status line says why (e.g. `route is active — press Escape or type "select" first to switch
-tools`), so a blocked query never reads as a silent typo. This is enforced twice: the dropdown
-itself never lists a blocked entry, and `RW.runCommand` refuses one directly too (the same
-belt-and-suspenders precedent `FORBIDDEN_BUTTON_IDS` set), so a direct console call can't bypass
-it either. `route.gauge-select=24ga` and friends still work exactly as above — isolation
-restricts *other* tools, never the armed one's own properties, and a property write's own re-arm
-(`RW._cmdApplySetting` calling `RW.runCommand(route)` after every write) is explicitly exempted
-from its own guard. `__RW._cmdIsolateTools = false` in the console turns this off, restoring the
-old additive behavior on this host too.
+`AskUserQuestion`). Once `route`/`flex`/`extend`/... is armed, what still matches is: that tool's
+own properties (bare, or via `route.`), the ways out (`select`, Escape, Space), the route-lifecycle
+actions `finish`/`cancel`, **and every other native tool name** (whatever the live toolbar actually
+shows — round 27's derivation, so a different trade pack's tools are covered with no code change)
+— typing or picking a different tool switches straight to it, arming that tool instead, with no
+need to return to `select` first
+(Kresna's own request, round 25: "only for the tool" — narrower than turning isolation off
+altogether). Everything else — every action button (`undo`, `zoomfit`, ...) and `#` system search
+— still matches nothing, and the status line says why, so a blocked query never reads as a silent
+typo. This is enforced twice: the dropdown itself never lists a blocked entry, and `RW.runCommand`
+refuses one directly too (the same belt-and-suspenders precedent `FORBIDDEN_BUTTON_IDS` set), so a
+direct console call can't bypass it either. `route.gauge-select=24ga` and friends still work
+exactly as above — isolation restricts *other* tools' properties, never the armed one's own, and a
+property write's own re-arm (`RW._cmdApplySetting` calling `RW.runCommand(route)` after every
+write) is explicitly exempted from its own guard. **The tool-switch exemption itself doesn't apply
+while one of the four config-dialog modals (below) is open** — dispatching a different tool's key
+while a dialog sits open on screen was never a considered scenario, so switching tools there is
+still refused exactly as before; Cancel/Escape remains the way out of a modal. `__RW._cmdIsolateTools
+= false` in the console turns isolation off entirely, restoring the old fully-additive behavior on
+this host too.
 
 **Properties match by what the app is showing right now, not just their fixed DOM id** — every
 inspector field's live on-screen label is read fresh each time (confirmed live: every field wraps
@@ -523,6 +556,68 @@ is open (they aren't `showModal()`-modal) — a modal's own `<select>` keeps its
 while focused, everything else still seeds the command bar as usual; any *other* dialog (calibrate,
 known-scale) still blocks the command bar entirely, unchanged.
 
+**Three of the four modals (change size, GRD placement, riser elevation) remember their own
+select/checkbox fields and auto-fill them the next time they open** — no re-typing the same values
+duct after duct. Only fields likely to *repeat* are remembered (select/checkbox — e.g. a size
+category or diffuser type), never a number or text field (a dimension, an elevation value), since
+those are more likely to differ from one duct to the next. The moment a recognized modal is
+detected open, any remembered value that differs from the field's current one is applied straight
+to the real control (not just typed into the bar), and the status line reports what got filled in.
+Remembered values survive a page reload/re-paste (stored in `localStorage`, not just for the rest
+of this page) — write one value, close the loader, come back later, and it's still there.
+`__RW._cmdModalMemory` is a plain console-inspectable object (`{tool: {param: value}}`);
+`__RW._cmdModalMemoryClear(tool)` forgets one tool's remembered values, or everything with no
+argument; `__RW._cmdModalMemoryEnabled = false` turns the whole feature off (stops both
+remembering new values and auto-filling old ones). **Branch fitting is deliberately excluded** —
+its own version of this now lives in a separate, standalone repo
+(`boon-duct-workbench`, `~/Projects/boon-projects/`) with no dependency on this one in either
+direction; paste that loader too if you want branch fitting covered as well.
+
+**Opening the branch fitting modal auto-walks its own fields, one value prompt at a time — no
+param names to type at all.** The instant `graph-branch-fitting-modal` is detected open, the
+command bar takes focus on its own and drops straight into a value prompt for its first field
+(on-screen order), the same numeric/select/checkbox/text draft picking that field by name would
+already open. Confirming one (Enter/Space) immediately opens the next, chaining through every
+field currently on the page — the same idea `dimension` already uses for width→height, generalized
+here to however many fields the modal actually has, re-discovered live on every hop rather than a
+fixed list, so a field that only becomes relevant partway through (e.g. a flush-boot glyph that
+only shows for certain Fitting type/Branch shape combos) is still picked up, and one that stops
+being relevant is simply skipped over. **Enter with nothing typed leaves that field untouched and
+just advances** — the walk is for filling in what you want to change, not a forced tour of every
+control; a select only counts as "untouched" when nothing was typed *and* nothing was Tab-previewed
+(Tab's own live-preview still works throughout, and a previewed value is kept on a bare Enter, not
+treated as a skip). A walked checkbox is a typed `on`/`off` prompt like any other field — never
+auto-toggled just by walking onto it, unlike picking one from the ordinary dropdown. Clicking an
+option row with the mouse continues the walk exactly like Enter does. **Once every field has been
+visited, the walk does not submit anything on its own** — it opens the dropdown pre-highlighted on
+`choose` (with `cancelbranch` also listed), so one further, deliberate Enter is what actually
+applies it. Escape at any point ends the whole walk (fields already set are left as they are; the
+modal itself stays open, so the ordinary `branch.`/bare-param typing is still there if you want it),
+and the modal closing by some other path (e.g. its own Cancel clicked by mouse) tears the walk down
+quietly too. Scoped to **branch fitting only** for now — the other three modals (change size, GRD
+placement, riser elevation) keep today's type-the-param-name behavior; `__RW._cmdModalWalkEnabled =
+false` turns off the auto-start (a manual `__RW._cmdStartModalWalk('branch')` still works with the
+hatch off), and `__RW._cmdModalWalk` is a plain console-inspectable object while a walk is running.
+
+**The walk remembers what was typed, and offers to reuse it next time.** The instant the branch
+fitting modal is detected open, if anything was applied during an earlier walk, the command bar
+shows a choice instead of jumping straight into field 1 — "Edit each field" (starts exactly like a
+walk with nothing remembered, every field blank) or "use previous for all" (every field opens
+**pre-filled** with what was applied last time, one at a time, still requiring its own Enter to
+actually apply — nothing is bulk-applied without a chance to look at or edit it first). A field
+that's never had a value applied simply opens blank even in "use previous" mode, and a remembered
+select value that no longer matches any real option falls back to the field's own actual current
+value rather than guessing. Every field type is remembered (select, checkbox, number, text) — a
+skipped field (bare Enter, nothing typed) is never recorded, so its own previously remembered value
+survives untouched. This is a **separate** mechanism from the four modals' existing "modal memory"
+(above) — deliberately not a reuse of it, since branch fitting is excluded from that one entirely
+(its own field-memory lives in `boon-duct-workbench`) and that one only ever silently auto-fills
+select/checkbox fields with no choice offered. `__RW._cmdModalWalkValueMemory` is a plain
+console-inspectable object (`{tool: {param: value}}`), persisted the same way modal memory is
+(`localStorage`, survives a reload); `__RW._cmdModalWalkMemoryClear(tool)` forgets one tool's
+values or everything with no argument; `__RW._cmdModalWalkMemoryEnabled = false` turns off both the
+offer and remembering new values (the walk itself still works, always starting fresh).
+
 **The inspector's "New system" name/service fields are typeable too** (`route.new-system-name`/
 `-service` or bare `name`/`service`) — the "Add" button (`graph-create-system`) stays a manual click
 only. Widening the sweep to include text inputs for this also incidentally makes `graph-tag-input`
@@ -544,17 +639,28 @@ whichever field was showing. Exempt from tool isolation the same way `finish`/`c
 are, since it only ever edits the isolated tool's **own** width/height, never a different tool's.
 
 **Action buttons** — the page's own buttons that have no keyboard shortcut, typed by name (no
-single-letter aliases, since every letter is already a tool key): `undo`/`redo` (`re`), `zoomfit`
+single-letter aliases, since every letter is — or might be, on some trade pack — a tool key): `undo`/`redo` (`re`), `zoomfit`
 (`fit`)/`zoomin`/`zoomout`, `region` (`addregion`), `ruler` (`measure`), `calibrate` (`cal`),
 `setscale` (`scale`)/`resetscale`, `finish`/`cancel` (only available while a route is in
 progress), `evidence` (`attach`)/`note` (`memo`)/`rationale` (`why`), `toggledamper` (`tdamper`),
-`elevation` (`riserelev`, only available with a riser selected). A disabled or not-currently-shown
+`elevation` (`riserelev`, only available with a riser selected), `annotations` (`anno`, round 27
+— toggles the canvas toolbar's Hide/Show Annotations view state; a pure client-side toggle,
+submits nothing; refused while a tool is isolated, same as `zoomfit`/`zoomin`/`ruler`). A disabled or not-currently-shown
 button is reported, never clicked. Deliberately excluded, and not clickable from the command line
 at all even if injected by hand: `graph-save-commands`, all four recording controls (Boundaries,
 below), and the "System / network" / "New system" property-group actions (assign network to a
 system, create a system, rename a system) — every other action button auto-submits its own real
 command to the server the instant it's invoked, the same as a human clicking that same button by
 hand (this app has no manual-commit mode; Save is a force-flush/retry control, not a commit gate).
+
+**An action that isn't currently usable is left out of the dropdown entirely, not listed and then
+refused.** `finish`/`cancel` while no route is in progress, `elevation` with no riser selected,
+`choose`/`apply`/`place`/`placeriser` (and their Cancel-equivalents) while their own dialog isn't
+open, and so on — none of these appear in the dropdown, or match a typed query, until they're
+genuinely runnable (their button present, visible, and not disabled). Typing the name straight into
+`RW.runCommand()` from the console still reports the specific reason (missing/disabled/hidden) —
+this only changes what the dropdown offers, not what a direct call reports. Every native tool
+(`route`, `flex`, `select`, …) has no such gate at all and is unaffected.
 
 **Space and Escape are unchanged** — Space still closes/repeats the last tool, Escape still
 returns to select. This does shadow the host's own **Space+drag pan** gesture; wheel,
