@@ -1,136 +1,344 @@
 # Boon Tagger Tools — Command Line
 
-Client-side workflow enhancer for the Constructions Tagger annotation platform
-(constructions-tagger-web.onrender.com). Pasted into the DevTools console of the live
-annotation page — no server, no build step, nothing persists until you click the app's own
-**Save**. Everything lives in the page until reload/navigation, then must be re-injected.
+An AutoCAD-style command line for the Constructions Tagger platform's graph ("Duct Takeoff") duct
+editor (constructions-tagger-web.onrender.com, `/graph/projects/<project>/session/?page=<page>`).
+Pasted into the DevTools console of a live session — no server, no build step. Just start typing a
+tool, action, or setting's name from anywhere on the page (no click or focus step needed) and it
+dispatches. **Graph action commands submit real commands to the app's own autosave journal the
+instant they're invoked** — this app has no manual-commit mode, so a button click (a human's or
+this project's) auto-flushes regardless of any Save button; see "Boundaries" for the exact,
+narrow set of things this project will never do on that basis.
 
-**This repo contains only the AutoCAD-style command line** — a minimal build for iterating on
-native-app-tool dispatch and tag search without dragging in unrelated tooling on every paste. The
-full Region Workbench (region segmentation, mask tools, undo, Commit, Pipe, Elbow, OCR, and its
-own copy of a workbench-aware command line with restored single-key shortcuts) lives in the
-sibling repo `boon-tagger-mask` (also under `~/Projects/boon-projects/`). This repo was extracted
-from that project's history — see `CLAUDE.md` for the full evolution.
+The same loader also still installs on the older annotate-job page (`/annotation-jobs/<job>/
+annotate/<item>/`) — it detects which host it's on and switches its whole tool vocabulary,
+settings, and `#`-search accordingly. That host gets much lighter treatment in this README (see
+"The annotate-job page (legacy)" at the bottom) since almost all current work targets graph.
 
-**Dual-target: installs on either of two hosts.** The same loader works on the annotate-job page
-(`/annotation-jobs/<job>/annotate/<item>/`) **and** the graph session / "Duct Takeoff" duct editor
-(`/graph/projects/<project>/session/?page=<page>`) — it detects which one it's on and switches its
-whole tool vocabulary, settings, and `#`-search accordingly. See "The graph ('Duct Takeoff') host"
-below for what differs there; everything else in this README describes the annotate host, the
-original and still-default target.
+**This repo contains only the command line** — a minimal build for iterating on native-app-tool
+dispatch without dragging in unrelated tooling on every paste. The full Region Workbench (region
+segmentation, mask tools, Pipe/Elbow, OCR, and its own older copy of a workbench-aware command
+line) lives in the sibling repo `boon-tagger-mask`; this repo is a genuine extraction from that
+project's history — see `CLAUDE.md` for the full architecture and `PORTING.md` for how pieces of
+this project are meant to move into the graph host's own **native** command line.
 
 ## Files & load order
 
 Each module is a versioned IIFE gated on the previous module's version flag. `console_loader.js`
-(built by `build_loader.sh`) concatenates all four, in order:
+(built by `build_loader.sh`) concatenates four modules, then the command line itself:
 
 1. **rw_host.js** — loads first, before anything else. Detects which host this page is
-   (`window.__RWhost = {id, canvasId}`), from the DOM (`#graph-session-root`'s presence), not the
-   URL. Everything downstream reads this instead of hardcoding the annotate page's own ids.
-2. **rw_panelux.js** — Collapsible panel UI, and the **RW: ON/OFF** master killswitch that gates
-   every handler the later modules register (including the command line's own global keystroke
-   capture) — reads `window.__RWhost.canvasId` for which element's listeners to wrap.
-3. **rw_core.js** — minimal bootstrap replacing `rw_install.js`'s scaffolding on this branch:
-   creates `window.__RW` (copying `window.__RWhost` onto `RW._host`), a bare `#rw-panel`/`#rw-list`
-   for the command line to mount into, and `RW._commitStatus` for its status-line messages.
-   `#rw-panel` is created as a fixed bottom-center overlay appended to `document.body` (positioned
-   over the canvas/stage by `rw_cmdline.js`'s `RW._cmdRepositionOverlay`), not a side-rail box. No
-   region/mask/annotation engine at all.
-4. **rw_cmdline.js** — the command line itself (see "Command line" below). Every host-specific
-   fact — the command table, per-tool settings, `#`-search, `readTool`/`readMode`, whether
-   middle-drag pan applies — branches on `RW._host.id` here.
+   (`window.__RWhost = {id, canvasId}`) from the DOM (`#graph-session-root`'s presence), not the
+   URL.
+2. **rw_panelux.js** — collapsible panel UI, and the **RW: ON/OFF** master killswitch that gates
+   every handler the later modules register.
+3. **rw_core.js** — minimal bootstrap: creates `window.__RW`, a bare `#rw-panel`/`#rw-list` for
+   the command line to mount into, and `RW._commitStatus` for its status-line messages. No region/
+   mask/annotation engine at all.
+4. **`dist/rw_cmdline.js`** — the command line itself, assembled by `scripts/build-dist.js` from
+   the ES modules under `src/core/`, `src/features/`, `src/ui/`, `src/hosts/` (pure logic, being
+   extracted out module by module so features can eventually be upstreamed into the graph host's
+   own native command line — see `PORTING.md`) plus `src/console/shell.js` (what's left of the
+   original monolithic file). Every host-specific fact branches on `RW._host.id` here.
 
 **To rebuild** after editing a source module:
+
 ```bash
-bash build_loader.sh
+bash build_loader.sh     # assembles src/ into dist/rw_cmdline.js, then concatenates the loader
+node --test "test/*.test.mjs"   # unit tests for the pure src/core/src/features modules
+node verify_cmdline.js   # the 1000+-assertion DOM-level harness — this project's real safety net
 ```
+
+Both `dist/rw_cmdline.js` and `console_loader.js` are committed; rebuild and commit both after
+every source edit. See `CLAUDE.md`'s "Build / verify commands" for what each one actually checks.
 
 ## Injection
 
-1. Navigate to the Constructions Tagger annotation page, or the graph session ("Duct Takeoff")
-   duct editor — either host works.
+1. Navigate to the graph session ("Duct Takeoff" duct editor).
 2. Press **F12** → **Console** tab.
 3. Paste the entire contents of `console_loader.js`, press **Enter**.
 4. The command line installs automatically once the page is ready (up to ~30s) — the console log
    names which host it detected.
 
-Paste again after each page navigation.
+Paste again after each page navigation — a same-URL "navigation" that doesn't actually reload the
+page is a no-op for re-injection (see `CLAUDE.md`'s live-testing gotchas).
 
 ## Command line
 
-**Just start typing a native tool's name from anywhere**, no click or focus step needed (like
-AutoCAD's command line): the first character you type auto-focuses the always-visible input at
-the top of the panel and seeds it, an autocomplete dropdown suggests matches as you keep typing
-(light green), and **Enter or Space** dispatches it to the app — both act identically, AutoCAD's
-own classic convention, and both work the same way whether you're confirming a command or a
-searched tag (see below). A query with exactly one match always renders that one row visibly
-highlighted in the dropdown — a single match is never silently run without a visible row to
-confirm (there is no hidden "only one match, just run it" shortcut).
+**Just start typing a tool's name from anywhere**, no click or focus step needed (like AutoCAD's
+command line): the first character you type auto-focuses the always-visible input, an
+autocomplete dropdown suggests matches as you keep typing, and **Enter or Space** dispatches it —
+both act identically, AutoCAD's own classic convention. A query with exactly one match always
+renders that one row visibly highlighted — there is no hidden "only one match, just run it"
+shortcut.
 
 **The whole command-line panel — input, status line, and the RW: ON/OFF killswitch — is a fixed
-overlay pinned to the bottom-center of the annotation canvas**, not a box in the side rail. It
-stays horizontally centered over the canvas's on-screen rect (so it accounts for the side rail,
-unlike window-centering) and sits a tunable gap above the canvas's bottom edge (default 16px);
-because it's `position:fixed`, it neither scrolls nor pans with the drawing. Two console escape
-hatches tune it: `__RW._cmdBarOffset` (px gap above the canvas's bottom edge) and
-`__RW._cmdBarWidth` (overlay width, default 480px) — **both are live**: assigning either one
-(e.g. `__RW._cmdBarWidth = 600`) repositions the bar immediately, no reload or resize needed.
-It also re-centers itself automatically on window resize. The panel is given a near-maximum
-`z-index` (2147483646, one below the 32-bit signed max) so nothing the app stacks above the
-canvas can cover it, and its bottom edge is clamped so it stays on-screen even when the drawing
-is scrolled so the canvas's bottom falls below the viewport. **If the bar ever goes missing but
-commands still work**, run `__RW._overlayDiagnose()` in the console — it reports whether the panel,
-canvas, and dropdown are present, their actual on-screen rects and visibility, and whether
-`body`/`html` carry a transform that would break `position:fixed` anchoring.
+overlay pinned to the bottom-center of the drawing stage**, not a box in a side rail. It stays
+horizontally centered over the stage's on-screen rect and sits a tunable gap above its bottom edge
+(default 16px); because it's `position:fixed`, it neither scrolls nor pans with the drawing. Two
+console escape hatches tune it: `__RW._cmdBarOffset` (px gap) and `__RW._cmdBarWidth` (overlay
+width, default 480px) — both are live, no reload needed. It re-centers itself on window resize,
+sits near the 32-bit z-index max so nothing can cover it, and clamps so it stays on-screen. If the
+bar ever goes missing but commands still work, run `__RW._overlayDiagnose()` — it reports the
+panel/stage/dropdown's actual rects and visibility.
 
-**The autocomplete dropdown always paints above the whole panel, never behind it or clipped by
-its header strip.** It's given the true 32-bit max `z-index` (one above the panel's own, so it
-always wins any overlap) and is anchored off the *panel's* rect, not just the input's — so it
-never grows into the header strip (the caret / "Command Line" title / RW: ON/OFF button) and gets
-hidden behind it, which is what happened before this was fixed. It **prefers to open upward**
-above the panel; if there isn't enough room (e.g. the bar has been dragged near the top of the
-screen — see below), it **flips to open downward** below the panel instead, so matches stay fully
-visible wherever the bar has been moved. An open dropdown also follows the panel if it's
-repositioned (e.g. on a window resize).
+**The autocomplete dropdown always paints above the whole panel.** It's anchored off the panel's
+own rect (never just the input's, so it never grows into the header strip), preferring to open
+upward and flipping below when there isn't room. It follows the panel if repositioned.
 
-**Drag the panel by its header strip to move it anywhere on screen.** Press and drag from the
-title bar (not the collapse caret or the RW: ON/OFF button, which keep their own click behavior)
-with the **left mouse button**; a small press-without-real-movement still just collapses/expands
-the panel as before — only a real drag (past a 3px threshold) moves it, and swallows the one click
-that would otherwise fire on release, so dragging never accidentally toggles collapse. The panel
-is clamped so it's always fully on-screen, and once moved it **stays put** — window resizes no
-longer re-center it, only keep it sized and on-screen. Position is **per-page only**: a fresh paste
-of the loader always re-pins bottom-center. To re-pin manually without reloading, run
-`__RW._cmdResetBar()` in the console. `__RW._cmdBarDrag = false` disables dragging entirely if it's
-ever in the way.
+**Drag the panel by its header strip to move it anywhere on screen.** Left mouse button, a 3px
+move threshold before a drag starts (so a plain click still just collapses/expands the panel).
+Clamped on-screen; once moved it stays put. Position is per-page only — a fresh paste re-pins
+bottom-center; `__RW._cmdResetBar()` re-pins manually without reloading. `__RW._cmdBarDrag = false`
+disables dragging entirely.
 
-**Because typing is captured from anywhere, it takes over the host app's own single-key
-shortcuts while you're mid-command** — to press an app shortcut key directly again, blur the
-command input first (Escape, or click the canvas). **To turn the command line off entirely**,
-use the panel's own **RW: ON/OFF** killswitch — it stops the global typing-capture along with
-every other listener this branch registers.
+**Because typing is captured from anywhere, it takes over the app's own single-key shortcuts while
+you're mid-command** — to reach an app shortcut directly, blur the command input first (Escape, or
+click the canvas). **To turn the command line off entirely**, use the panel's own **RW: ON/OFF**
+killswitch — it stops the global typing-capture along with every other listener this build
+registers.
 
-**Native app tool vocabulary** (dispatched to the host app itself — see "App built-in keymap"
-below for what each one does): draw-mode tools `linear` (`q`), `rect` (`w`), `count` (`e`),
-`polygon` (`r`), `polyline` (`t`), `circle` (`y`), `cloud` (`u`), `wand` (`k`), `wrap` (`x`),
-`void` (`v`), `mline` (`p`), `tag1`-`tag9`/`tag0` (digits); mode switches `pan` (`a`), `select` (`s`), `draw`
-(`d`), `label` (`f`), `crop` (`g`), `mirror` (`m`). Every native tool keeps its real app-keymap
-letter as its alias — with no workbench commands left on this branch to collide with, nothing is
-reserved. `rect` and `mline` are AutoCAD-ish renames of what used to be `bbox` and `ribbon` — both
-old names still work as aliases. **`tag1`…`tag0` dispatch the app's own digit keys directly — they
-do not mean "the Nth tag in the detected list."** That distinction matters: a real job showed the
-app's digit hotkeys do **not** map to `#`-search tag-list order (see tag search below) —
-`tag1`…`tag0` are a completely separate mechanism from selecting a searched tag.
+**Utility keys:**
 
-### Tool keymap
+| Key | Action |
+|---|---|
+| `Escape` (command input focused) | clear the command input, or close the dropdown if open |
+| `Escape` (nothing focused) | return the app to select |
+| `ArrowUp`/`ArrowDown` | move the autocomplete highlight |
+| `Tab` / `Shift+Tab` | cycle the highlight to the next/previous match, filling each in |
 
-The same vocabulary as above, as a lookup table — every row is a 1:1 `RW._cmdTable` entry, so this
-stays accurate as long as it's re-derived from that table rather than hand-maintained prose.
+Escape typed twice in a row does two different things: the first clears/closes the bar (if it had
+focus), the second — now that nothing is focused — sends the app back to select. **The
+highlighted row always stays on screen while cycling** — this matters most for a tool's own
+parameter listing, which can carry dozens of rows (the graph inspector's "Advanced" group). **Tab
+is escalated to a `window`-level capture listener** so it wins a same-node race against the app's
+own `document`-level keydown handling; it's scoped to firing only when the real command input is
+the event target.
+
+**Note on the global name**: everything here lives on `window.__RW` (double-underscore, to avoid
+colliding with any global the host page might already have). Inside this project's own source
+files it's aliased to a shorter local `const RW = window.__RW`, but **from the DevTools console
+itself, you must type `__RW.`, not `RW.`** — a bare `RW` throws `ReferenceError`.
+
+## Tools
+
+**Tool vocabulary is read live off the app's own toolbar**, not hardcoded — every `[data-tool]`
+button's id becomes a command name, and its own `<span class="graph-tool-key">` badge (the app's
+own key hint) becomes that command's key. Curated descriptive aliases are merged in by id on top:
+`route`/`duct`, `grd`/`diffuser`, `unit`/`equipment`, `vertical`/`riser`, `cut`/`split`,
+`connect`/`join`, `adjust`/`stretch`. On a duct project that yields 13 commands: `select` (`s`,
+the resting state), `route` (`r`), `flex` (`f`), `extend` (`e`), `branch` (`b`), `transition`
+(`t`), `grd` (`g`), `unit` (`u`), `vertical` (`v`), `cut` (`c`), `damper` (`d`), `connect` (`j`,
+"Connect two open ends"), `adjust` (`a`, "Adjust duct length"). Every entry is a plain one-key
+dispatch — no draw-mode concept on this host.
+
+**Why derived, not hardcoded**: this same host also runs a *second* trade pack (piping), which
+reuses several of the same tool ids with **different** key letters (`extend`=`x` not `e`,
+`vertical`=`z` not `v`, `cut`=`u` not `c`, `transition`=`n` not `t`) and filters which tools even
+appear per project — a static table would silently dispatch the wrong key there. If the live
+toolbar can't be read, the command line falls back to the built-in 13-tool table and reports it —
+a status-bar message, a `console.log` naming the source, and `__RW._cmdGraphTableInfo`
+(`{source, count, tools, skipped, aliasDropped, shadowedActions}`), console-inspectable any time.
+`__RW._cmdRebuildGraphTable()` re-derives without a page reload (useful since re-pasting the
+loader onto an already-injected page is a no-op — see "Injection" above); it refreshes
+`RW._cmdTable`/`RW._toolSettingsMap` but never touches `RW._cmdLastTool`.
+
+**When a tool's own name collides with an action's** (only known case: the piping pack's
+`evidence` tool vs. this host's own `evidence` action), the **tool always wins its own name** —
+typing `evidence` arms the tool, and the action stays reachable by its other alias (`attach`).
+`__RW._cmdGraphTableInfo.shadowedActions` reports any such collision and what each action is still
+reachable by.
+
+## Select is the resting state, and Space
+
+AutoCAD always drops you back to the bare selection cursor once a command finishes or is
+cancelled. This build does the same via three triggers, all funnelled through one path so they
+can never fire twice for the same event: **on load** (skipped if a tool is already armed); **on
+Escape** while nothing else is focused (deferred slightly so the app's own Escape handling runs
+first); and **on a poll** that notices `__graphDebug.activeTool` clearing itself back to
+null/`'select'` on its own, edge-triggered across two ticks so a momentary null while switching
+tools can't yank you out of the tool you just picked.
+
+If this ever mis-fires, `__RW._cmdAutoSelect = false` turns the whole feature off without
+re-pasting the loader (it also turns itself off automatically, reporting why, if it ever reverts
+more than 5 times in 5 seconds).
+
+**Press `Space` with nothing typed** — another AutoCAD convention (Space/Enter with an empty
+command line repeats the last command), extended into a toggle:
+
+- **Nothing currently armed** and a tool has been run at least once → Space **re-arms that same
+  tool** directly, no need to type its name again.
+- **A tool is currently armed** → Space **closes it** (back to select).
+- **One of the four config-dialog modals is currently open** → Space does not try to close the
+  armed tool behind it. Instead it "initializes the console": opens the bar and drops into a
+  dropdown of what's actually usable while isolated to that modal — its own fields plus its own
+  Choose/Cancel-equivalent commands.
+- **Nothing has been run through the command line yet at all** → Space just initializes the
+  console: opens the bar (nothing seeded into it) and drops into the tool dropdown, pre-filtered
+  to real tools only.
+
+Whether a tool is "currently armed" is tracked by this project itself, not re-read from the app at
+decision time — see `CLAUDE.md`'s design doctrines for why.
+
+**A bare digit typed at rest passes straight through to the app.** The app offers a numbered
+"pick the next tool" prompt at points such as the end of a duct draw — a digit typed while the
+command bar is genuinely empty and unfocused reaches the app untouched, since no tool/action/param
+name starts with a digit. `__RW._cmdDigitPassthrough = false` restores capture-everything.
+
+**Space shadows the app's own Space-drag pan gesture** — wheel, Shift+wheel, and middle-click
+still pan natively, and Ctrl+wheel still zooms; none of that goes through this command line.
+Middle-drag pan (this project's own annotate-host feature) is off by default here, since the
+drawing stage pans via a CSS transform and has nothing to scroll.
+
+## `#` system search
+
+Typing `#` followed by a name (e.g. `#fptu`) searches the live `#graph-system-select` options
+(e.g. "FPTU (Supply)"), read/written via `.value` plus `input`/`change` events. Confirmed live
+against a 30-system project including genuine duplicate option texts.
+
+## Tool settings: drill in, apply a value, re-arm the tool
+
+**Type `<tool>.`** (e.g. `route.`) from anywhere to drill into that tool's live settings, or —
+while that tool is the one currently armed — type the bare param name directly (`width`), blended
+into the ordinary dropdown. Every param is swept **live** by id prefix under one shared `graph-`
+prefix — nothing is hardcoded beyond that, so it stays accurate as the app's own controls change.
+Visibility alone isn't enough to tell params apart across tools, so the sweep additionally scopes
+to the real inspector aside (excluding the toolbar and any open dialog) and skips anything sitting
+inside a collapsed disclosure — the inspector's own "Advanced" group, in particular. A param
+behind a collapsed group is still real; typing it directly expands the group to make the write.
+`RW._cmdParamScopeDiagnose()` is a read-only console diagnostic naming every control found and why
+it was or wasn't included.
+
+**Properties match by what the app is showing right now, not just their fixed DOM id** — every
+inspector field's live on-screen label is read fresh each time, so `system`/`network` both match
+route's system field ("System / network"), and `diameter` matches route's own width control *only*
+once its profile is actually `round` — the same element the app relabels from "Width (in)" to
+"Diameter (in)" on screen. `width` keeps matching that same control by id regardless of profile.
+
+**What happens next depends on the param's type:**
+
+- **Numeric**: the input becomes `route.width = ` and stays focused. Enter applies — clamped to
+  the live range, written to the real control, `input`+`change` dispatched, tool re-armed.
+- **Checkbox**: picking it flips it immediately, re-arms the tool.
+- **Select**: picking it shows a numbered list of its live options. Type a number or a
+  name-prefix to filter, Enter/Space/click applies whichever's highlighted. **Tab live-previews
+  each option on the real page as you cycle** (Shift+Tab reverses), genuinely applied so you can
+  compare states before committing.
+
+**Escape** cancels cleanly — for numeric/checkbox, the real control is left untouched; for select,
+it reverts to whatever was genuinely current before any Tab-preview, if one happened.
+
+**Confirmed vs. still-hedged**: `.value` + `input`/`change` was live-tested against
+`magic-wand-tolerance`, `graph-width-input`, and `graph-profile-select` (`CONFIRMED_WRITE_IDS`) and
+worked. Every other control uses the identical technique but hasn't been individually
+write-tested, so its status message still says "confirm it actually applied."
+
+**The inspector's "New system" name/service fields are typeable too** (`route.new-system-name`/
+`-service`, or bare `name`/`service`) — the "Add" button stays a manual click only.
+
+**`dimension` (alias `dim`)** sets Width and Height one after another without re-typing the tool
+name: it opens the same numeric draft `width` alone would, but confirming it re-opens the draft on
+**Height** instead of clearing the bar. Requires the active tool to genuinely have both controls
+right now (a round-profile duct, which only exposes Diameter, does not). A bad value at either
+step stops the chain there. Escape cancels the whole two-step command.
+
+## Tool isolation
+
+**The command line is modal while a duct tool is armed.** Once `route`/`flex`/`extend`/... is
+armed, what still matches is: that tool's own properties (bare, or via `route.`), the ways out
+(`select`, Escape, Space), `finish`/`cancel`, `dimension`, and — if a config-dialog modal is open
+for that tool — its own Choose/Cancel-equivalent commands. **Exception**: typing or picking a
+*different* tool switches straight to it, arming that tool instead, with no need to return to
+`select` first — but only while a real tool is armed, not while a modal is open (dispatching a
+different tool's key over an open dialog was never a considered scenario). Everything else — every
+action button, `#` search — matches nothing, and the status line says why. Enforced twice: the
+dropdown never lists a blocked entry, and `RW.runCommand` refuses one directly too, so a direct
+console call can't bypass it either. `__RW._cmdIsolateTools = false` turns isolation off entirely.
+
+## Config-dialog modals
+
+Four real `<dialog>`s, one per tool: **branch fitting** (`branch`), **change size / transition**
+(`transition`), **GRD placement** (`grd`), **riser elevation** (`vertical`). While one is open, the
+settings listing switches from the ordinary inspector to that dialog's own fields, live-labeled
+the same way. Each modal's own Choose/Cancel-equivalent buttons are their own commands:
+`choose`/`cancelbranch`, `apply`/`cancelsize`, `place`/`cancelgrd`, `placeriser`/`cancelriser` —
+the `×` close button is deliberately not exposed. All eight stay reachable even while a *different*
+tool is isolated, the same way `finish`/`cancel` already do.
+
+**Opening any of the four modals auto-walks its own fields, one value prompt at a time.** The
+instant a modal is detected open, the command bar takes focus and drops into a value prompt for
+its first field (on-screen order), chaining into the next as each is confirmed — a field's list is
+re-derived live on every hop, not a fixed array, so a conditionally-visible field (branch's own
+flush-boot glyphs; change size's secondary size field, hidden for a round shape; riser's Shape
+field, hidden for a plain elbow) is picked up or skipped correctly. Enter with nothing typed
+leaves that field untouched and just advances. A walked checkbox opens a typed on/off draft rather
+than auto-toggling. **Branch fitting still ends on the dropdown pre-highlighted on `choose`**,
+waiting for one further, deliberate Enter. **Change size, GRD, and riser auto-click their own
+submit button the instant the last field is confirmed** — no further Enter needed (Kresna's own
+explicit choice, overriding this project's usual "never auto-submit a graph-host action button"
+caution, for these three specifically). Falls back to the manual Choose/Cancel prompt if the
+submit button isn't currently usable. Escape at any point ends the walk without submitting
+anything; the modal itself stays open. `__RW._cmdModalWalkEnabled = false` disables auto-start
+only (`__RW._cmdStartModalWalk(tool)` still works by hand); `__RW._cmdModalWalk` is
+console-inspectable mid-walk.
+
+**The walk remembers what was typed, and offers to reuse it — for branch only.** Change size, GRD,
+and riser never remember anything and always walk fresh, at Kresna's own explicit request. For
+branch: if anything was applied during an earlier walk, the bar shows a choice instead of jumping
+into field 1 — "Edit each field", "use previous for all" (pre-filled, still requiring Enter per
+field), or "use previous for all, without confirming" (applied immediately, still ending on the
+same Choose/Cancel prompt). Remembered values persist across a page reload (`localStorage`).
+`__RW._cmdModalWalkValueMemory` is console-inspectable (`{tool: {param: value}}`, no
+`transition`/`grd`/`vertical` key ever appears); `__RW._cmdModalWalkMemoryClear(tool)` forgets one
+tool or everything; `__RW._cmdModalWalkMemoryEnabled = false` disables the offer and new
+recording. Branch fitting's own field-memory (a different, narrower mechanism) lives in a
+separate repo, `boon-duct-workbench`, at the user's own request.
+
+## Action buttons
+
+Button-backed one-shot commands, typed by name (no single-letter aliases, since every letter is —
+or might be, on some trade pack — a tool key): `undo`/`redo` (`re`), `zoomfit` (`fit`)/`zoomin`/
+`zoomout`, `region` (`addregion`), `ruler` (`measure`), `calibrate` (`cal`), `setscale`
+(`scale`)/`resetscale`, `finish`/`cancel` (only while a route is in progress), `evidence`
+(`attach`)/`note` (`memo`)/`rationale` (`why`), `toggledamper` (`tdamper`), `elevation`
+(`riserelev`, only with a riser selected), `annotations` (`anno` — a view-only toggle, submits
+nothing), plus the eight modal Choose/Cancel commands above.
+
+**An action that isn't currently usable is left out of the dropdown entirely, not listed and then
+refused** — `finish`/`cancel` while no route is in progress, `elevation` with no riser selected,
+and so on, only appear once genuinely runnable (button present, visible, not disabled). Typing the
+name straight into `RW.runCommand()` from the console still reports the specific reason
+(missing/disabled/hidden).
+
+## Boundaries
+
+- **Graph action commands submit real commands to the app's own autosave journal** — this app has
+  no manual-commit mode, so every click auto-flushes within ~2s regardless of any Save button.
+  Given this, every button-backed action is implemented **except** the "System / network" and "New
+  system" property-group actions (`AssignDuctSystem`/`CreateDuctSystem`/`RenameDuctSystem`) —
+  deliberately never given table entries.
+- The command line never clicks Save (`#graph-save-commands`), never touches the Submit form, and
+  never drives the screen/mic recording controls — enforced in code (`FORBIDDEN_BUTTON_IDS`,
+  checked inside `RW.runCommand`), not just by omission from the action vocabulary above.
+- The modal walk's own auto-submit is scoped to exactly three tools (change size/GRD/riser) — see
+  "Config-dialog modals" above. Do not widen this without re-confirming scope first.
+- The activity tracker (`/analytics/api/events/`) is read-only observed, never spoofed.
+- This is a bridge tool, not a replacement for engineering review.
+- On the annotate-job page (below), nothing auto-draws or auto-submits — every feature but
+  middle-drag pan dispatches a synthetic keydown instead of touching app state directly.
+
+## The annotate-job page (legacy)
+
+The original target this project grew from, before the graph host existed. Gets much lighter
+treatment here — see `CLAUDE.md` for the full round-by-round history if you need it.
+
+**Tool vocabulary** (native app tools, dispatched via synthetic keydown — every draw-mode tool
+dispatches a defensive `d` first, since the app's own keymap documents them as draw-mode-only;
+never confirmed live whether that's actually required):
 
 | Command | Key | Aliases | Type | Notes |
 |---|---|---|---|---|
 | `linear` | `Q` | — | draw tool | |
-| `rect` | `W` | `bbox` | draw tool | AutoCAD-ish rename; `bbox` still works |
+| `rect` | `W` | `bbox` | draw tool | |
 | `count` | `E` | — | draw tool | |
 | `polygon` | `R` | — | draw tool | |
 | `polyline` | `T` | — | draw tool | |
@@ -138,568 +346,43 @@ stays accurate as long as it's re-derived from that table rather than hand-maint
 | `cloud` | `U` | — | draw tool | revision cloud |
 | `wand` | `K` | — | draw tool | magic wand — has settings (`wand.` → tolerance/detail/padding) |
 | `wrap` | `X` | — | draw tool | shrink-wrap — has settings (`wrap.` → padding/smoothing/polygon-mode) |
-| `void` | `V` | — | draw tool | delete-area workflow; never becomes Space's repeat target (see "Void workflow awareness") |
+| `void` | `V` | — | draw tool | delete-area workflow; never becomes Space's repeat target |
 | `mline` | `P` | `ribbon` | draw tool | constant-width path — has settings (`mline.` → width/anchor) |
-| `tag1`…`tag9`, `tag0` | `1`…`9`, `0` | — | tag select+draw | dispatches the app's own digit hotkeys directly — **not** the Nth tag in a `#`-search |
+| `tag1`…`tag9`, `tag0` | `1`…`9`, `0` | — | tag select+draw | the app's own digit hotkeys directly — **not** the Nth tag in a `#`-search |
 | `pan` | `A` | — | mode switch | |
-| `select` | `S` | — | mode switch | the resting state (see "Select is the resting state") |
-| `draw` | `D` | — | mode switch | every draw-mode tool above dispatches this first, defensively |
-| `label` | `F` | — | mode switch | Space always returns to `select` from here, never resumes the prior tool |
+| `select` | `S` | — | mode switch | the resting state |
+| `draw` | `D` | — | mode switch | |
+| `label` | `F` | — | mode switch | Space always returns to `select` from here |
 | `crop` | `G` | — | mode switch | |
 | `mirror` | `M` | — | mode switch | |
 
-Every draw-mode tool row dispatches a defensive `D` immediately before its own key (see below).
-Two additional inputs aren't table commands but act like keymap entries: `#<name>` searches and
-selects a tag (see "Tag search"), and `<tool>.` drills into that tool's own settings (see "Tool
-settings" below).
-
-Draw-mode tool commands dispatch a defensive `d` (enter draw mode) immediately before their own
-letter, since the app's keymap documents them as draw-mode-only tools — **not live-verified
-whether that's actually required.** Every dispatch reports a live diagnostic to the status line:
-the key sent, plus `annotationState.currentTool` before and after — read it after running a
-native command to see whether the dispatch actually landed, and to learn the app's real
-`currentTool` strings (only `'bounding_box'` was previously confirmed anywhere in this codebase).
-
-**Tag search: type `#` followed by a tag name** (e.g. `#conference`) to search the app's full tag
-list, shown in the same dropdown color-coded in purple. The tag list is auto-detected from
-`annotationState` when the command line loads — if detection fails, `#` search reports that in
-the status line rather than silently doing nothing. **Selecting a tag always directly assigns
-`annotationState.currentTag`**, regardless of its position in the list — an earlier version
-dispatched the app's own 1-9/0 hotkey for the first 10 tags, assuming hotkey order matched the
-detected list's order; a real job proved that assumption **wrong** (digit 1 selected a
-completely different tag than the one shown at list-index 0), so that path was removed entirely.
-Direct assignment is not fully confirmed live either — if the app needs its own setter/dispatch
-to notice the change, this can silently desync the app's displayed tag from what's actually used
-on commit. Watch the status line: it always says "confirm it actually applied."
-
-**Utility keys:**
-
-| Key | Action |
-|---|---|
-| `Escape` (command input focused) | clear the command input, or close the autocomplete dropdown if it's open |
-| `Escape` (nothing focused) | return the app to select — see "Select is the resting state" below |
-| `ArrowUp`/`ArrowDown` | move the autocomplete highlight |
-| `Tab` / `Shift+Tab` | cycle the highlight to the next/previous match, filling each in as you go |
-
-So Escape typed twice in a row does two different things: the first clears/closes the command bar
-(if it had focus), the second — now that nothing is focused — sends the app back to select.
-
-**The highlighted row always stays on screen while cycling.** The autocomplete dropdown scrolls
-itself as needed so `ArrowUp`/`ArrowDown`/`Tab` never move the highlight somewhere invisible below
-(or above) the visible rows — this matters most for the `<tool>.` parameter listing on the graph
-host, the one dropdown list that isn't capped at 8 rows (the graph inspector can carry dozens of
-params). Only the dropdown's own scroll position moves; nothing else on the page scrolls.
-
-**Tab is escalated to win over the host app's own keyboard handling.** On top of the ordinary
-`inputEl`-level Tab handling above, Tab specifically is ALSO caught by a dedicated `window`-level,
-capture-phase listener — if the host app has its own keydown listener on `document` (its own
-focus/accessibility handling, unrelated to this project), a plain document-level listener added by
-this loader could lose a same-node race to it and never even see Tab, leaving the browser's own
-default "move focus to the next element" behavior to fire instead (the dropdown then flickers and
-closes). A `window`-level capture listener runs before any `document`-level one regardless of
-registration order, so this wins that race. Scoped to firing only when the real command input is
-the actual event target, so it can never affect Tab anywhere else on the page.
-
-**Tab and the arrow keys only move the highlight — neither ever applies anything.** Cycling through
-`#conc` → CONCRETE / CONCRETE SLAB / CONCRETE WALL with Tab or the arrows only changes what's
-highlighted (and, for Tab, what's filled into the input); the tag is only actually assigned — same
-as picking a command — once you press Enter, Space, or click a row. The scroll wheel is never
-consumed by navigation at all: wheel over an open dropdown scrolls that list's own scrollbar,
-and wheel anywhere else scrolls the page normally — there is no wheel handler anywhere in the
-injected code, so page scrolling can't be hijacked. Both are scoped to the two plain search modes
-(commands and tags) — a `<tool>.` settings-param list keeps Tab's older fill-only behavior, and a
-select param's own option list keeps its existing Tab-live-previews-each-state behavior (see
-"Tool settings" below); neither the arrows nor Tab applies anything there either.
-
-## Select is the resting state (AutoCAD-style)
-
-AutoCAD always drops you back to the bare selection cursor once a command finishes or is
-cancelled. This build does the same via three triggers, all funnelled through one path so they
-can never fire twice for the same event: **on load** (once the app looks idle — skipped if a tool
-is already armed, so re-pasting the loader after a navigation doesn't yank you out of a tool
-that's already working); **on Escape** while nothing else is focused (deferred slightly so the
-app's own Escape handling — cancelling whatever it was doing — runs first); and **on a poll**
-that notices `annotationState.currentTool` clearing itself back to null on its own (e.g. a shape
-finished), debounced across two ticks so a momentary null while switching tools can't yank you out
-of the tool you just picked. Running `pan`/`label`/`crop`/`mirror` is never fought back to select.
-
-If this ever mis-fires, `__RW._cmdAutoSelect = false` in the console turns the whole feature off
-without needing to re-paste the loader (it also turns itself off automatically, reporting why on
-the status line, if it ever reverts more than 5 times in 5 seconds — a safety net against a bad
-`currentTool`/`mode` read looping).
-
-**Press `Space` with nothing typed — it's a toggle** — another AutoCAD convention (pressing
-Space/Enter with an empty command line repeats the last command), extended into an on/off switch:
-
-- **Nothing currently armed** and a real draw tool has been run at least once (mode switches like
-  `pan`/`select`/`label`/`crop`/`mirror` don't count) → Space **re-arms that same tool** directly,
-  no need to type its name again.
-- **A tool is currently armed** → Space **closes it** (back to select) — unconditionally, whether
-  or not you adjusted any of its settings first; every setting change is already fully applied the
-  moment you make it, so there's nothing left in progress to protect by keeping the tool open.
-- **You switched to `label` while a tool was active** → Space goes straight to **select**, not
-  back to the tool that was active before label (`mline -> label -> Space -> select`, not `mline
-  -> label -> Space -> mline`). This is a deliberate override, scoped to `label` only — without
-  it, Space would fall into the plain repeat-from-idle rule above and resume the prior tool
-  directly, which is what leaving `label` used to do and is not what's wanted here. Switching to
-  `pan`/`crop`/`mirror` still uses that plain repeat-from-idle behavior, unaffected.
-- **One of the four config-dialog modals (branch fitting, change size, GRD placement, riser
-  elevation) is currently open** (graph host only) → Space does **not** try to close the armed tool
-  behind it — that would dispatch a synthetic select keypress at the app while its own dialog is
-  still up. Instead it does the same "initialize the console" thing described below: opens the bar
-  and drops into a dropdown of what's actually usable while isolated to it — that modal's own
-  fields plus its own Choose/Cancel-equivalent commands.
-
-The close/repeat toggle only fires when the command bar is genuinely empty (nothing mid-typed) and
-never opens the command bar or dropdown — it's a direct action, not a search. Whether a tool is
-"currently armed" is tracked ourselves (not re-read from the app each press), so closing then repeating in a fast
-loop — press Space, press Space again right away, again, again — reliably keeps alternating between
-the tool and select every time, with no dead cycle where a press silently does nothing. It keeps
-remembering the same tool across as many close/repeat cycles as you like, until you explicitly use
-a different one, at which point *that* becomes what Space repeats instead.
-
-One accepted trade-off from tracking this ourselves: if a tool gets armed some other way — clicking
-the app's own toolbar directly, bypassing this command line — Space won't know to close it, since
-nothing here ever saw it arm. If nothing has been run through the command line yet at all, Space
-just **initializes the console**: it opens the bar (nothing seeded into it — the bar stays empty,
-not "s" and not a literal space) and drops straight into its tool dropdown, the same up/down-arrow-
-and-Enter list every other query narrows, pre-filtered to real tools only — never the action-button
-vocabulary (undo/redo/finish/cancel/calibrate/...). Typing from there narrows it or reaches anything
-else, exactly like typing the first letter of a command always has.
-
-**Void workflow awareness**: the app's native void flow (draw a void area over previously-drawn
-content, then the area and its contents are deleted) auto-reverts to whatever drawing tool was
-armed just before you entered void — and this command line's "last tool" memory reflects exactly
-that. `void` and the area tools you use while drawing the void region (`rect`, `circle`,
-`polygon`, `polyline`, ...) never become what Space repeats: `rect -> void -> circle -> Space ->
-Space` closes the reverted `rect` (first Space) and then repeats `rect` (second Space) — the
-pre-void tool, never `void` or the last area tool. This is tracked entirely from our own command
-history (which tools you ran, in what order), not by reading the app's state back — so it stays
-correct even if the app's own revert is silent or asynchronous. Known, accepted edge: if after an
-auto-revert you immediately run a *different* brand-new draw tool (with no Space, mode switch, or
-close in between), that tool is briefly frozen out of the repeat target until one of those happens
-— rare in practice, and the pre-void tool is usually what gets re-selected or Space'd anyway.
-
-**Practical tip**: this blind spot only ever affects *arming* — always start a tool by typing its
-name here (or letting the bare-param blend catch it while another tool's active), never by clicking
-the app's own toolbar button directly, and Space's close/repeat toggle stays accurate indefinitely.
-*Closing* has no such caveat — Escape, Space, or the tool just finishing on its own are all picked
-up correctly no matter how the tool was armed in the first place.
-
-## Middle-mouse hold-drag pans (does not switch tools)
-
-Hold the **middle mouse button** (scroll-wheel click) and drag to pan the page — like grabbing and
-dragging the paper, AutoCAD-style. Unlike every other feature here, this does **not** dispatch a
-key to the app's own pan tool — it moves the page directly, the same way ordinary scrolling would,
-specifically so that whatever tool is currently armed (`linear`, `rect`, `mline`, ...) survives the
-whole gesture untouched. See CLAUDE.md's amended Constraints for why this is the one feature that
-writes to the page directly instead of dispatching a synthetic key.
-
-The app's own native `Space` = temp-pan key still exists in its keymap (see below) but is, in
-practice, shadowed by this build's global typing-capture (a bare `Space` gets absorbed into the
-command input rather than reaching the app) — middle-drag is the replacement, not an addition.
-
-If it doesn't do anything on a given page, run `__RW._panDiagnose()` in the console first — it walks
-up from the annotation canvas and prints every ancestor's scroll metrics, which answers the one
-real unknown here: whether this app's viewport actually scrolls, or pans via a CSS transform
-instead (in which case no amount of `scrollLeft` writing will do anything, and this feature is a
-harmless no-op). Other console-tunable escape hatches: `__RW._panInvert = true` if the direction
-feels backwards; `__RW._panEnabled = false` to disable panning alone without touching the rest of
-the command line; `__RW._panStopHostEvents = false` to let the host app's own canvas see the middle
-press too (default `true`, to guard against a canvas whose mousedown handler doesn't check which
-button was pressed); `__RW._panContainerOverride = someElement` to skip the automatic scroll-ancestor
-search entirely.
-
-## Scroll-to-zoom (exploratory — diagnostic only so far)
-
-The goal: plain scrolling zooms in and out, no modifier key or keypress involved at all — not a
-dispatch to one of the app's own zoom shortcuts, an actual self-implemented zoom.
-
-That turns out to need real information this project doesn't have yet. Middle-drag pan (below)
-could be self-implemented safely because it moves EXISTING content within its own scroll container
-via `scrollLeft`/`scrollTop` — universal DOM properties every scrollable element has, so there's no
-way to get the mechanism wrong. Zoom has no such universal equivalent: different apps implement it
-as a CSS transform on a wrapper element, a canvas redrawn at a different resolution, a PDF-library
-zoom API, or a plain state field — and guessing wrong here isn't just cosmetic. If this app computes
-where a click lands from its real (untransformed) page layout, an externally-applied CSS zoom could
-silently desync what you see from where an annotation actually gets placed — a correctness risk
-serious enough that shipping a guess would be worse than shipping nothing.
-
-So this round shipped a **read-only diagnostic only**, `__RW._zoomDiagnose()` — run it once before
-zooming (using the app's own Ctrl+scroll or Ctrl+Plus/Minus), zoom in noticeably, run it again, and
-compare the two outputs by eye. It reports, for the annotation canvas and every ancestor: computed
-and inline CSS `transform`, the legacy `zoom` CSS property, a `<canvas>` element's backing
-resolution (`width`/`height` attributes) versus its rendered size, and any `annotationState` key
-whose name looks zoom/scale-shaped. Whatever value actually changes between the two runs is the
-real mechanism — that's what a real scroll-to-zoom implementation needs to drive, once it's known.
-Plain scrolling still just scrolls, unchanged, until then.
-
-(Two earlier attempts at this — redispatching a synthetic Ctrl+scroll, then dispatching Ctrl+Plus/
-Minus keydowns — were both dispatch-to-the-app approaches; this request specifically wants no
-dispatch involved at all, so both were dropped rather than adapted.)
-
-**Note on the global name**: everything here lives on `window.__RW` (the double-underscore prefix
-avoids colliding with any global the host page might already have). Inside this project's own
-source files it's aliased to a shorter local `const RW = window.__RW`, but that alias is only
-visible inside each module's own closure — **from the DevTools console itself, you must type
-`__RW.`, not `RW.`** (a bare `RW` is not defined globally and throws `ReferenceError: RW is not
-defined`). Every console command in this README uses the correct `__RW.` form.
-
-The only annotation-state write anywhere in this build is `annotationState.currentTag` (tag
-selection, above) — nothing here stages annotations, drawings, or edits of any kind. Middle-drag
-pan is a distinct, deliberate exception to that: it writes `scrollLeft`/`scrollTop` on a page
-viewport element, never on anything under `annotationState`.
-
-## Tool settings: drill in, apply a value, re-arm the tool
-
-Wand, wrap, and mline each have their own dedicated settings in the app. Their real DOM identity
-was confirmed live (via `__RW._toolSettingsDiagnose()`, below) and a write-back test on a real
-job — plain `.value` assignment plus a synthetic `input` event took effect immediately and
-persisted, no framework workaround needed. Every param under a tool is discovered **live**, by id
-prefix, every time you drill in — nothing is hardcoded beyond the three prefixes below, so ranges
-stay accurate if the app's own sliders ever change, and any control the app adds later under the
-same prefix becomes usable automatically, no update needed here:
-
-| Tool | Confirmed id prefix | Params found live under it (this round) |
-|---|---|---|
-| `wand` | `magic-wand-` | `tolerance` (0–255), `detail` (0–15, step 0.5), `padding` (-20–20) |
-| `wrap` | `shrink-wrap-` | `padding` (0–50), `smoothing` (0–50, step 0.5), `polygon-mode` (checkbox) |
-| `mline` | `ribbon-` | `width` (≥1, no confirmed max), `anchor` (dropdown, options read live) |
-
-**Two ways to reach a param, both lead to the same next step:**
-
-- **Type `<tool>.`** (e.g. `wand.`) from anywhere, active or not, to drill into that tool's
-  settings — the same dropdown switches to listing its parameters, each showing its live current
-  value (and range, for numeric ones).
-- **Or just type the param name bare** (e.g. `tolerance`, no `wand.` prefix) whenever that tool is
-  already the one currently armed — it's blended straight into the ordinary autocomplete
-  (highlighted in the same settings color), right alongside every other command. **On this host
-  (annotate)** this is **additive, not exclusive**: everything else you could already type —
-  switching to a totally different tool, tag search, anything — still works exactly the same while
-  a tool with settings is active. Nothing is blocked; the active tool's own params are just an
-  extra, faster option. The graph host's own duct tools work the opposite way — see "Tool
-  isolation" under "The graph ('Duct Takeoff') host" below.
-
-**What happens next depends on the param's type:**
-
-- **Numeric** (`tolerance`, `padding`, `width`, …): the input becomes `wand.tolerance = ` and stays
-  focused (unlike every other mode here, this one deliberately does **not** clear/blur) so you can
-  type a number directly. Press **Enter** to apply — clamped to the live range, written to the
-  real control, `input`+`change` dispatched, tool re-armed.
-- **Checkbox** (`polygon-mode`): picking it **flips it immediately** — off becomes on (or back),
-  re-arms the tool, no extra typing needed. Picking it again flips it back.
-- **Select** (`anchor`): picking it immediately shows a **second, numbered list** of its live
-  options — e.g. `1. Left`, `2. Center`, `3. Right` — read straight from the real `<select>`, never
-  hardcoded, starting highlighted on whichever option is *actually* current right now. Type a
-  number *or* the option's own name (a prefix is enough — `ri` matches `Right`) to filter, then
-  **Enter/Space/click** applies whichever's highlighted — no separate "type a value" step, since
-  picking the option *is* the value. **Tab live-previews each option on the real page as you
-  cycle** (Shift+Tab cycles the other way, wrapping at both ends) — genuinely applied, not just
-  filled into the input, so you can compare states before committing. The option list stays open
-  the whole time you're tabbing.
-
-**Escape** at any point cancels cleanly. For a numeric or checkbox param it always leaves the real
-control completely untouched. For a select param it's slightly different, on purpose: if you never
-pressed Tab, nothing was ever touched, same as the others — but if you *did* Tab through a few
-states to preview them, Escape puts it back to whatever was genuinely current before you started
-previewing, not whichever state you happened to land on last.
-
-**Confirmed vs. still-hedged**: the write-back technique (`.value` + `input`/`change` events) was
-tested live specifically against `magic-wand-tolerance`, and it worked — the app picked up the
-change and it stuck. Applying `wand.tolerance` therefore reports without a hedge. Every other
-control uses the identical technique but hasn't been individually write-tested the same way, so
-their status messages still say "confirm it actually applied," this project's standing convention
-for anything not fully live-confirmed.
-
-### `__RW._toolSettingsDiagnose(filter)` — the read-only probe this was built from
-
-A one-shot, console-only diagnostic — same convention as `__RW._panDiagnose()` above, manual and
-read-only, never touching `annotationState` or the status line. It reports two things separately:
-every `[data-tool]` element on the page (the same selector round 2's live inspection used to
-discover the `ribbon` tool), and every settings control anywhere on the page (range/number/
-checkbox inputs, selects) with its live value, min/max/step, name, title, and aria-label. Pass a
-string to narrow the tool list to a case-insensitive substring match on `data-tool`, e.g.
-`__RW._toolSettingsDiagnose('wand')`. Still useful for discovering a control this build doesn't
-know about yet, or for confirming the table above hasn't drifted.
-
-## App built-in keymap (reference, extracted from their JS)
-
-**This is the single most load-bearing reference on this branch** — every native command in
-`RW._cmdTable` is a 1:1 mapping onto these letters. Extracted from the app's own JS; **it drifts
-— confirmed live** (see below), so re-verify against a real page (`document.querySelectorAll
-('[data-tool]')`, and `annotationState.reservedKeys` for the full reserved-letter list) before
-trusting this table blindly.
-
-```
-Modes: A pan, S select, D draw, F label, G crop, M mirror
-Tools (draw mode): Q linear, W bounding box, E count, R polygon, T polyline, Y circle, U revision cloud
-K magic wand (tolerance/detail sliders), X wrap (shrink-wrap), V void mode, P ribbon
-(constant-width path — click centerline points, drag to measure width; added to the app after
-this table was first written, confirmed live), 1-9/0 tag select+draw, Space temp pan
-Ctrl/Cmd +/-/0 zoom, Ctrl+scroll zoom
-Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo
-Delete/Backspace delete selected, Ctrl+C/V copy/paste, Ctrl+Shift+V mirror paste
-Double-click finishes polygon/polyline
-Arrows nudge selection 1px, Shift+arrows 10px
-```
-
-Note: `Space` temp pan is the app's own native gesture, listed here for completeness, but this
-build's global typing-capture absorbs a bare `Space` into the command input rather than letting it
-reach the app — see "Middle-mouse hold-drag pans" above for the replacement.
-
-**A structural note on shadowing**: any workbench listener registered in the capture phase with
-`stopPropagation()` fully shadows the app's own same-key shortcut — this is how the command
-line's global auto-capture works (it must consume a keystroke before the app's own listener sees
-it, or dispatch it there itself via a marked synthetic event). Blurring the command input is the
-only way to reach an app shortcut directly while this build is loaded.
-
-## The graph ("Duct Takeoff") host
-
-On `/graph/projects/<project>/session/?page=<page>` — a full-screen node-graph duct editor, no
-app chrome, no `annotationState` at all — the command line detects this automatically (the
-console log names it) and switches over:
-
-**Tool vocabulary is read live off the app's own toolbar** (round 27), not hardcoded — every
-`[data-tool]` button's id becomes a command name, and its own `<span class="graph-tool-key">`
-badge (the app's own key hint, derived from its own `TOOL_KEYS` map — the single source of truth)
-becomes that command's key. Curated descriptive aliases are merged in by id on top: `route`/`duct`,
-`grd`/`diffuser`, `unit`/`equipment`, `vertical`/`riser`, `cut`/`split`, `connect`/`join`,
-`adjust`/`stretch`. On today's duct ("Duct Takeoff") project that yields 13 commands: `select`
-(`s`, the resting state), `route` (`r`), `flex` (`f`), `extend` (`e`), `branch` (`b`), `transition`
-(`t`), `grd` (`g`), `unit` (`u`), `vertical` (`v`), `cut` (`c`), `damper` (`d`), `connect` (`j`,
-"Connect two open ends"), `adjust` (`a`, "Adjust duct length") — the last two discovered live this
-round. Every entry is a plain one-key dispatch — **no defensive `d` draw-mode prefix**, this host
-has no draw-mode concept. This table is entirely separate from the annotate host's own — nothing
-above (`linear`, `wand`, tag digits, `pan`/`label`/`crop`/`mirror`, ...) applies here.
-
-**Why derived, not hardcoded**: this same host also runs a *second* trade pack (piping), which
-reuses several of the same tool ids with **different** key letters (`extend`=`x` not `e`,
-`vertical`=`z` not `v`, `cut`=`u` not `c`, `transition`=`n` not `t`) and filters which tools even
-appear per project — a static table would silently dispatch the wrong key there. If the live
-toolbar can't be read (nothing found, or the page isn't ready yet), the command line falls back to
-the built-in 13-tool table above and reports it: a status-bar message on load
-(`"graph toolbar not readable — using the built-in ... table"`), a `console.log` naming the source,
-and `__RW._cmdGraphTableInfo` (`{source, count, tools, skipped, aliasDropped, shadowedActions}`) —
-console-inspectable any time. `__RW._cmdRebuildGraphTable()` re-derives without a page reload
-(useful since re-pasting the loader onto an already-injected page is a no-op — see "Injection"
-above); it refreshes `RW._cmdTable`/`RW._toolSettingsMap` but never touches `RW._cmdLastTool`, so if
-the tool Space would repeat has disappeared from the toolbar, Space simply dispatches a key the app
-no longer maps (harmless — an unmapped key is ignored).
-
-**When a tool's own name collides with an action's** (only known case: the piping pack's `evidence`
-tool vs. this host's own `evidence` action), the **tool always wins its own name** — typing
-`evidence` arms the tool, and the action stays reachable by its other alias (`attach`).
-`__RW._cmdGraphTableInfo.shadowedActions` reports any such collision and what each action is still
-reachable by.
-
-**`#` search finds systems/networks, not tags.** There's no tag list on this host — `#fptu` (say)
-searches the live `#graph-system-select` options (e.g. "FPTU (Supply)") instead, same
-dropdown/keyboard navigation as tag search elsewhere in this file.
-
-**Tool settings drill in the same way** (`route.`, `grd.`, ...), but every tool's params live
-under one shared `graph-` id prefix rather than each tool having its own unique one. Visibility
-alone isn't enough to tell them apart (round 15): the command line additionally scopes the sweep
-to the real inspector aside (excluding the canvas toolbar and any open dialog) and skips anything
-sitting inside a collapsed disclosure — the inspector's own "Advanced (pressure, material, seams,
-gauge...)" section, in particular. A param behind a collapsed group is still real; typing it
-directly (e.g. `route.gauge-select=24ga`) expands the group to make the write, and `route.`'s own
-listing names how many more exist that way. `RW._cmdParamScopeDiagnose()` is a read-only console
-diagnostic that reports every `graph-` control and why it was or wasn't included.
-
-**Tool isolation: the command line is modal on this host while a duct tool is armed** — the
-opposite of the annotate host's "additive, not exclusive" behavior above (confirmed via
-`AskUserQuestion`). Once `route`/`flex`/`extend`/... is armed, what still matches is: that tool's
-own properties (bare, or via `route.`), the ways out (`select`, Escape, Space), the route-lifecycle
-actions `finish`/`cancel`, **and every other native tool name** (whatever the live toolbar actually
-shows — round 27's derivation, so a different trade pack's tools are covered with no code change)
-— typing or picking a different tool switches straight to it, arming that tool instead, with no
-need to return to `select` first
-(Kresna's own request, round 25: "only for the tool" — narrower than turning isolation off
-altogether). Everything else — every action button (`undo`, `zoomfit`, ...) and `#` system search
-— still matches nothing, and the status line says why, so a blocked query never reads as a silent
-typo. This is enforced twice: the dropdown itself never lists a blocked entry, and `RW.runCommand`
-refuses one directly too (the same belt-and-suspenders precedent `FORBIDDEN_BUTTON_IDS` set), so a
-direct console call can't bypass it either. `route.gauge-select=24ga` and friends still work
-exactly as above — isolation restricts *other* tools' properties, never the armed one's own, and a
-property write's own re-arm (`RW._cmdApplySetting` calling `RW.runCommand(route)` after every
-write) is explicitly exempted from its own guard. **The tool-switch exemption itself doesn't apply
-while one of the four config-dialog modals (below) is open** — dispatching a different tool's key
-while a dialog sits open on screen was never a considered scenario, so switching tools there is
-still refused exactly as before; Cancel/Escape remains the way out of a modal. `__RW._cmdIsolateTools
-= false` in the console turns isolation off entirely, restoring the old fully-additive behavior on
-this host too.
-
-**Properties match by what the app is showing right now, not just their fixed DOM id** — every
-inspector field's live on-screen label is read fresh each time (confirmed live: every field wraps
-its control in a `<label>`, whose own leading `<span>` holds the text), so `system`/`network` both
-match route's system field ("System / network"), and `diameter` matches route's own width control
-*only* once its profile is actually `round` — the same element the app itself relabels from
-"Width (in)" to "Diameter (in)" on screen, with no id change at all. `width` keeps matching that
-same control by id regardless of profile; the two are additive, never a replacement for each
-other. The dropdown row itself displays whichever live label was found ("Diameter (in) (4, now
-4)"), falling back to the id-derived param name only when no label is discoverable — so a row
-picked by typing "diameter" never confusingly reads "width-input". This is graph-host only; the
-annotate host's wand/wrap/mline params are unaffected.
-
-**Four config-dialog modals are reachable too, on the same tool-prefix pattern** — branch fitting
-(`branch.`), change size (`transition.`), GRD placement (`grd.`), and riser elevation
-(`vertical.`). While one of these tools' own modal is open, its listing switches from the ordinary
-inspector to that dialog's own fields (live-labeled the same way), and a write lands on the real
-control without re-arming the tool — dispatching the tool's own key into an open dialog is untested,
-so the status names the dialog instead (`"... — branch fitting dialog still open"`). Each modal's
-own Choose/Cancel-equivalent buttons are their own commands: `choose`/`cancelbranch` (branch
-fitting), `apply`/`cancelsize` (change size), `place`/`cancelgrd` (GRD placement),
-`placeriser`/`cancelriser` (riser elevation) — the `×` close button is deliberately not exposed,
-Cancel is enough. All 8 stay reachable even while a *different* tool is isolated (round 17), the
-same way `finish`/`cancel` already do. Typing still reaches the command bar while one of these four
-is open (they aren't `showModal()`-modal) — a modal's own `<select>` keeps its native type-ahead
-while focused, everything else still seeds the command bar as usual; any *other* dialog (calibrate,
-known-scale) still blocks the command bar entirely, unchanged.
-
-**Opening any of the four modals auto-walks its own fields, one value prompt at a time — no param
-names to type at all.** The instant a recognized modal is detected open, the command bar takes
-focus on its own and drops straight into a value prompt for its first field (on-screen order), the
-same numeric/select/checkbox/text draft picking that field by name would already open. Confirming
-one (Enter/Space) immediately opens the next, chaining through every field currently on the page —
-the same idea `dimension` already uses for width→height, generalized here to however many fields
-the modal actually has, re-discovered live on every hop rather than a fixed list, so a field that
-only becomes relevant partway through (e.g. a flush-boot glyph that only shows for certain Fitting
-type/Branch shape combos, change size's own secondary size field for a rectangular shape, or
-riser's own Shape field for a placement with a known duct shape) is still picked up, and one that
-stops being relevant is simply skipped over. **Enter with nothing typed leaves that field untouched
-and just advances** — the walk is for filling in what you want to change, not a forced tour of
-every control; a select only counts as "untouched" when nothing was typed *and* nothing was
-Tab-previewed (Tab's own live-preview still works throughout, and a previewed value is kept on a
-bare Enter, not treated as a skip). A walked checkbox is a typed `on`/`off` prompt like any other
-field — never auto-toggled just by walking onto it, unlike picking one from the ordinary dropdown.
-Clicking an option row with the mouse continues the walk exactly like Enter does. **Once every
-field has been visited, branch fitting does not submit anything on its own** — it opens the dropdown
-pre-highlighted on `choose` (with `cancelbranch` also listed), so one further, deliberate Enter is
-what actually applies it. **Change size, GRD, and riser are different, at Kresna's own explicit
-request: they auto-click their own submit button (`apply`/`place`/`placeriser`) the instant the
-last field is confirmed — no further Enter needed.** If that button isn't currently usable
-(missing/disabled/hidden), the walk falls back to the same manual prompt branch always uses, rather
-than silently doing nothing. Escape at any point ends the whole walk (fields already set are left as they are; the modal itself
-stays open, so the ordinary `<tool>.`/bare-param typing is still there if you want it), and the
-modal closing by some other path (e.g. its own Cancel clicked by mouse) tears the walk down quietly
-too. `__RW._cmdModalWalkEnabled = false` turns off the auto-start (a manual
-`__RW._cmdStartModalWalk('branch')`, or any of `transition`/`grd`/`vertical`, still works with the
-hatch off), and `__RW._cmdModalWalk` is a plain console-inspectable object while a walk is running.
-
-**The walk remembers what was typed, and offers to reuse it next time — for branch only.** Change
-size, GRD, and riser never remember anything and never show this offer, at Kresna's own explicit
-request (GRD's Airflow and riser's Shape were both briefly remembered before he asked for the same
-"no initial fields questioning" treatment change size already had to cover GRD and riser too); they
-always walk fresh from field 1 like a first-ever use, for every field. For branch: the instant its
-modal is detected open, if anything was applied during an earlier walk, the command bar shows a
-choice instead of jumping straight into field 1 — "Edit each field" (starts exactly like a walk
-with nothing remembered, every field blank), "use previous for all" (every field opens
-**pre-filled** with what was applied last time, one at a time, still requiring its own Enter to
-actually apply — nothing is bulk-applied without a chance to look at or edit it first), or **"use
-previous for all, without confirming"** — the same remembered values, but applied to every field
-immediately with no per-field prompt at all, landing straight on the same Choose/Cancel-equivalent
-prompt an ordinary walk ends on (it still doesn't click Choose itself — only the per-field confirms
-are skipped, not the modal's own final action). A field that's never had a value
-applied simply opens blank even in "use previous" mode (or is left untouched in the
-without-confirming mode), and a remembered select value that no longer matches any real option
-falls back to the field's own actual current value rather than guessing. Every field type is
-remembered (select, checkbox, number, text). A skipped
-field (bare Enter, nothing typed, or nothing remembered in the without-confirming mode) is never
-recorded, so its own previously remembered value survives untouched. Remembered values survive a
-page reload/re-paste (stored in `localStorage`, not just for the rest of this page) — write one
-value, close the loader, come back later, and it's still there. `__RW._cmdModalWalkValueMemory` is
-a plain console-inspectable object (`{tool: {param: value}}`, with no `transition`/`grd`/`vertical`
-key ever appearing in it); `__RW._cmdModalWalkMemoryClear(tool)` forgets one tool's values or
-everything with no argument; `__RW._cmdModalWalkMemoryEnabled = false` turns off both the offer and
-remembering new values for branch (the walk itself still works everywhere, always starting fresh).
-A build from before change size/GRD/riser were all excluded may have already written one of them
-into a real page's `localStorage`; loading today's build prunes any such stale entry away once, and
-persists the cleanup, rather than merely stopping new writes. This replaced an earlier mechanism
-(`RW._cmdModalMemory`) that silently auto-filled a modal's select/checkbox fields with no choice
-offered and excluded branch fitting entirely (its own field-memory lives in a separate, standalone
-repo, `boon-duct-workbench`, `~/Projects/boon-projects/`, with no dependency on this one in either
-direction) — once this walk memory covered branch there was nothing left for the older, silent one
-to do, so it was removed (change size/GRD/riser's own exclusion from the new memory isn't a gap
-left by that removal — it's a deliberate, separate request).
-
-**The inspector's "New system" name/service fields are typeable too** (`route.new-system-name`/
-`-service` or bare `name`/`service`) — the "Add" button (`graph-create-system`) stays a manual click
-only. Widening the sweep to include text inputs for this also incidentally makes `graph-tag-input`
-("Equipment tag") reachable, a genuine existing property that was simply never sweepable before.
-
-**`dimension` (alias `dim`) sets Width and Height one after another, without re-typing the tool
-name in between.** Typing a duct tool's own Width and Height separately (`route.width-input=18`,
-then `route.height-input=9`) already worked — `dimension` is a shortcut for exactly that sequence:
-it opens the same numeric value-entry draft `width` alone would (`route.width-input = `, input
-still focused), but confirming it with Enter/Space immediately re-opens the draft on **Height**
-instead of clearing the bar, so the very next thing you type is the height value, then Enter
-finishes. Works against whichever tool is currently armed (or, for `branch`, its own open modal) —
-whatever `width`/`height` typed bare would already reach. Requires the active tool to genuinely
-have **both** a width and a height control right now (a round-profile duct, which only exposes
-Diameter, does not) — reported on the status line rather than silently doing nothing. A bad value
-at either step (not a number) stops the whole thing there; it never silently carries on to the
-next field with nothing set. Escape at any point cancels the entire two-step command, not just
-whichever field was showing. Exempt from tool isolation the same way `finish`/`cancel` already
-are, since it only ever edits the isolated tool's **own** width/height, never a different tool's.
-
-**Action buttons** — the page's own buttons that have no keyboard shortcut, typed by name (no
-single-letter aliases, since every letter is — or might be, on some trade pack — a tool key): `undo`/`redo` (`re`), `zoomfit`
-(`fit`)/`zoomin`/`zoomout`, `region` (`addregion`), `ruler` (`measure`), `calibrate` (`cal`),
-`setscale` (`scale`)/`resetscale`, `finish`/`cancel` (only available while a route is in
-progress), `evidence` (`attach`)/`note` (`memo`)/`rationale` (`why`), `toggledamper` (`tdamper`),
-`elevation` (`riserelev`, only available with a riser selected), `annotations` (`anno`, round 27
-— toggles the canvas toolbar's Hide/Show Annotations view state; a pure client-side toggle,
-submits nothing; refused while a tool is isolated, same as `zoomfit`/`zoomin`/`ruler`). A disabled or not-currently-shown
-button is reported, never clicked. Deliberately excluded, and not clickable from the command line
-at all even if injected by hand: `graph-save-commands`, all four recording controls (Boundaries,
-below), and the "System / network" / "New system" property-group actions (assign network to a
-system, create a system, rename a system) — every other action button auto-submits its own real
-command to the server the instant it's invoked, the same as a human clicking that same button by
-hand (this app has no manual-commit mode; Save is a force-flush/retry control, not a commit gate).
-
-**An action that isn't currently usable is left out of the dropdown entirely, not listed and then
-refused.** `finish`/`cancel` while no route is in progress, `elevation` with no riser selected,
-`choose`/`apply`/`place`/`placeriser` (and their Cancel-equivalents) while their own dialog isn't
-open, and so on — none of these appear in the dropdown, or match a typed query, until they're
-genuinely runnable (their button present, visible, and not disabled). Typing the name straight into
-`RW.runCommand()` from the console still reports the specific reason (missing/disabled/hidden) —
-this only changes what the dropdown offers, not what a direct call reports. Every native tool
-(`route`, `flex`, `select`, …) has no such gate at all and is unaffected.
-
-**Space and Escape are unchanged** — Space still closes/repeats the last tool, Escape still
-returns to select. This does shadow the host's own **Space+drag pan** gesture; wheel,
-Shift+wheel, and middle-click still pan natively, and Ctrl+wheel still zooms — none of that goes
-through this command line at all.
-
-**Middle-drag pan is off on this host** (`RW._panEnabled` defaults to `false` here) — the drawing
-stage has nothing to scroll (it pans via a CSS transform instead), so the technique used on the
-annotate host can't apply; the host's own wheel/Shift+wheel/middle-click panning already covers
-it. `__RW._panEnabled = true` re-enables the console escape hatch if a future page ever does
-scroll.
-
-**A bare digit typed at rest passes straight through to the app.** The app offers a numbered
-"pick the next tool" prompt at points such as the end of a duct draw — with the command line's
-own global typing-capture otherwise swallowing every printable character, the digit never reached
-that prompt. Now, on the graph host only, a digit typed while the command bar is genuinely empty
-and unfocused reaches the app untouched, since no graph-host tool or param name starts with a
-digit — once you've started typing a command, or are entering a numeric param value (e.g.
-`route.width-input=18`), digits keep working exactly as before. The annotate host is unaffected —
-a digit there is still the app's own tag hotkey (`tag1`…`tag0`), captured as always.
-`__RW._cmdDigitPassthrough = false` restores the old capture-everything behavior on this host too.
-
-## Boundaries
-
-- Nothing auto-draws or auto-submits annotations.
-- The activity tracker (`/analytics/api/events/`) is read-only observed, never spoofed.
-- This is a bridge tool, not a replacement for engineering review.
-- Graph host: the command line never clicks Save (`#graph-save-commands`), never touches the
-  Submit form, and never drives the screen/mic recording controls — enforced in code
-  (`FORBIDDEN_BUTTON_IDS`, checked inside `RW.runCommand`), not just by omission from the action
-  vocabulary above. See "The graph ('Duct Takeoff') host" for the full action-button list and why
-  most of it still auto-submits despite this.
-- Every feature dispatches a synthetic key to make the app switch its own tool/mode — **except**
-  middle-mouse pan, which writes `scrollLeft`/`scrollTop` on a page viewport element directly
-  (deliberately, since dispatching the app's own pan key would switch tools, which panning must
-  not do). It never touches `annotationState` or anything under it. See CLAUDE.md's Constraints
-  section for the full reasoning. Middle-mouse pan is disabled outright on the graph host, where
-  the technique can't work at all — see "The graph ('Duct Takeoff') host" above.
+**Tag search**: `#name` searches the app's full tag list (auto-detected from `annotationState` on
+load). Selection is **always a direct `annotationState.currentTag = tag` assignment**, regardless
+of list position — an earlier version dispatched the app's own 1-9/0 hotkey, assuming hotkey order
+matched detected-list order; a real job proved that **wrong** (digit 1 selected a different tag
+than list-index 0), so that path was removed entirely. Whether direct assignment is reliably
+picked up by the app's own rendering is still not fully confirmed — the status line always says
+"confirm it actually applied."
+
+**Tool settings** (`wand.`/`wrap.`/`mline.`, or the bare param name while that tool is armed) work
+the same way as graph's settings drill-down above, with one difference: it's **additive, not
+exclusive** here — switching to a different tool, tag search, anything else, all still works while
+a tool's settings are blended into the dropdown. `wand.tolerance` was individually live-confirmed
+to take effect; every other control still carries the "confirm it applied" hedge.
+`__RW._toolSettingsDiagnose(filter)` is the read-only console probe this was built from.
+
+**Void workflow awareness**: the native void flow auto-reverts to whatever drawing tool was armed
+just before entering void, and Space's "last tool" memory reflects exactly that — `void` and the
+area tools used while drawing it never become what Space repeats.
+
+**Middle-mouse hold-drag pans** (does not switch tools) — like grabbing and dragging the paper.
+Unlike every other feature here, this writes `scrollLeft`/`scrollTop` on a real scroll container
+directly rather than dispatching a key, specifically so whatever tool is armed survives the
+gesture untouched. `__RW._panDiagnose()` confirms whether this page's viewport actually scrolls
+before trusting the feature; `__RW._panEnabled = false` disables it; `__RW._panInvert = true` flips
+direction if it feels backwards.
+
+**Scroll-to-zoom** is diagnostic-only so far — `__RW._zoomDiagnose()` reports what actually changes
+between two zoom levels (transform / canvas resolution / a state field), since guessing the real
+mechanism wrong risks desyncing where a click lands from what's on screen. Plain scrolling still
+just scrolls until the real mechanism is known.
