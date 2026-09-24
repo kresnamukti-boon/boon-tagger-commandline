@@ -29,6 +29,15 @@
   const RW_CANVAS_ID = (RW._host && RW._host.canvasId) || 'annotation-canvas';
   const RW_IS_GRAPH = RW_HOST === 'graph';
 
+  // Restructure (in progress): pure, DOM-free logic is being extracted out
+  // of this file into src/core/*.js modules — assembled by
+  // scripts/build-dist.js into a `const __m_<name> = (function(){...})()`
+  // ahead of this IIFE in the built dist/rw_cmdline.js, so it's always
+  // already defined by the time this line runs. Not an ES import (this file
+  // stays a plain script, on purpose, since it's the thing being hollowed
+  // out module by module — see CLAUDE.md's "Build / verify commands").
+  const { matchCommands: coreMatchCommands, resolveCommand: coreResolveCommand } = __m_command_line_core;
+
   /* ---------- command table ---------- */
   // NATIVE-TOOLS-ONLY BRANCH: no workbench entries — only the host app's own
   // native tools are reachable from this command line. Every entry is
@@ -1864,31 +1873,17 @@
   };
 
   /* ---------- matching ---------- */
+  // Routed through src/core/command-line-core.js (a superset of the host
+  // app's own native module of the same name — see that file's header)
+  // rather than reimplemented here. No table entry sets `.label` today, so
+  // every `label` check inside falls back to matching `.name` against
+  // itself — a pure behavior-preserving swap-in, not a ranking change.
   RW._cmdMatch = function(query){
-    const q = (query||'').trim().toLowerCase();
-    if (!q) return RW._cmdTable.slice();
-    const ranked = [];
-    RW._cmdTable.forEach(function(entry){
-      const name = entry.name.toLowerCase();
-      const aliases = (entry.aliases||[]).map(function(a){ return a.toLowerCase(); });
-      let rank = -1;
-      if (name === q) rank = 0;
-      else if (aliases.indexOf(q) !== -1) rank = 1;
-      else if (name.indexOf(q) === 0) rank = 2;
-      else if (aliases.some(function(a){ return a.indexOf(q) === 0; })) rank = 3;
-      else if (name.indexOf(q) !== -1) rank = 4;
-      if (rank !== -1) ranked.push({entry:entry, rank:rank});
-    });
-    ranked.sort(function(a,b){ return a.rank - b.rank; });
-    return ranked.map(function(r){ return r.entry; });
+    return coreMatchCommands(RW._cmdTable, query);
   };
 
   function findEntry(name){
-    const q = (name||'').trim().toLowerCase();
-    if (!q) return null;
-    for (const e of RW._cmdTable){ if (e.name.toLowerCase()===q) return e; }
-    for (const e of RW._cmdTable){ if ((e.aliases||[]).some(function(a){ return a.toLowerCase()===q; })) return e; }
-    return null;
+    return coreResolveCommand(RW._cmdTable, name);
   }
 
   /* ---------- run a command ---------- */
