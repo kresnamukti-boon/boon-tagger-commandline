@@ -44,6 +44,7 @@
     breakerStep: coreBreakerStep, goSelectDecision: coreGoSelectDecision,
     watchEdge: coreWatchEdge, watchShouldFire: coreWatchShouldFire,
   } = __m_autoselect_core;
+  const { isElementVisible: featureIsElementVisible, isActionUsable: featureIsActionUsable } = __m_actions;
   const { paramMatchesQuery: coreParamMatchesQuery, parseBoolish: coreParseBoolish, matchOption: coreMatchOption, parseAndClampNumber: coreParseAndClampNumber } = __m_settings_core;
   const { isolationEscapes: coreIsolationEscapes } = __m_isolation_core;
   const { matchTags: coreMatchTags } = __m_search_core;
@@ -656,7 +657,7 @@
   // Extraction of the old inline visibility check — shared with the
   // button-usability check in RW.runCommand (see GRAPH_ACTIONS).
   function cmdIsVisible(el){
-    return !!(el.offsetParent || (el.getClientRects && el.getClientRects().length));
+    return featureIsElementVisible(el);
   }
 
   // ----- Round 24: is a GRAPH_ACTIONS entry actually runnable RIGHT NOW? -----
@@ -674,13 +675,11 @@
   // isolation exemption) always return true — this only ever gates the
   // button-backed GRAPH_ACTIONS vocabulary, never a tool switch.
   function cmdActionUsable(entry){
-    if (!entry.btn) return true;
-    if (FORBIDDEN_BUTTON_IDS.indexOf(entry.btn) !== -1) return false;
-    const btn = document.getElementById(entry.btn);
-    if (!btn) return false;
-    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return false;
-    if (!cmdIsVisible(btn)) return false;
-    return true;
+    return featureIsActionUsable(entry, {
+      getButtonById: function(id){ return document.getElementById(id); },
+      forbiddenIds: FORBIDDEN_BUTTON_IDS,
+      isVisible: cmdIsVisible
+    });
   }
 
   // Upward parentNode walk to the nearest ancestor with the given tagName.
