@@ -116,6 +116,45 @@ Four modules, concatenated by `build_loader.sh` in this order:
   (`extend`, `vertical`, `cut`, `transition`, ...) under **different key letters**. This is why the
   graph host's tool table is derived live from the toolbar rather than hardcoded — see below.
 
+### The native command line (graph host)
+
+The graph host now ships **its own** typed command line, built by the same team this
+project's tools were originally built alongside — read live via opencli and from the
+served source (`project_graph/js/command-line-core.js`/`command-line-ui.js`/
+`duct-command-line.js`/`pipe-command-line.js`), not reverse-engineered from behavior
+alone. It's an opt-in floating window (`#graph-command-line-toggle` /
+`#graph-command-window` / `#graph-command-input`, off by default) that covers a small
+slice of what this project does: tool matching by name/alias/label, Tab-cycling, the
+Space repeat/close convention, Escape — nothing else. No actions, no settings
+drill-down, no isolation, no modals, no `#` search, no auto-select.
+
+Its own architecture is exactly the shape this project is restructuring toward: a
+pure, DOM-free core (`command-line-core.js`: `matchCommands`/`resolveCommand`/
+`commandDispatch`/`commandBarShouldCapture`/`spaceRepeatAction`) plus a thin DOM-wiring
+layer (`command-line-ui.js`) that takes every host-specific fact
+(`buildTable`/`blocker`/`store`/`elements`/`attemptActivateTool`/`typingInFormField`/
+`dialogOpen`/`keyReserved`/`notify`) as an injected dependency from
+`graph-session-entry.js`'s own call site. `src/core/command-line-core.js` in this repo
+is a deliberate superset of that exact file — see `PORTING.md` for the full mapping of
+which of this project's own features can go upstream into it (and its siblings) as
+PRs, in what order, and from which of this repo's own modules.
+
+**Two live conflicts worth knowing about before touching graph-host dispatch or
+capture code**, neither yet resolved (no default behavior changed — see `PORTING.md`'s
+own closing section on what's deliberately not done):
+- If the native bar is toggled ON, its own bubble-phase `document` keydown listener
+  calls `stopImmediatePropagation()` — a synthetic tool-key keydown this project
+  dispatches to `document` (see `RW._cmdDispatchAppKey`) would never reach the host
+  app's own `window`-level hotkey handler, so the tool would silently fail to switch.
+  Clicking the relevant `[data-tool]` button directly (what the host app's own hotkey
+  handler itself resolves to — confirmed live: `button.addEventListener('click', () =>
+  attemptActivateTool(tool.id))`) sidesteps this entirely and was never exercised live
+  by this project before this discovery.
+- The same native listener also unconditionally eats Space (the host app's own
+  Space-hold-to-pan gesture) and `m` (native's own ruler toggle, `keyReserved('m')`
+  server-side) the instant it's toggled on — this project's own capture listener
+  already reserves `m` in its OWN listener, but has no awareness of the native bar's.
+
 ### Core dispatch mechanism
 
 `RW._cmdDispatchAppKey(key)` dispatches a synthetic keydown —
@@ -449,6 +488,17 @@ trusting this feature on it.
 
 ## Open questions (not yet resolved — check here before assuming)
 
+- Whether clicking a graph-host `[data-tool]` button directly (bypassing this project's own
+  keydown dispatch entirely) is a viable/preferable dispatch path once the native command line
+  can be toggled on alongside this project's own loader — read from the native app's own source
+  (see "The native command line (graph host)" above and `PORTING.md`), never exercised live.
+- Whether toggling the native command line bar on and off from this project's own code (to avoid
+  its capture listener winning races against this project's dispatch) is worth doing, vs. leaving
+  the two mutually exclusive in practice (an annotator using one doesn't also open the other).
+- Whether the branch-fitting modal-walk's own auto-focus, and any future consolidation of the
+  command bar's own shared closure state into one controller object (see `PORTING.md`'s "What's
+  deliberately NOT restructured yet"), survive real interaction on a live page — flagged but not
+  tested this round; needs a human live-test, not just automation, before either is attempted.
 - Whether the defensive `d` prefix on annotate-host draw-mode commands is actually necessary.
 - The real `annotationState.currentTool` strings for every annotate-host native tool beyond
   `'bounding_box'`/`'ribbon'`/`'linear'`.
