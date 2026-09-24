@@ -36,7 +36,14 @@
   // already defined by the time this line runs. Not an ES import (this file
   // stays a plain script, on purpose, since it's the thing being hollowed
   // out module by module — see CLAUDE.md's "Build / verify commands").
-  const { matchCommands: coreMatchCommands, resolveCommand: coreResolveCommand } = __m_command_line_core;
+  const {
+    matchCommands: coreMatchCommands, resolveCommand: coreResolveCommand,
+    commandBarShouldCapture: coreShouldCapture, spaceRepeatAction: coreSpaceRepeat,
+  } = __m_command_line_core;
+  const {
+    breakerStep: coreBreakerStep, goSelectDecision: coreGoSelectDecision,
+    watchEdge: coreWatchEdge, watchShouldFire: coreWatchShouldFire,
+  } = __m_autoselect_core;
   const { paramMatchesQuery: coreParamMatchesQuery, parseBoolish: coreParseBoolish, matchOption: coreMatchOption, parseAndClampNumber: coreParseAndClampNumber } = __m_settings_core;
   const { isolationEscapes: coreIsolationEscapes } = __m_isolation_core;
   const { matchTags: coreMatchTags } = __m_search_core;
@@ -2080,10 +2087,9 @@
   }
 
   function recordAutoRevert(_reason){
-    const now = Date.now();
-    RW._cmdAutoSelectRevertLog = RW._cmdAutoSelectRevertLog.filter(function(t){ return now - t < AUTOSEL_BURST_MS; });
-    RW._cmdAutoSelectRevertLog.push(now);
-    if (RW._cmdAutoSelectRevertLog.length > AUTOSEL_BURST_MAX){
+    const step = coreBreakerStep(RW._cmdAutoSelectRevertLog, Date.now(), { max: AUTOSEL_BURST_MAX, windowMs: AUTOSEL_BURST_MS });
+    RW._cmdAutoSelectRevertLog = step.log;
+    if (step.tripped){
       RW._cmdAutoSelect = false;
       RW._cmdStopToolWatch();
       RW._commitStatus && RW._commitStatus(
@@ -2106,11 +2112,15 @@
   RW._cmdGoSelect = function(reason, quiet, bypassSuppression){
     if (quiet === undefined) quiet = true;
     const now = Date.now();
-    if (!bypassSuppression && now - RW._cmdLastSelectAt < SELECT_SUPPRESS_MS){
+    const decision = coreGoSelectDecision({
+      now: now, lastSelectAt: RW._cmdLastSelectAt, bypassSuppression: !!bypassSuppression,
+      suppressMs: SELECT_SUPPRESS_MS, atRest: readMode() === SELECT_MODE,
+    });
+    if (decision === 'suppress'){
       resetWatchState(); // erase any pending edge so it can't refire once the window expires
       return false;
     }
-    if (readMode() === SELECT_MODE){
+    if (decision === 'at-rest'){
       resetWatchState(); // already resting — don't assume `s` toggles rather than switches
       RW._cmdToolArmed = false; // defensively in sync too — we're confirmed at rest either way
       RW._cmdModeActive = null;
@@ -2141,26 +2151,25 @@
   RW._cmdToolWatchTick = function(){
     if (!RW.enabled || !RW._cmdAutoSelect){ resetWatchState(); return; }
     const cur = readTool();
-    if (cur === undefined) return; // unreadable — no-op, leave prev untouched
-    const prev = RW._cmdToolPrev;
+    const edge = coreWatchEdge({ cur: cur, prev: RW._cmdToolPrev, nullPending: RW._cmdToolNullPending });
+    if (edge === 'unreadable') return; // leave prev untouched
     RW._cmdToolPrev = cur;
-    if (cur !== null){ RW._cmdToolNullPending = false; return; }
-    if (RW._cmdToolNullPending){
-      // These three guards deliberately do NOT clear the pending flag when
-      // they block — the edge stays armed and is retried on the next tick,
-      // so a temporarily-blocked revert (still inside the grace window,
-      // still mid-typed, still in a deliberate mode) fires as soon as the
-      // condition clears rather than being silently dropped forever.
-      if (Date.now() - RW._cmdLastUserCmdAt < AUTOSEL_USER_GRACE_MS) return; // just ran a deliberate command
-      if (inputEl && inputEl.value) return;                                  // mid-typed command
-      const mode = readMode();
-      if (mode !== null && mode !== DRAW_MODE) return;                       // deliberate pan/label/crop/... — don't fight it
-      if (RW._cmdModeActive) return;                                         // OUR OWN record says we're in one too (e.g. `mode` was unreadable/unrecognized)
-      RW._cmdToolNullPending = false;
-      RW._cmdGoSelect('poll', true);
-      return;
-    }
-    if (prev !== null && prev !== undefined) RW._cmdToolNullPending = true; // the edge itself
+    if (edge === 'cleared'){ RW._cmdToolNullPending = false; return; }
+    if (edge === 'armed'){ RW._cmdToolNullPending = true; return; } // the edge itself
+    if (edge === 'idle') return;
+    // edge === 'pending': these guards deliberately do NOT clear the pending
+    // flag when they block — the edge stays armed and is retried on the
+    // next tick, so a temporarily-blocked revert (still inside the grace
+    // window, still mid-typed, still in a deliberate mode) fires as soon as
+    // the condition clears rather than being silently dropped forever.
+    const shouldFire = coreWatchShouldFire({
+      now: Date.now(), lastUserCmdAt: RW._cmdLastUserCmdAt, userGraceMs: AUTOSEL_USER_GRACE_MS,
+      inputHasText: !!(inputEl && inputEl.value),
+      mode: readMode(), drawMode: DRAW_MODE, modeActive: RW._cmdModeActive,
+    });
+    if (!shouldFire) return;
+    RW._cmdToolNullPending = false;
+    RW._cmdGoSelect('poll', true);
   };
 
   RW._cmdStopToolWatch = function(){
@@ -3227,55 +3236,54 @@
   // so the host app's own same-letter shortcut does not also fire — to use a
   // native single-key shortcut directly again, blur the command input first
   // (Escape, or click the canvas).
+  // Thin shell around src/core/command-line-core.js's own
+  // commandBarShouldCapture/spaceRepeatAction (a superset of the host app's
+  // own native module — see that file's header): this listener now only
+  // computes the CONTEXT-dependent booleans those pure functions need (what's
+  // focused, which dialogs are open, our own armed/mode/lastTool state) and
+  // switches on the verdict — every actual GATING/BRANCHING rule lives in
+  // command-line-core.js, unit-tested there directly, not reimplemented here.
   document.addEventListener('keydown', function(e){
-    if (e.__rwSynthetic) return; // our own dispatch to the app (RW._cmdDispatchAppKey) — never eat it
-    if (!RW.enabled) return; // respect the master RW: ON/OFF killswitch, same as every other tool
+    const t = e.target;
+    // Round 19: a plain INPUT/TEXTAREA/contentEditable focus always means
+    // "typing in a form field" (never captured); a focused SELECT only
+    // counts while a recognized config-dialog modal is open (Fitting type,
+    // Branch shape, Alignment, Damper) — the inspector's own ordinary
+    // selects are unaffected, since cmdOpenModalTool() is graph-only and
+    // null whenever no modal is open.
+    const typingInFormField = !!(t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable))
+        || !!(t && t.tagName==='SELECT' && cmdOpenModalTool());
     // Graph host only, and originally added because round 15's own action
     // vocabulary (calibrate/setscale) opens two <dialog> modals — with one
     // open, typing must reach the app's own modal, not get captured into the
-    // command bar. A plain bail-out, not a consume (no preventDefault/
-    // stopImmediatePropagation, unlike capture's normal "always wins" below),
-    // so the app's own modal keyboard handling runs completely untouched.
-    // Round 19 narrows this: the four GRAPH_TOOL_MODALS dialogs are NOT
-    // showModal()-modal (confirmed live: dialog.matches(':modal') is false)
-    // and #rw-cmd-input can be focused/typed into while one is open — the
-    // only thing stopping that was this blanket bail-out, not the app. So it
-    // still bails for any OTHER open dialog (calibrate, known-scale —
-    // unaffected) but not for one of the four recognized ids.
-    if (cmdOpenDialogs().some(function(d){ return GRAPH_MODAL_DIALOG_IDS.indexOf(d.id) === -1; })) return;
-    const t = e.target;
-    if (t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
-    // Round 19: the focus guard above skips INPUT/TEXTAREA/contenteditable
-    // but not SELECT — so once a recognized modal's own <select> (Fitting
-    // type, Branch shape, Alignment, Damper) has focus, keystrokes would
-    // otherwise be eaten into the command bar instead of reaching it.
-    // Scoped to "a recognized modal is actually open" so the inspector's own
-    // ordinary selects are completely unaffected.
-    if (t && t.tagName==='SELECT' && cmdOpenModalTool()) return;
-    if (e.ctrlKey||e.metaKey||e.altKey) return;
-    if (e.key.length !== 1) return; // printable characters only
-    // ----- Round 23: bare digits pass through to the app (graph host only) -----
-    // Reported live: at the end of a duct draw the app offers the next tool by a
-    // numbered prompt, and this listener was swallowing the digit into the command
-    // bar instead. No host-state signal for that prompt exists (its DOM identity
-    // was never found live — see CLAUDE.md's round 19 open item), so this doesn't
-    // try to detect it; instead it's safe unconditionally, because no graph-host
-    // command or param name starts with a digit (GRAPH_TABLE/GRAPH_ACTIONS are all
-    // words/letters), so a digit at a genuinely EMPTY, unfocused bar can never be
-    // the start of anything typeable on this host. A plain bail-out, not a consume
-    // (no preventDefault/stopImmediatePropagation), matching the open-<dialog>
-    // bail-out's own doctrine just above — the app receives the key untouched.
-    // Scoped to RW_IS_GRAPH only: on the annotate host a digit is the app's own tag
-    // hotkey and tag1...tag0 are real commands, so that host is unaffected.
-    // !inputEl.value (not just e.target !== inputEl, already true here since the
-    // editable-target guard above bailed if inputEl had focus) is what keeps digits
-    // working once a command's been started or a numeric param value is being
-    // typed (e.g. route.width-input=18) — this only ever fires at a genuinely
-    // resting, empty bar. !settingsDraft is belt-and-braces on the same point.
-    // RW._cmdDigitPassthrough (default true) is a console escape hatch, matching
-    // this file's existing RW._cmdIsolateTools/RW._panEnabled convention.
-    if (RW_IS_GRAPH && RW._cmdDigitPassthrough !== false && /^[0-9]$/.test(e.key)
-        && !settingsDraft && (!inputEl || !inputEl.value)) return;
+    // command bar. Round 19 narrows this: the four GRAPH_TOOL_MODALS dialogs
+    // are NOT showModal()-modal (confirmed live) and #rw-cmd-input CAN be
+    // focused/typed into while one is open, so only an OTHER open dialog
+    // (calibrate, known-scale) still counts as "typing must reach the app."
+    const dialogOpenNow = cmdOpenDialogs().some(function(d){ return GRAPH_MODAL_DIALOG_IDS.indexOf(d.id) === -1; });
+    // Round 23: at the end of a duct draw the app offers the next tool via a
+    // numbered prompt (no DOM identity ever found live — see CLAUDE.md's
+    // round 19 open item), and this listener was swallowing the digit into
+    // the command bar instead. Safe unconditionally on the graph host,
+    // because no graph-host command or param name starts with a digit, so a
+    // digit at a genuinely EMPTY, unfocused, undrafted bar can never be the
+    // start of anything typeable here. Scoped to RW_IS_GRAPH only — on the
+    // annotate host a digit is the app's own tag hotkey and tag1...tag0 are
+    // real commands. RW._cmdDigitPassthrough (default true) is a console
+    // escape hatch, matching this file's RW._cmdIsolateTools/RW._panEnabled
+    // convention.
+    const digitPassthroughActive = RW_IS_GRAPH && RW._cmdDigitPassthrough !== false
+        && !settingsDraft && (!inputEl || !inputEl.value);
+    const shouldCapture = coreShouldCapture({
+      key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey,
+      typingInFormField: typingInFormField,
+      dialogOpen: dialogOpenNow,
+      enabled: RW.enabled,
+      synthetic: !!e.__rwSynthetic, // our own dispatch to the app (RW._cmdDispatchAppKey) — never eat it
+      digitPassthrough: digitPassthroughActive,
+    });
+    if (!shouldCapture) return;
+
     // AutoCAD's own convention, extended into a toggle: Space with nothing typed
     // either repeats the last tool or closes the one currently active, whichever
     // applies. Both branches only fire when the command bar is genuinely empty (not
@@ -3290,72 +3298,63 @@
     // burned by exactly this kind of live-timing assumption before. Tracking our
     // own armed/closed state instead sidesteps the question entirely.
     if (e.key === ' ' && (!inputEl || !inputEl.value)){
-      // Leaving a mode switch in SPACE_GOES_SELECT_FROM (currently just `label`)
-      // forces select — checked ahead of the plain repeat branch below so it
-      // isn't shadowed: RW._cmdToolArmed is already false the moment `label` runs
-      // (every mode switch clears it), so without this override the very next
-      // check down would repeat RW._cmdLastTool instead — exactly the bug a real
-      // job reported (Space from label was resuming the prior tool; the fix is to
-      // force select here, not to make the resume "work" — see CLAUDE.md's
-      // "Round 7d (corrected)").
-      if (SPACE_GOES_SELECT_FROM.indexOf(RW._cmdModeActive) !== -1){
+      const spaceAction = coreSpaceRepeat({
+        query: '', // always empty here — the outer `if` above already confirmed it
+        lastTool: RW._cmdLastTool,
+        toolArmed: RW._cmdToolArmed,
+        // Leaving a mode switch in SPACE_GOES_SELECT_FROM (currently just
+        // `label`) forces select ahead of the plain repeat/close branches:
+        // RW._cmdToolArmed is already false the moment `label` runs (every
+        // mode switch clears it), so without this override Space would repeat
+        // RW._cmdLastTool instead of resting in select — exactly the bug a
+        // real job reported (see CLAUDE.md's "Round 7d (corrected)").
+        modeActive: RW._cmdModeActive,
+        forceSelectModes: SPACE_GOES_SELECT_FROM,
+        // Round 19 follow-up (Kresna's own request: "I want that behaviour
+        // also be in branch mode"): while one of the four config-dialog
+        // modals is open, dispatching a raw select keydown at the app while
+        // its own modal is still up is untested and isn't something this
+        // project relies on — Space instead opens a menu scoped to that
+        // modal's own fields/actions (see 'open-modal-menu' below).
+        modalOpen: !!cmdOpenModalTool(),
+        // Round 19 follow-up (Kresna's own report): the very first Space —
+        // nothing armed yet, nothing to repeat — used to fall through to the
+        // generic capture path, seeding a literal space and immediately
+        // listing the ENTIRE command table (tools and actions together), a
+        // confusing wall of unrelated commands. `true` here instead opens
+        // "initialize the console" (see 'open-tool-menu' below).
+        openMenuWhenIdle: true,
+      });
+      if (spaceAction.action === 'select'){
         e.preventDefault(); e.stopImmediatePropagation();
-        RW._cmdGoSelect('space', true, true); // bypass the auto-trigger suppression window, same as the close branch below
+        RW._cmdGoSelect('space', true, true); // bypass the auto-trigger suppression window
         return;
       }
-      // Round 19 follow-up (Kresna's own request: "I want that behaviour also
-      // be in branch mode" — the just-fixed "initialize the console" starting
-      // menu, while one of the four config-dialog modals is open). Checked
-      // ahead of both the repeat and the close branches below, for the same
-      // reason as the label override above: without it, Space while e.g. the
-      // branch-fitting dialog is open would fall into "RW._cmdToolArmed ->
-      // close" and dispatch a synthetic select keydown at the app while its
-      // own modal is still up — a raw key dispatch this project has never
-      // actually needed to make work against a live dialog, and isn't going
-      // to start relying on now. Instead, treat it exactly like the
-      // nothing-armed case: open the bar (no character seeded) and show
-      // what's actually usable while isolated to this modal's own tool —
-      // its own fields (bare-param blend) plus the allowed action commands
-      // (choose/cancelbranch and siblings) — by simply calling onInput() on
-      // the empty bar, the same isolated-tool blend a typed query already
-      // produces (see onInput's own `isolatedTool` branch), so this can't
-      // drift out of sync with what typing there shows.
-      if (cmdOpenModalTool()){
+      if (spaceAction.action === 'open-modal-menu'){
+        // Open the bar (no character seeded) and show what's actually usable
+        // while isolated to this modal's own tool — its own fields (bare-
+        // param blend) plus the allowed action commands (choose/cancelbranch
+        // and siblings) — by simply calling onInput() on the empty bar, the
+        // same isolated-tool blend a typed query already produces, so this
+        // can't drift out of sync with what typing there shows.
         e.preventDefault(); e.stopImmediatePropagation();
         mountCommandBar();
         if (inputEl) inputEl.focus();
         onInput();
         return;
       }
-      if (!RW._cmdToolArmed && RW._cmdLastTool){
+      if (spaceAction.action === 'repeat'){
         e.preventDefault(); e.stopImmediatePropagation();
-        RW.runCommand(RW._cmdLastTool);
+        RW.runCommand(spaceAction.toolId);
         return;
       }
-      if (RW._cmdToolArmed){
-        e.preventDefault(); e.stopImmediatePropagation();
-        RW._cmdGoSelect('space', true, true); // bypass the auto-trigger suppression window — see its own comment
-        return;
-      }
-      // Round 19 follow-up (Kresna's own report): the very first Space —
-      // nothing armed yet, and no RW._cmdLastTool to repeat — used to fall
-      // all the way through to the generic capture path below, which inserts
-      // a literal space into the bar and immediately runs onInput() on it;
-      // RW._cmdMatch(' ') trims to '' and returns the ENTIRE command table
-      // (every tool AND action together), which read as a confusing wall of
-      // unrelated commands the moment anyone hit Space just to get started.
-      // With truly nothing to repeat or close, Space should open the bar,
-      // focused and empty (no literal space character seeded), and pop the
-      // dropdown straight to the tool list (kind === NATIVE only — never the
-      // action-button vocabulary in GRAPH_ACTIONS, e.g. undo/redo/finish/
-      // cancel/calibrate/the round-19 modal actions) — this is "initialize
-      // the console," a starting menu of what can be armed, not the ordinary
-      // typed-query dropdown blending tools and actions together. Capped to
-      // the same 8 rows every other command-mode listing already caps at
-      // (RW._cmdTable's own declared order — GRAPH_TABLE/ANNOTATE_TABLE
-      // first, GRAPH_ACTIONS appended after — so the first 8 are always
-      // tools on both hosts; typing further still reaches everything else).
-      if (!RW._cmdToolArmed && !RW._cmdLastTool){
+      if (spaceAction.action === 'open-tool-menu'){
+        // "Initialize the console": a starting menu of what can be armed
+        // (kind === NATIVE only — never the action-button vocabulary in
+        // GRAPH_ACTIONS), capped to the same 8 rows every other command-mode
+        // listing already caps at (RW._cmdTable's own declared order —
+        // GRAPH_TABLE/ANNOTATE_TABLE first, GRAPH_ACTIONS appended after —
+        // so the first 8 are always tools on both hosts).
         e.preventDefault(); e.stopImmediatePropagation();
         mountCommandBar();
         if (inputEl) inputEl.focus();
@@ -3365,6 +3364,9 @@
         renderMenuRows();
         return;
       }
+      // action === 'none' is unreachable here (openMenuWhenIdle:true covers
+      // every remaining idle state) — falls through to the generic seed
+      // path below exactly like every other captured key, unchanged.
     }
     e.preventDefault(); e.stopImmediatePropagation();
     mountCommandBar();

@@ -17,6 +17,7 @@ import { labelWords, paramMatchesQuery, parseBoolish, matchOption, parseAndClamp
 import { isolationEscapes } from '../src/core/isolation-core.js';
 import { matchTags } from '../src/core/search-core.js';
 import { shadowedActions } from '../src/core/table-core.js';
+import { breakerStep, goSelectDecision, watchEdge, watchShouldFire } from '../src/core/autoselect-core.js';
 
 // ---------- matchCommands ----------
 // Pins the ranking documented in command-line-core.js's own header, which
@@ -146,6 +147,16 @@ test('commandBarShouldCapture: keyReserved exempts exactly the one letter it nam
   assert.equal(commandBarShouldCapture({ ...baseCapture, key: 'r', keyReserved }), true);
 });
 
+test('commandBarShouldCapture: synthetic is never captured, even if everything else says yes', () => {
+  assert.equal(commandBarShouldCapture({ ...baseCapture, synthetic: true }), false);
+});
+
+test('commandBarShouldCapture: digitPassthrough refuses only a single digit', () => {
+  assert.equal(commandBarShouldCapture({ ...baseCapture, key: '5', digitPassthrough: true }), false);
+  assert.equal(commandBarShouldCapture({ ...baseCapture, key: 'r', digitPassthrough: true }), true);
+  assert.equal(commandBarShouldCapture({ ...baseCapture, key: '5', digitPassthrough: false }), true);
+});
+
 // ---------- spaceRepeatAction ----------
 
 test('spaceRepeatAction: a non-empty query means Space is just a keystroke', () => {
@@ -160,8 +171,39 @@ test('spaceRepeatAction: nothing armed but a remembered tool repeats it', () => 
   assert.deepEqual(spaceRepeatAction({ query: '', lastTool: 'route', toolArmed: false }), { action: 'repeat', toolId: 'route' });
 });
 
-test('spaceRepeatAction: neither armed nor remembered is a no-op', () => {
+test('spaceRepeatAction: neither armed nor remembered is a no-op (native\'s own plain behavior)', () => {
   assert.deepEqual(spaceRepeatAction({ query: '', lastTool: null, toolArmed: false }), { action: 'none' });
+});
+
+test('spaceRepeatAction: openMenuWhenIdle opens the tool menu instead of no-op', () => {
+  assert.deepEqual(
+    spaceRepeatAction({ query: '', lastTool: null, toolArmed: false, openMenuWhenIdle: true }),
+    { action: 'open-tool-menu' },
+  );
+});
+
+test('spaceRepeatAction: a forced-select mode wins even with a tool armed or a lastTool to repeat', () => {
+  const opts = { forceSelectModes: ['label'], modeActive: 'label' };
+  assert.deepEqual(spaceRepeatAction({ query: '', lastTool: 'route', toolArmed: true, ...opts }), { action: 'select' });
+  assert.deepEqual(spaceRepeatAction({ query: '', lastTool: 'route', toolArmed: false, ...opts }), { action: 'select' });
+});
+
+test('spaceRepeatAction: a forced-select mode that does not match modeActive has no effect', () => {
+  assert.deepEqual(
+    spaceRepeatAction({ query: '', lastTool: 'route', toolArmed: false, forceSelectModes: ['label'], modeActive: 'crop' }),
+    { action: 'repeat', toolId: 'route' },
+  );
+});
+
+test('spaceRepeatAction: an open modal wins over armed/lastTool, but not over a forced-select mode', () => {
+  assert.deepEqual(
+    spaceRepeatAction({ query: '', lastTool: 'route', toolArmed: true, modalOpen: true }),
+    { action: 'open-modal-menu' },
+  );
+  assert.deepEqual(
+    spaceRepeatAction({ query: '', lastTool: null, toolArmed: false, modalOpen: true, forceSelectModes: ['label'], modeActive: 'label' }),
+    { action: 'select' },
+  );
 });
 
 // ---------- settings-core ----------
@@ -267,4 +309,65 @@ test('shadowedActions: no clash means no row', () => {
   const tools = [{ name: 'route' }];
   const actions = [{ name: 'undo', aliases: [] }];
   assert.deepEqual(shadowedActions(tools, actions), []);
+});
+
+// ---------- autoselect-core ----------
+
+test('breakerStep: prunes entries older than the window, keeps the just-pushed one', () => {
+  const result = breakerStep([1000, 4000], 5000, { max: 5, windowMs: 2000 });
+  assert.deepEqual(result, { log: [4000, 5000], tripped: false }); // 1000 is 4000ms old, pruned
+});
+
+test('breakerStep: trips once the pruned+pushed count exceeds max', () => {
+  const log = [0, 100, 200, 300, 400]; // 5 entries, all within the window
+  const result = breakerStep(log, 500, { max: 5, windowMs: 10000 });
+  assert.equal(result.log.length, 6);
+  assert.equal(result.tripped, true);
+});
+
+test('breakerStep: exactly max entries does not trip (strictly greater-than)', () => {
+  const result = breakerStep([0, 100, 200, 300], 400, { max: 5, windowMs: 10000 });
+  assert.equal(result.log.length, 5);
+  assert.equal(result.tripped, false);
+});
+
+test('goSelectDecision: a recent auto-trigger suppresses, a deliberate one (bypass) does not', () => {
+  const base = { now: 1000, lastSelectAt: 900, suppressMs: 600, atRest: false };
+  assert.equal(goSelectDecision({ ...base, bypassSuppression: false }), 'suppress');
+  assert.equal(goSelectDecision({ ...base, bypassSuppression: true }), 'dispatch');
+});
+
+test('goSelectDecision: already at rest short-circuits to at-rest (once past suppression)', () => {
+  assert.equal(
+    goSelectDecision({ now: 1000, lastSelectAt: 0, suppressMs: 600, bypassSuppression: false, atRest: true }),
+    'at-rest',
+  );
+});
+
+test('goSelectDecision: otherwise dispatches', () => {
+  assert.equal(
+    goSelectDecision({ now: 1000, lastSelectAt: 0, suppressMs: 600, bypassSuppression: false, atRest: false }),
+    'dispatch',
+  );
+});
+
+test('watchEdge: undefined is unreadable, a real tool is cleared', () => {
+  assert.equal(watchEdge({ cur: undefined, prev: 'route', nullPending: false }), 'unreadable');
+  assert.equal(watchEdge({ cur: 'route', prev: null, nullPending: true }), 'cleared');
+});
+
+test('watchEdge: a fresh non-null->null transition arms; a repeat null stays pending', () => {
+  assert.equal(watchEdge({ cur: null, prev: 'route', nullPending: false }), 'armed');
+  assert.equal(watchEdge({ cur: null, prev: null, nullPending: false }), 'idle');
+  assert.equal(watchEdge({ cur: null, prev: 'route', nullPending: true }), 'pending');
+});
+
+test('watchShouldFire: blocked by a recent user command, mid-typed text, a non-draw mode, or our own mode flag', () => {
+  const base = { now: 10000, lastUserCmdAt: 0, userGraceMs: 1000, inputHasText: false, mode: null, drawMode: 'draw', modeActive: null };
+  assert.equal(watchShouldFire(base), true);
+  assert.equal(watchShouldFire({ ...base, lastUserCmdAt: 9500 }), false);
+  assert.equal(watchShouldFire({ ...base, inputHasText: true }), false);
+  assert.equal(watchShouldFire({ ...base, mode: 'pan' }), false);
+  assert.equal(watchShouldFire({ ...base, mode: 'draw' }), true); // draw mode never blocks
+  assert.equal(watchShouldFire({ ...base, modeActive: 'label' }), false);
 });
