@@ -279,6 +279,109 @@ function isolationEscapes(entry, modalOpen, { isNativeTool, allowedNames }) {
 return {isolationEscapes};
 })();
 
+// ===== src/core/modal-walk-core.js =====
+const __m_modal_walk_core = (function(){
+// Pure decisions behind the graph host's modal field-walk (branch fitting,
+// change size, GRD, riser — see CLAUDE.md's "Modal field-walk" and "Modal
+// walk value memory"). No DOM, no host globals, no `localStorage` — every
+// live-discovered fact (the current field list, the memory store, whether
+// a submit button is currently clickable) is passed in by the caller
+// (`src/console/shell.js`'s `cmdWalk*` functions), which still owns every
+// side effect: opening a prompt, writing a control, reading/persisting
+// `RW._cmdModalWalkValueMemory`.
+//
+// Deliberately NOT an index-based `{phase, fields, index}` reducer: the
+// walk re-derives its field list fresh on every hop
+// (`RW._cmdToolSettingsList(tool)` in shell.js), because a field can appear
+// or disappear depending on an earlier answer (branch's own flush-boot
+// glyphs; change size's secondary size field, hidden for a round shape;
+// riser's Shape field, hidden for a plain elbow). An index into a list
+// snapshotted at walk-start would desync the moment a field's visibility
+// changes mid-walk. `walkNextItem` below takes the CURRENT field list on
+// every call for exactly this reason — callers must re-fetch it each hop,
+// never cache it.
+
+// The next field to prompt for: the first item in `items` (on-screen
+// order, already live-fetched by the caller) whose `param` isn't in
+// `seen`, or `null` once every current field has been visited. Mirrors
+// shell.js's own `cmdWalkNextItem`, minus the live DOM read.
+function walkNextItem(items, seen) {
+  return items.find((item) => seen.indexOf(item.param) === -1) || null;
+}
+
+// The new `{seen, applied, skipped}` after one field is either applied or
+// left untouched — pure counterpart of `cmdWalkAdvance`'s own bookkeeping.
+// Recording the actually-applied value (re-reading the control's own live
+// `.current` rather than trusting a remembered value verbatim) stays the
+// caller's job, same as everything else that touches a real control.
+function walkAdvanceState({ seen, applied, skipped }, { param, skip }) {
+  return {
+    seen: seen.concat([param]),
+    applied: applied + (skip ? 0 : 1),
+    skipped: skipped + (skip ? 1 : 0),
+  };
+}
+
+// Whether ending the walk should auto-click the modal's own submit button
+// with no further Enter (change size/GRD/riser) or fall back to the
+// manual Choose/Cancel-style prompt (branch fitting, or any of the three
+// if their submit button isn't currently usable) — mirrors
+// `cmdWalkFinish`'s own branch. `submitUsable` is the caller's own
+// read-only usability check (`cmdActionUsable`/`isActionUsable`), not
+// re-derived here.
+function walkFinishVerdict(tool, autoSubmitTools, submitUsable) {
+  return autoSubmitTools.indexOf(tool) !== -1 && submitUsable ? 'auto-submit' : 'manual-prompt';
+}
+
+// Whether an actually-applied field is allowed to be written into the walk
+// value memory — mirrors `cmdWalkMemorySet`'s own guard. `skipTools` is
+// this project's own `MODAL_WALK_MEMORY_SKIP_TOOLS` (change size, GRD,
+// riser — Kresna's own request: never remember or offer reuse for any of
+// their fields, enforced here rather than left to omission, same as
+// `FORBIDDEN_BUTTON_IDS`).
+function canRecordWalkMemory(tool, { enabled, skipTools }) {
+  if (!enabled) return false;
+  if (skipTools.indexOf(tool) !== -1) return false;
+  return true;
+}
+
+// Whether `cmdWalkStart` should show the Edit/use-previous offer at all —
+// mirrors `cmdWalkHasMemory`. `memoryForTool` is whatever's already stored
+// for this tool (`RW._cmdModalWalkValueMemory[tool]`, or undefined) — a
+// skip-listed tool never offers, even if something got recorded for it
+// some other way (a stale pre-skip-list `localStorage` value, a direct
+// console assignment).
+function hasWalkMemory(memoryForTool, tool, { enabled, skipTools }) {
+  if (skipTools.indexOf(tool) !== -1) return false;
+  return !!(enabled && memoryForTool && Object.keys(memoryForTool).length);
+}
+
+// The select-field prefill decision from `cmdWalkOpenPrompt`: which option
+// row to highlight, and what (if anything) to prefill into the command
+// bar's own text. `options` is the live option list, each `{optionValue,
+// optionText}` (mirrors shell.js's own `menuItems` shape for a settings
+// select). Prefers a remembered value that still matches a real option;
+// falls back to today's actual current value; falls back to the first row
+// if neither matches — never guesses past that (fails toward "highlight
+// what's really there," same doctrine as everywhere else this project
+// can't confirm live state).
+function selectWalkPrefill(options, remembered, current) {
+  let index = -1;
+  let prefillText = '';
+  if (remembered !== undefined) {
+    index = options.findIndex((o) => o.optionValue === remembered);
+    if (index !== -1) prefillText = options[index].optionText;
+  }
+  if (index === -1) {
+    const curIdx = options.findIndex((o) => o.optionValue === current);
+    index = curIdx !== -1 ? curIdx : (options.length ? 0 : -1);
+  }
+  return { index, prefillText };
+}
+
+return {walkNextItem, walkAdvanceState, walkFinishVerdict, canRecordWalkMemory, hasWalkMemory, selectWalkPrefill};
+})();
+
 // ===== src/core/search-core.js =====
 const __m_search_core = (function(){
 // Pure ranking behind `#` tag/system search — no DOM, no host globals. Live
@@ -503,6 +606,11 @@ return {isElementVisible, isActionUsable};
   const { paramMatchesQuery: coreParamMatchesQuery, parseBoolish: coreParseBoolish, matchOption: coreMatchOption, parseAndClampNumber: coreParseAndClampNumber } = __m_settings_core;
   const { isolationEscapes: coreIsolationEscapes } = __m_isolation_core;
   const { matchTags: coreMatchTags } = __m_search_core;
+  const {
+    walkNextItem: coreWalkNextItem, walkAdvanceState: coreWalkAdvanceState,
+    walkFinishVerdict: coreWalkFinishVerdict, canRecordWalkMemory: coreCanRecordWalkMemory,
+    hasWalkMemory: coreHasWalkMemory, selectWalkPrefill: coreSelectWalkPrefill,
+  } = __m_modal_walk_core;
   const { shadowedActions: coreShadowedActions } = __m_table_core;
 
   /* ---------- command table ---------- */
@@ -1848,8 +1956,7 @@ return {isElementVisible, isActionUsable};
   // Called only from cmdWalkAdvance, only on an actual apply (never a skip) — a skipped field's
   // own previously remembered value (if any) is left exactly as it was.
   function cmdWalkMemorySet(tool, param, value){
-    if (!RW._cmdModalWalkMemoryEnabled) return;
-    if (MODAL_WALK_MEMORY_SKIP_TOOLS.indexOf(tool) !== -1) return;
+    if (!coreCanRecordWalkMemory(tool, { enabled: RW._cmdModalWalkMemoryEnabled, skipTools: MODAL_WALK_MEMORY_SKIP_TOOLS })) return;
     RW._cmdModalWalkValueMemory[tool] = RW._cmdModalWalkValueMemory[tool] || {};
     RW._cmdModalWalkValueMemory[tool][param] = value;
     cmdWalkMemorySave();
@@ -1858,9 +1965,7 @@ return {isElementVisible, isActionUsable};
   // actually remembered for it — this is what decides whether cmdWalkStart shows the
   // Edit/use-previous offer at all.
   function cmdWalkHasMemory(tool){
-    if (MODAL_WALK_MEMORY_SKIP_TOOLS.indexOf(tool) !== -1) return false;
-    const t = RW._cmdModalWalkValueMemory[tool];
-    return !!(RW._cmdModalWalkMemoryEnabled && t && Object.keys(t).length);
+    return coreHasWalkMemory(RW._cmdModalWalkValueMemory[tool], tool, { enabled: RW._cmdModalWalkMemoryEnabled, skipTools: MODAL_WALK_MEMORY_SKIP_TOOLS });
   }
 
   // The next field to prompt for — re-runs RW._cmdToolSettingsList fresh on every hop
@@ -1875,7 +1980,7 @@ return {isElementVisible, isActionUsable};
   // visited — always terminates, since every hop pushes onto `seen` whether the field
   // was applied or skipped.
   function cmdWalkNextItem(tool, seen){
-    return RW._cmdToolSettingsList(tool).find(function(item){ return seen.indexOf(item.param) === -1; }) || null;
+    return coreWalkNextItem(RW._cmdToolSettingsList(tool), seen);
   }
 
   // Opens the field-appropriate draft for `item`, stamping `walk: true` (so
@@ -1910,16 +2015,9 @@ return {isElementVisible, isActionUsable};
       // highlighted) applies it correctly with no changes of its own. A remembered value that
       // no longer matches any current option (the app's own option list changed) falls back to
       // highlighting today's actual current value — fail toward caution, never toward a guess.
-      let highlightIdx = -1, prefillText = '';
-      if (remembered !== undefined){
-        highlightIdx = menuItems.findIndex(function(o){ return o.optionValue === remembered; });
-        if (highlightIdx !== -1) prefillText = menuItems[highlightIdx].optionText;
-      }
-      if (highlightIdx === -1){
-        const curIdx = menuItems.findIndex(function(o){ return o.optionValue === item.current; });
-        highlightIdx = curIdx !== -1 ? curIdx : (menuItems.length ? 0 : -1);
-      }
-      menuHighlight = highlightIdx;
+      const prefill = coreSelectWalkPrefill(menuItems, remembered, item.current);
+      menuHighlight = prefill.index;
+      const prefillText = prefill.prefillText;
       inputEl.value = tool + '.' + item.param + ' = ' + prefillText;
       renderMenuRows();
       inputEl.focus();
@@ -1979,10 +2077,11 @@ return {isElementVisible, isActionUsable};
 
   function cmdWalkAdvance(tool, param, skip){
     if (!modalWalk || modalWalk.tool !== tool) return;
-    modalWalk.seen.push(param);
-    if (skip) modalWalk.skipped++;
-    else {
-      modalWalk.applied++;
+    const advanced = coreWalkAdvanceState(modalWalk, { param: param, skip: skip });
+    modalWalk.seen = advanced.seen;
+    modalWalk.applied = advanced.applied;
+    modalWalk.skipped = advanced.skipped;
+    if (!skip){
       // Round 29: record what was actually applied — re-read the control's own live
       // `.current` rather than threading the applied value through every call site (Enter
       // confirm, Tab-preview, a mouse click on an option row); one place, one representation,
@@ -2022,7 +2121,7 @@ return {isElementVisible, isActionUsable};
     const reg = GRAPH_TOOL_MODALS[tool];
     const submitEntry = reg && findEntry(reg.submitCmd);
     const cancelEntry = reg && findEntry(reg.cancelCmd);
-    if (MODAL_WALK_AUTO_SUBMIT_TOOLS.indexOf(tool) !== -1 && submitEntry && cmdActionUsable(submitEntry)){
+    if (coreWalkFinishVerdict(tool, MODAL_WALK_AUTO_SUBMIT_TOOLS, !!(submitEntry && cmdActionUsable(submitEntry))) === 'auto-submit'){
       RW.runCommand(submitEntry.name);
       inputEl.value = '';
       hideMenu();

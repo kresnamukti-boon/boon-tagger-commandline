@@ -24,6 +24,37 @@ that's already done and already a superset of native's own module — every func
 below either already matches native's shape exactly, or is a clean addition next to
 it.
 
+## The superset rule
+
+Every module under `src/core/` and `src/features/` is written so a native port can be
+a drop-in file replacement, never a merge. This isn't incidental — it's a rule to keep
+following as this restructure continues:
+
+- Every extra thing this project's own version of a function does beyond native's is
+  an **optional parameter with a default that reproduces native's own current
+  behavior exactly**. `command-line-core.js`'s own header lists its example set
+  (`synthetic`, `digitPassthrough`, `modeActive`/`forceSelectModes`, `modalOpen`,
+  `openMenuWhenIdle`, null-tolerant `label`/`aliases`); `isolationEscapes` follows the
+  same shape (`isNativeTool`/`allowedNames` both required, but native's own callers
+  supply them fresh rather than getting a silent default, since isolation doesn't
+  exist there at all yet).
+- **Never change a default, and never widen a return type without a flag guarding
+  it.** `spaceRepeatAction`'s two extra actions (`open-modal-menu`, `open-tool-menu`)
+  are unreachable unless `modalOpen`/`openMenuWhenIdle` is explicitly passed — a
+  caller that doesn't know about them (native's own `command-line-ui.js`, today) can
+  never receive one.
+- This is what makes item #1 near-free (a file replacement, no caller changes) and
+  is the standard every new `src/core`/`src/features` module should be held to before
+  it's considered "ready to port," not just the ones already confirmed against
+  native's own source.
+- A companion test, `test/purity.test.mjs`, enforces the other half of this same
+  property mechanically: every module under `src/core/` and `src/features/` is
+  checked to contain no direct `document`/`window`/`RW.`/`localStorage` reference and
+  no import from `src/hosts`, `src/console`, or `src/ui` — the DOM/host-wiring layers
+  a portable module must never reach into directly. A module that fails either check
+  needs every such fact passed in as an argument before it can be considered for this
+  list at all.
+
 ## What to port, in order, and from where
 
 ### 1. The core superset (`src/core/command-line-core.js`)
@@ -82,9 +113,18 @@ Not yet extracted into its own module (still inline in `shell.js`, `RW._cmdToolS
   addition: an input mode where the next Enter submits a value into a specific control
   instead of running a command, chaining into a next field if there is one. This
   project's own `dimension`/modal-walk machinery (`src/console/shell.js`,
-  `cmdDimensionPrompt`/`cmdWalkOpenPrompt`) is the reference implementation, but it is
-  NOT extracted into a standalone module yet (see "Not done in this pass" below) —
-  read it directly for the shape.
+  `cmdDimensionPrompt`/`cmdWalkOpenPrompt`) is the reference implementation, but the
+  bar/focus plumbing itself is NOT extracted into a standalone module yet (see "Not
+  done in this pass" below) — read it directly for that part's shape. The pure
+  decisions the walk half of this makes ARE extracted, into
+  `src/core/modal-walk-core.js` — see #5 below.
+- **Whatever UI addition is written natively must re-derive the field list on every
+  step, never index into a list snapshotted at prompt-start.** `walkNextItem` in
+  `src/core/modal-walk-core.js` takes the CURRENT field list as an argument on every
+  call, specifically because a field can appear or disappear mid-walk (change size's
+  own secondary size field, hidden for a round shape; riser's own Shape field, hidden
+  for a plain elbow) — an `{phase, fields, index}`-style reducer that snapshots
+  `fields` once would desync the moment visibility changes.
 
 ### 4. Isolation (`src/core/isolation-core.js`)
 
@@ -104,8 +144,18 @@ Not yet extracted into its own module (still inline in `shell.js`, `RW._cmdToolS
 
 ### 5. Modals, walk, and its value memory
 
-Not yet extracted (all in `src/console/shell.js`: `GRAPH_TOOL_MODALS`, `cmdOpenToolModal`,
-`cmdArmOrNoteModal`, `RW._cmdModalWalk*`). To port:
+The DOM-touching half (`GRAPH_TOOL_MODALS`, `cmdOpenToolModal`, `cmdArmOrNoteModal`,
+`RW._cmdModalWalk*`) is still all in `src/console/shell.js`, not yet extracted. The
+pure decisions those functions make ARE extracted, into `src/core/modal-walk-core.js`:
+`walkNextItem` (the next unvisited field, re-derived fresh every hop — see #3 above),
+`walkAdvanceState` (the `{seen, applied, skipped}` bookkeeping after one field),
+`walkFinishVerdict` (auto-submit vs. the manual Choose/Cancel prompt),
+`canRecordWalkMemory`/`hasWalkMemory` (the skip-list guard, checked in code on both
+the write and the read side, same "enforce a hard boundary in code" doctrine
+`FORBIDDEN_BUTTON_IDS` follows), and `selectWalkPrefill` (which option row to
+highlight and what to prefill, preferring a still-valid remembered value over
+today's actual current value over row 0). Every one of these is unit-tested in
+`test/core.test.mjs`. To port:
 
 - The four `elements.*Modal` references native's own `graph-session-entry.js` already
   holds (`branchFittingModal`, `checkpointTransitionModal`, `checkpointGrdModal`,

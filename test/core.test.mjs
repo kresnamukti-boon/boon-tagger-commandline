@@ -18,6 +18,10 @@ import { isolationEscapes } from '../src/core/isolation-core.js';
 import { matchTags } from '../src/core/search-core.js';
 import { shadowedActions } from '../src/core/table-core.js';
 import { breakerStep, goSelectDecision, watchEdge, watchShouldFire } from '../src/core/autoselect-core.js';
+import {
+  walkNextItem, walkAdvanceState, walkFinishVerdict,
+  canRecordWalkMemory, hasWalkMemory, selectWalkPrefill,
+} from '../src/core/modal-walk-core.js';
 
 // ---------- matchCommands ----------
 // Pins the ranking documented in command-line-core.js's own header, which
@@ -370,4 +374,86 @@ test('watchShouldFire: blocked by a recent user command, mid-typed text, a non-d
   assert.equal(watchShouldFire({ ...base, mode: 'pan' }), false);
   assert.equal(watchShouldFire({ ...base, mode: 'draw' }), true); // draw mode never blocks
   assert.equal(watchShouldFire({ ...base, modeActive: 'label' }), false);
+});
+
+// ---------- modal-walk-core ----------
+// The graph host's modal field-walk (branch fitting, change size, GRD,
+// riser — see CLAUDE.md's "Modal field-walk"/"Modal walk value memory").
+
+test('walkNextItem: first item not yet in seen, on-screen order', () => {
+  const items = [{ param: 'shape' }, { param: 'width' }, { param: 'height' }];
+  assert.deepEqual(walkNextItem(items, []), { param: 'shape' });
+  assert.deepEqual(walkNextItem(items, ['shape']), { param: 'width' });
+  assert.deepEqual(walkNextItem(items, ['shape', 'width']), { param: 'height' });
+});
+
+test('walkNextItem: null once every current item has been visited, even with a shorter list than seen implies', () => {
+  // A field that disappeared mid-walk (a shape switch hid the secondary size) must not
+  // block the walk from finishing — items is always the CURRENT list, seen can be longer.
+  assert.equal(walkNextItem([{ param: 'shape' }], ['shape', 'size2']), null);
+  assert.equal(walkNextItem([], []), null);
+});
+
+test('walkAdvanceState: an applied field increments applied and appends to seen', () => {
+  const state = { seen: ['shape'], applied: 1, skipped: 0 };
+  assert.deepEqual(
+    walkAdvanceState(state, { param: 'width', skip: false }),
+    { seen: ['shape', 'width'], applied: 2, skipped: 0 },
+  );
+});
+
+test('walkAdvanceState: a skipped field increments skipped, not applied, and never mutates the input', () => {
+  const state = { seen: [], applied: 0, skipped: 0 };
+  const next = walkAdvanceState(state, { param: 'airflow', skip: true });
+  assert.deepEqual(next, { seen: ['airflow'], applied: 0, skipped: 1 });
+  assert.deepEqual(state, { seen: [], applied: 0, skipped: 0 }); // untouched
+});
+
+test('walkFinishVerdict: auto-submit only for a listed tool whose submit button is usable', () => {
+  const auto = ['transition', 'grd', 'vertical'];
+  assert.equal(walkFinishVerdict('transition', auto, true), 'auto-submit');
+  assert.equal(walkFinishVerdict('branch', auto, true), 'manual-prompt'); // branch is never in the list
+  assert.equal(walkFinishVerdict('transition', auto, false), 'manual-prompt'); // button not usable right now
+});
+
+test('canRecordWalkMemory: off when the hatch is disabled or the tool is skip-listed', () => {
+  const skipTools = ['transition', 'grd', 'vertical'];
+  assert.equal(canRecordWalkMemory('branch', { enabled: true, skipTools }), true);
+  assert.equal(canRecordWalkMemory('branch', { enabled: false, skipTools }), false);
+  assert.equal(canRecordWalkMemory('grd', { enabled: true, skipTools }), false);
+});
+
+test('hasWalkMemory: only true for a non-skip-listed tool with at least one remembered field', () => {
+  const skipTools = ['transition', 'grd', 'vertical'];
+  assert.equal(hasWalkMemory({ width: 12 }, 'branch', { enabled: true, skipTools }), true);
+  assert.equal(hasWalkMemory({}, 'branch', { enabled: true, skipTools }), false); // nothing remembered
+  assert.equal(hasWalkMemory(undefined, 'branch', { enabled: true, skipTools }), false);
+  assert.equal(hasWalkMemory({ airflow: 400 }, 'grd', { enabled: true, skipTools }), false); // skip-listed, even with stale memory
+  assert.equal(hasWalkMemory({ width: 12 }, 'branch', { enabled: false, skipTools }), false); // hatch off
+});
+
+test('selectWalkPrefill: a remembered value that still matches an option highlights it and prefills its text', () => {
+  const options = [
+    { optionValue: 'round', optionText: 'Round' },
+    { optionValue: 'rect', optionText: 'Rectangular' },
+  ];
+  assert.deepEqual(selectWalkPrefill(options, 'rect', 'round'), { index: 1, prefillText: 'Rectangular' });
+});
+
+test('selectWalkPrefill: a remembered value that no longer matches any option falls back to the current value', () => {
+  const options = [
+    { optionValue: 'round', optionText: 'Round' },
+    { optionValue: 'rect', optionText: 'Rectangular' },
+  ];
+  assert.deepEqual(selectWalkPrefill(options, 'oval', 'round'), { index: 0, prefillText: '' });
+});
+
+test('selectWalkPrefill: nothing remembered highlights the current value; an unmatched current falls back to row 0', () => {
+  const options = [
+    { optionValue: 'round', optionText: 'Round' },
+    { optionValue: 'rect', optionText: 'Rectangular' },
+  ];
+  assert.deepEqual(selectWalkPrefill(options, undefined, 'rect'), { index: 1, prefillText: '' });
+  assert.deepEqual(selectWalkPrefill(options, undefined, 'unknown'), { index: 0, prefillText: '' });
+  assert.deepEqual(selectWalkPrefill([], undefined, 'unknown'), { index: -1, prefillText: '' });
 });
