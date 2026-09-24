@@ -330,21 +330,27 @@ modals" table above and `PORTING.md`). `RW._cmdModalWalkEnabled = false` disable
 `RW._cmdStartModalWalk(tool)` still works by hand with the hatch off, and `RW._cmdModalWalk` is
 console-inspectable while a walk is in progress.
 
-**Modal walk value memory** (all four modals, riding the same `MODAL_WALK_TOOLS` gate): remembers
-**every** field type the walk touches (`RW._cmdModalWalkValueMemory`, persisted to `localStorage`,
-wrapped in try/catch so a disabled/unavailable store just degrades to in-memory-only) and always
-asks first rather than auto-applying anything — this replaced an earlier mechanism
-(`RW._cmdModalMemory`, round 26) that silently auto-filled a modal's select/checkbox fields with no
-choice offered and excluded branch fitting entirely (its own field-memory lives in a separate,
-independent repo, `boon-duct-workbench`, per the user's own request to split it out); once this
-memory covered all four modals there was nothing left for that older, silent one to do, so it was
-removed rather than kept alongside a mechanism that fully supersedes it. **Riser's own Destination
-elevation field is the one deliberate exception**: `MODAL_WALK_MEMORY_SKIP` (`{vertical:
-['elevation-input']}`) stops it from ever being recorded, since it's an absolute height, the same
-dialog serves a plain riser, an elbow up/down, and editing an existing one, and the server rejects
-two equal elevations outright — a value reused from a different riser is far more likely to be
-wrong than right. The walk still prompts for it every time, starting from native's own default
-(current elevation ±10 for an elbow); only riser's own Shape field is remembered. `cmdWalkStart`
+**Modal walk value memory** (branch, GRD and riser — **not** change size, see below — riding the
+same `MODAL_WALK_TOOLS` gate): remembers **every** field type the walk touches
+(`RW._cmdModalWalkValueMemory`, persisted to `localStorage`, wrapped in try/catch so a
+disabled/unavailable store just degrades to in-memory-only) and always asks first rather than
+auto-applying anything — this replaced an earlier mechanism (`RW._cmdModalMemory`, round 26) that
+silently auto-filled a modal's select/checkbox fields with no choice offered and excluded branch
+fitting entirely (its own field-memory lives in a separate, independent repo,
+`boon-duct-workbench`, per the user's own request to split it out); once this memory covered
+branch/GRD/riser there was nothing left for that older, silent one to do, so it was removed rather
+than kept alongside a mechanism that fully supersedes it. Two deliberate exceptions, both via
+`MODAL_WALK_MEMORY_SKIP`: **riser's own Destination elevation field** (`{vertical:
+['elevation-input']}`) is never recorded, since it's an absolute height, the same dialog serves a
+plain riser, an elbow up/down, and editing an existing one, and the server rejects two equal
+elevations outright — a value reused from a different riser is far more likely to be wrong than
+right; the walk still prompts for it every time, starting from native's own default (current
+elevation ±10 for an elbow), and only riser's own Shape field is remembered. **Change size
+(`transition`) is skipped entirely** (`{transition: true}`, checked before the per-param list) —
+Kresna's own request: no Edit/use-previous offer at all for reducer, for any of its fields; the
+walk still runs and prompts fresh every time, but nothing about that dialog is ever written to
+`RW._cmdModalWalkValueMemory` or persisted, and `cmdWalkHasMemory('transition')` is therefore
+always false. `cmdWalkStart`
 checks `cmdWalkHasMemory(tool)` before opening field 1: if anything's remembered, it shows a
 three-row choice ("Edit each field" / "use previous for all" / "use previous for all, without
 confirming") via `cmdWalkOfferChoice` — and, load-bearing, **`modalWalk` itself is not created

@@ -2089,12 +2089,17 @@ return {isElementVisible, isActionUsable};
   // silent one to do that this doesn't already cover, so keeping both would have meant
   // recording the same value twice.
   //
-  // Riser elevation is the one field this deliberately never remembers
+  // Riser elevation is one field this deliberately never remembers
   // (MODAL_WALK_MEMORY_SKIP below): it's an absolute height, the same dialog serves a
   // plain riser, an elbow up/down, and editing an existing one, and the server rejects two
   // equal elevations outright — a reused value from a different riser is far more likely
   // to be wrong than right. The walk still prompts for it every time, starting from
   // native's own default (current elevation ±10 for an elbow).
+  //
+  // Change size (`transition`) is skipped entirely — Kresna's own request: no Edit/
+  // use-previous offer for reducer at all, for any of its fields. The walk still prompts
+  // fresh every time; nothing about that dialog is ever written to
+  // RW._cmdModalWalkValueMemory or persisted.
   const GRAPH_MODAL_WALK_MEMORY_KEY = 'rw_graph_modal_walk_memory_v1';
   function cmdWalkMemoryLoad(){
     try {
@@ -2122,13 +2127,17 @@ return {isElementVisible, isActionUsable};
   // only, not cmdWalkMemoryGet: nothing is ever written for a skipped param, so there's
   // nothing to read back either, but keeping the check on the write side (rather than
   // e.g. filtering it out of MODAL_WALK_TOOLS entirely) means a future param on the same
-  // tool that SHOULD be remembered still works with no extra plumbing.
-  const MODAL_WALK_MEMORY_SKIP = { vertical: ['elevation-input'] };
+  // tool that SHOULD be remembered still works with no extra plumbing. `true` instead of
+  // a param list means the whole tool is skipped: Kresna's own request for change size —
+  // he doesn't want the Edit/use-previous offer for reducer at all, so nothing about that
+  // dialog is ever recorded (the walk itself still runs, prompting fresh every time).
+  const MODAL_WALK_MEMORY_SKIP = { transition: true, vertical: ['elevation-input'] };
   // Called only from cmdWalkAdvance, only on an actual apply (never a skip) — a skipped field's
   // own previously remembered value (if any) is left exactly as it was.
   function cmdWalkMemorySet(tool, param, value){
     if (!RW._cmdModalWalkMemoryEnabled) return;
     const skip = MODAL_WALK_MEMORY_SKIP[tool];
+    if (skip === true) return;
     if (skip && skip.indexOf(param) !== -1) return;
     RW._cmdModalWalkValueMemory[tool] = RW._cmdModalWalkValueMemory[tool] || {};
     RW._cmdModalWalkValueMemory[tool][param] = value;

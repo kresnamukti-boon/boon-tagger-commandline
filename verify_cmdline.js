@@ -6476,7 +6476,7 @@ function loadCoreModule(win){
     ok(inp.value === 'transition.alignment = ', 'secondary-input is skipped over entirely — straight to Alignment, the next currently-visible field');
   }
 
-  /* ---------- 292. change size walk: a value remembered in one load offers "use previous" the next time the SAME modal opens ---------- */
+  /* ---------- 292. change size walk: Kresna's own request — reducer never offers or records reuse, unlike the other three modals ---------- */
   {
     const sharedLS = makeFakeLocalStorage();
     const { win: winA, byId: byIdA } = makeStubWindow({ host: GRAPH_HOST });
@@ -6487,7 +6487,9 @@ function loadCoreModule(win){
     winA.__RW._cmdModalWalkTick();
     inpA.value = 'transition.shape = round';
     inpA.dispatchEvent({ type: 'input' });
-    inpA._fire('keydown', { key: 'Enter' }); // shape applied, remembered
+    inpA._fire('keydown', { key: 'Enter' }); // shape applied
+
+    ok(!winA.__RW._cmdModalWalkValueMemory.transition, 'nothing is recorded for change size — MODAL_WALK_MEMORY_SKIP.transition === true, unlike branch/GRD/riser');
 
     const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
     winB.localStorage = sharedLS;
@@ -6496,9 +6498,9 @@ function loadCoreModule(win){
     const inpB = byIdB['rw-cmd-input'];
     winB.__RW._cmdModalWalkTick();
 
-    ok(inpB.value === '', 'the walk does not jump straight into field 1 this time');
+    ok(inpB.value === 'transition.shape = ', 'the walk jumps straight into field 1 on the next load too — no Edit/use-previous offer ever appears for reducer');
     const rows = byIdB['rw-cmd-menu']._children;
-    ok(rows.length === 3 && rows[0].innerText === 'Edit each field', 'the same Edit/reuse offer branch fitting already has is now offered for change size too');
+    ok(!rows.some(function(r){ return r.innerText === 'Edit each field'; }), 'sanity: the reuse-offer rows are not present');
   }
 
   /* ---------- 293. GRD walk: a single Airflow prompt, ending on place/cancelgrd — and the value is remembered for next time ---------- */

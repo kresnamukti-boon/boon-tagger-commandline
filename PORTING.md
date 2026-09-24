@@ -119,7 +119,10 @@ Not yet extracted (all in `src/console/shell.js`: `GRAPH_TOOL_MODALS`, `cmdOpenT
 - Branch fitting's own field-memory intentionally lives in a separate repo
   (`boon-duct-workbench`, per the user's own request) — do not port that piece from
   here; the walk mechanism and its own value memory (`RW._cmdModalWalkValueMemory`,
-  which now covers all four modals, including branch) are unaffected.
+  which covers branch, GRD and riser) are unaffected.
+- Change size (`transition`) is deliberately excluded from the value memory
+  (`MODAL_WALK_MEMORY_SKIP.transition === true` in `shell.js`) — Kresna's own request,
+  no offer or recording for that dialog at all. Port the walk for it, not the memory.
 
 ### 6. `#` system search
 
