@@ -2092,17 +2092,16 @@ return {isElementVisible, isActionUsable};
   // silent one to do that this doesn't already cover, so keeping both would have meant
   // recording the same value twice.
   //
-  // Riser elevation is one field this deliberately never remembers
-  // (MODAL_WALK_MEMORY_SKIP below): it's an absolute height, the same dialog serves a
-  // plain riser, an elbow up/down, and editing an existing one, and the server rejects two
-  // equal elevations outright — a reused value from a different riser is far more likely
-  // to be wrong than right. The walk still prompts for it every time, starting from
-  // native's own default (current elevation ±10 for an elbow).
-  //
-  // Change size (`transition`) is skipped entirely — Kresna's own request: no Edit/
-  // use-previous offer for reducer at all, for any of its fields. The walk still prompts
-  // fresh every time; nothing about that dialog is ever written to
-  // RW._cmdModalWalkValueMemory or persisted.
+  // Change size, GRD, and riser are skipped entirely — Kresna's own explicit request:
+  // no Edit/use-previous offer at all for any of these three, for any of their fields.
+  // (Riser's elevation field started out as a narrower, field-only exception — an
+  // absolute height that a different riser is very unlikely to share, and the server
+  // rejects two equal elevations outright — but Kresna then asked for the whole
+  // "initial fields questioning" to go away for GRD and riser too, the same as change
+  // size, so the field-only case is now subsumed by the whole-tool one below.) The walk
+  // itself still runs for all three, prompting fresh every time; nothing about any of
+  // them is ever written to RW._cmdModalWalkValueMemory or persisted. Branch fitting is
+  // the only tool left with a walk memory.
   const GRAPH_MODAL_WALK_MEMORY_KEY = 'rw_graph_modal_walk_memory_v1';
   function cmdWalkMemoryLoad(){
     try {
@@ -2125,32 +2124,22 @@ return {isElementVisible, isActionUsable};
     const t = RW._cmdModalWalkValueMemory[tool];
     return t ? t[param] : undefined;
   }
-  // Params a tool's walk should never remember, even though every other field it has
-  // is fair game — see the riser elevation reasoning above. Checked in cmdWalkMemorySet
-  // only, not cmdWalkMemoryGet: nothing is ever written for a skipped param, so there's
-  // nothing to read back either, but keeping the check on the write side (rather than
-  // e.g. filtering it out of MODAL_WALK_TOOLS entirely) means a future param on the same
-  // tool that SHOULD be remembered still works with no extra plumbing. `true` instead of
-  // a param list means the whole tool is skipped: Kresna's own request for change size —
-  // he doesn't want the Edit/use-previous offer for reducer at all, so nothing about that
-  // dialog is ever recorded (the walk itself still runs, prompting fresh every time).
-  const MODAL_WALK_MEMORY_SKIP = { transition: true, vertical: ['elevation-input'] };
-  // A tool/param can land in MODAL_WALK_MEMORY_SKIP after already being recorded by an older
-  // build of this file (change size's own shape WAS remembered before this skip-list entry
-  // existed) — cmdWalkMemoryLoad would otherwise resurrect that stale localStorage value every
-  // page load, and cmdWalkHasMemory would keep showing the Edit/use-previous offer for a tool
-  // that's supposed to never show it again. Runs once at load, right after the skip-list itself
-  // is known, and persists the cleanup so it only ever has to run once per browser.
+  // Tools whose walk never remembers or offers anything, checked in cmdWalkMemorySet AND
+  // (belt-and-braces, same "enforce in code, not just by omission" doctrine
+  // FORBIDDEN_BUTTON_IDS follows) cmdWalkHasMemory — so even memory set some other way
+  // (a stale localStorage load the prune below missed, a direct console assignment)
+  // still can never make the offer appear for one of these.
+  const MODAL_WALK_MEMORY_SKIP_TOOLS = ['transition', 'grd', 'vertical'];
+  // A tool can land in MODAL_WALK_MEMORY_SKIP_TOOLS after already being recorded by an
+  // older build of this file (change size's own shape, and — briefly — GRD's airflow and
+  // riser's shape, WERE each remembered before being added here) — cmdWalkMemoryLoad
+  // would otherwise resurrect that stale localStorage value every page load. Runs once
+  // at load, right after the skip-list itself is known, and persists the cleanup so it
+  // only ever has to run once per browser.
   (function cmdWalkMemoryPrune(){
     let changed = false;
-    Object.keys(RW._cmdModalWalkValueMemory).forEach(function(tool){
-      const skip = MODAL_WALK_MEMORY_SKIP[tool];
-      if (skip === true){ delete RW._cmdModalWalkValueMemory[tool]; changed = true; return; }
-      if (Array.isArray(skip)){
-        const t = RW._cmdModalWalkValueMemory[tool];
-        skip.forEach(function(param){ if (param in t){ delete t[param]; changed = true; } });
-        if (Object.keys(t).length === 0) delete RW._cmdModalWalkValueMemory[tool];
-      }
+    MODAL_WALK_MEMORY_SKIP_TOOLS.forEach(function(tool){
+      if (RW._cmdModalWalkValueMemory[tool]){ delete RW._cmdModalWalkValueMemory[tool]; changed = true; }
     });
     if (changed) cmdWalkMemorySave();
   })();
@@ -2158,16 +2147,16 @@ return {isElementVisible, isActionUsable};
   // own previously remembered value (if any) is left exactly as it was.
   function cmdWalkMemorySet(tool, param, value){
     if (!RW._cmdModalWalkMemoryEnabled) return;
-    const skip = MODAL_WALK_MEMORY_SKIP[tool];
-    if (skip === true) return;
-    if (skip && skip.indexOf(param) !== -1) return;
+    if (MODAL_WALK_MEMORY_SKIP_TOOLS.indexOf(tool) !== -1) return;
     RW._cmdModalWalkValueMemory[tool] = RW._cmdModalWalkValueMemory[tool] || {};
     RW._cmdModalWalkValueMemory[tool][param] = value;
     cmdWalkMemorySave();
   }
-  // True only when the hatch is on AND at least one field is actually remembered for `tool` —
-  // this is what decides whether cmdWalkStart shows the Edit/use-previous offer at all.
+  // True only when the hatch is on, the tool isn't skip-listed, AND at least one field is
+  // actually remembered for it — this is what decides whether cmdWalkStart shows the
+  // Edit/use-previous offer at all.
   function cmdWalkHasMemory(tool){
+    if (MODAL_WALK_MEMORY_SKIP_TOOLS.indexOf(tool) !== -1) return false;
     const t = RW._cmdModalWalkValueMemory[tool];
     return !!(RW._cmdModalWalkMemoryEnabled && t && Object.keys(t).length);
   }
@@ -2355,13 +2344,12 @@ return {isElementVisible, isActionUsable};
 
   // Third offer choice: same remembered values as "use previous for all", but applies every
   // field immediately instead of opening a per-field prompt and waiting for Enter — Kresna's
-  // own explicit request ("use save without confirming like 2nd option"). Still ends by
-  // calling the same cmdWalkFinish every other walk path calls — for branch (the only tool
-  // this choice is reachable for that still waits on a manual prompt) that's a Choose/Cancel
-  // prompt one deliberate Enter short of actually applying; for GRD/riser (change size is
-  // never offered a reuse choice at all, see MODAL_WALK_MEMORY_SKIP.transition), it's the
-  // same auto-submit cmdWalkFinish now does for those tools regardless of how the walk got
-  // there. Applies through RW._cmdApplySetting directly, the same
+  // own explicit request ("use save without confirming like 2nd option"). Reachable for
+  // branch only now — change size, GRD, and riser are all in MODAL_WALK_MEMORY_SKIP_TOOLS,
+  // so cmdWalkHasMemory is always false for them and the offer (any of its three choices)
+  // never shows. Still ends by calling the same cmdWalkFinish every other walk path calls,
+  // which for branch is the ordinary Choose/Cancel prompt, one deliberate Enter short of
+  // actually applying. Applies through RW._cmdApplySetting directly, the same
   // writer every other confirm path in this file already funnels through, rather than
   // opening-then-immediately-confirming a draft (there's no UI step to actually show here). A
   // field with nothing remembered (partial memory) is left untouched and counted as skipped —

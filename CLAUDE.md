@@ -336,27 +336,32 @@ modals" table above and `PORTING.md`). `RW._cmdModalWalkEnabled = false` disable
 `RW._cmdStartModalWalk(tool)` still works by hand with the hatch off, and `RW._cmdModalWalk` is
 console-inspectable while a walk is in progress.
 
-**Modal walk value memory** (branch, GRD and riser — **not** change size, see below — riding the
-same `MODAL_WALK_TOOLS` gate): remembers **every** field type the walk touches
-(`RW._cmdModalWalkValueMemory`, persisted to `localStorage`, wrapped in try/catch so a
-disabled/unavailable store just degrades to in-memory-only) and always asks first rather than
-auto-applying anything — this replaced an earlier mechanism (`RW._cmdModalMemory`, round 26) that
-silently auto-filled a modal's select/checkbox fields with no choice offered and excluded branch
-fitting entirely (its own field-memory lives in a separate, independent repo,
-`boon-duct-workbench`, per the user's own request to split it out); once this memory covered
-branch/GRD/riser there was nothing left for that older, silent one to do, so it was removed rather
-than kept alongside a mechanism that fully supersedes it. Two deliberate exceptions, both via
-`MODAL_WALK_MEMORY_SKIP`: **riser's own Destination elevation field** (`{vertical:
-['elevation-input']}`) is never recorded, since it's an absolute height, the same dialog serves a
-plain riser, an elbow up/down, and editing an existing one, and the server rejects two equal
-elevations outright — a value reused from a different riser is far more likely to be wrong than
-right; the walk still prompts for it every time, starting from native's own default (current
-elevation ±10 for an elbow), and only riser's own Shape field is remembered. **Change size
-(`transition`) is skipped entirely** (`{transition: true}`, checked before the per-param list) —
-Kresna's own request: no Edit/use-previous offer at all for reducer, for any of its fields; the
-walk still runs and prompts fresh every time, but nothing about that dialog is ever written to
-`RW._cmdModalWalkValueMemory` or persisted, and `cmdWalkHasMemory('transition')` is therefore
-always false. `cmdWalkStart`
+**Modal walk value memory** (branch only, of the four modals `MODAL_WALK_TOOLS` gates): remembers
+**every** field type the walk touches (`RW._cmdModalWalkValueMemory`, persisted to `localStorage`,
+wrapped in try/catch so a disabled/unavailable store just degrades to in-memory-only) and always
+asks first rather than auto-applying anything — this replaced an earlier mechanism
+(`RW._cmdModalMemory`, round 26) that silently auto-filled a modal's select/checkbox fields with no
+choice offered and excluded branch fitting entirely (its own field-memory lives in a separate,
+independent repo, `boon-duct-workbench`, per the user's own request to split it out); once this
+memory covered branch there was nothing left for that older, silent one to do, so it was removed
+rather than kept alongside a mechanism that fully supersedes it. **Change size, GRD, and riser are
+all skipped entirely**: `MODAL_WALK_MEMORY_SKIP_TOOLS` (`['transition', 'grd', 'vertical']`) is
+checked in both `cmdWalkMemorySet` (so nothing about any of the three is ever written to
+`RW._cmdModalWalkValueMemory` or persisted) AND `cmdWalkHasMemory` (so the offer can never appear
+for one of them even from memory that got there some other way — e.g. a stale `localStorage` value
+from before a tool was added to this list, or a direct console assignment — the same
+"enforce in code, not just by omission" doctrine `FORBIDDEN_BUTTON_IDS` follows). Riser's own
+Destination elevation field was the original, narrower version of this exclusion (an absolute
+height, the same dialog serves a plain riser, an elbow up/down, and editing an existing one, and
+the server rejects two equal elevations outright — a value reused from a different riser is far
+more likely to be wrong than right); GRD's own Airflow field and riser's own Shape field were both
+briefly remembered before Kresna's follow-up request extended the same "no initial fields
+questioning" treatment change size already had to GRD and riser as a whole. The walk itself still
+runs fresh every time
+for all three — only the offer/recording is gone. A build from before any of the three were added
+here may have already written a stale entry for one into a real page's `localStorage`; loading
+today's build prunes those away once at load and persists the cleanup
+(`cmdWalkMemoryPrune`), rather than merely stopping new writes. `cmdWalkStart`
 checks `cmdWalkHasMemory(tool)` before opening field 1: if anything's remembered, it shows a
 three-row choice ("Edit each field" / "use previous for all" / "use previous for all, without
 confirming") via `cmdWalkOfferChoice` — and, load-bearing, **`modalWalk` itself is not created
@@ -377,11 +382,9 @@ already just applies whichever option row is highlighted. The third choice
 option") skips the per-field prompt entirely: it walks every currently-visible field, applies
 `RW._cmdApplySetting` directly wherever something's remembered (recording through the same
 re-read-`.current` path as `cmdWalkAdvance`) and leaves an unremembered field untouched, then calls
-`cmdWalkFinish` exactly like the other two paths — which, for branch (the only tool this choice is
-reachable for that still uses the manual prompt; change size is never offered a reuse choice at
-all), keeps the modal's own final-action confirm as a deliberate, separate Enter no matter which of
-the three choices was picked. For GRD/riser it's the same auto-submit `cmdWalkFinish` now performs
-for those tools regardless of how the walk got there (see `MODAL_WALK_AUTO_SUBMIT_TOOLS` above).
+`cmdWalkFinish` exactly like the other two paths. Reachable for branch only now, since it's the
+only tool `cmdWalkHasMemory` can ever be true for — `cmdWalkFinish` keeps branch's own final-action
+confirm as a deliberate, separate Enter no matter which of the three choices was picked.
 `RW._cmdModalWalkMemoryEnabled = false` disables both the offer and new recording (the walk itself
 always still works, starting fresh); `RW._cmdModalWalkMemoryClear(tool)` forgets one tool or
 everything.

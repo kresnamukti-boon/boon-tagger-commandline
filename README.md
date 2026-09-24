@@ -586,41 +586,41 @@ too. `__RW._cmdModalWalkEnabled = false` turns off the auto-start (a manual
 `__RW._cmdStartModalWalk('branch')`, or any of `transition`/`grd`/`vertical`, still works with the
 hatch off), and `__RW._cmdModalWalk` is a plain console-inspectable object while a walk is running.
 
-**The walk remembers what was typed, and offers to reuse it next time — for branch, GRD and riser
-only.** Change size (reducer) never remembers anything and never shows this offer, at Kresna's own
-request; it always walks fresh from field 1 like a first-ever use, for every field. For the other
-three: the instant a recognized modal is detected open, if anything was applied during an earlier
-walk, the command bar shows a
+**The walk remembers what was typed, and offers to reuse it next time — for branch only.** Change
+size, GRD, and riser never remember anything and never show this offer, at Kresna's own explicit
+request (GRD's Airflow and riser's Shape were both briefly remembered before he asked for the same
+"no initial fields questioning" treatment change size already had to cover GRD and riser too); they
+always walk fresh from field 1 like a first-ever use, for every field. For branch: the instant its
+modal is detected open, if anything was applied during an earlier walk, the command bar shows a
 choice instead of jumping straight into field 1 — "Edit each field" (starts exactly like a walk
 with nothing remembered, every field blank), "use previous for all" (every field opens
 **pre-filled** with what was applied last time, one at a time, still requiring its own Enter to
 actually apply — nothing is bulk-applied without a chance to look at or edit it first), or **"use
 previous for all, without confirming"** — the same remembered values, but applied to every field
-immediately with no per-field prompt at all, then finishing the walk exactly the same way any other
-path through it does: branch (the only tool this choice is reachable for that still uses the manual
-prompt) lands on the Choose/Cancel-equivalent prompt without clicking anything; GRD/riser auto-click
-their own submit button immediately after, same as every other path through their walk. A field that's never had a value
+immediately with no per-field prompt at all, landing straight on the same Choose/Cancel-equivalent
+prompt an ordinary walk ends on (it still doesn't click Choose itself — only the per-field confirms
+are skipped, not the modal's own final action). A field that's never had a value
 applied simply opens blank even in "use previous" mode (or is left untouched in the
 without-confirming mode), and a remembered select value that no longer matches any real option
 falls back to the field's own actual current value rather than guessing. Every field type is
-remembered (select, checkbox, number, text) **except riser's own Destination elevation** — an
-absolute height that a different riser is unlikely to share, and the server rejects two equal
-elevations outright, so it's always prompted fresh, starting from native's own default. A skipped
+remembered (select, checkbox, number, text). A skipped
 field (bare Enter, nothing typed, or nothing remembered in the without-confirming mode) is never
 recorded, so its own previously remembered value survives untouched. Remembered values survive a
 page reload/re-paste (stored in `localStorage`, not just for the rest of this page) — write one
 value, close the loader, come back later, and it's still there. `__RW._cmdModalWalkValueMemory` is
-a plain console-inspectable object (`{tool: {param: value}}`, with no `transition` key ever
-appearing in it); `__RW._cmdModalWalkMemoryClear(tool)` forgets one tool's values or everything
-with no argument; `__RW._cmdModalWalkMemoryEnabled = false` turns off both the offer and
-remembering new values for the tools that have either (the walk itself still works everywhere,
-always starting fresh). This replaced an earlier mechanism (`RW._cmdModalMemory`) that silently
-auto-filled a modal's select/checkbox fields with no choice offered and excluded branch fitting
-entirely (its own field-memory lives in a separate, standalone repo, `boon-duct-workbench`,
-`~/Projects/boon-projects/`, with no dependency on this one in either direction) — once this walk
-memory covered branch/GRD/riser there was nothing left for the older, silent one to do, so it was
-removed (change size's own exclusion from the new memory isn't a gap left by that removal — it's a
-deliberate, separate request).
+a plain console-inspectable object (`{tool: {param: value}}`, with no `transition`/`grd`/`vertical`
+key ever appearing in it); `__RW._cmdModalWalkMemoryClear(tool)` forgets one tool's values or
+everything with no argument; `__RW._cmdModalWalkMemoryEnabled = false` turns off both the offer and
+remembering new values for branch (the walk itself still works everywhere, always starting fresh).
+A build from before change size/GRD/riser were all excluded may have already written one of them
+into a real page's `localStorage`; loading today's build prunes any such stale entry away once, and
+persists the cleanup, rather than merely stopping new writes. This replaced an earlier mechanism
+(`RW._cmdModalMemory`) that silently auto-filled a modal's select/checkbox fields with no choice
+offered and excluded branch fitting entirely (its own field-memory lives in a separate, standalone
+repo, `boon-duct-workbench`, `~/Projects/boon-projects/`, with no dependency on this one in either
+direction) — once this walk memory covered branch there was nothing left for the older, silent one
+to do, so it was removed (change size/GRD/riser's own exclusion from the new memory isn't a gap
+left by that removal — it's a deliberate, separate request).
 
 **The inspector's "New system" name/service fields are typeable too** (`route.new-system-name`/
 `-service` or bare `name`/`service`) — the "Add" button (`graph-create-system`) stays a manual click

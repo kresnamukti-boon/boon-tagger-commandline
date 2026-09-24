@@ -119,10 +119,10 @@ Not yet extracted (all in `src/console/shell.js`: `GRAPH_TOOL_MODALS`, `cmdOpenT
 - Branch fitting's own field-memory intentionally lives in a separate repo
   (`boon-duct-workbench`, per the user's own request) — do not port that piece from
   here; the walk mechanism and its own value memory (`RW._cmdModalWalkValueMemory`,
-  which covers branch, GRD and riser) are unaffected.
-- Change size (`transition`) is deliberately excluded from the value memory
-  (`MODAL_WALK_MEMORY_SKIP.transition === true` in `shell.js`) — Kresna's own request,
-  no offer or recording for that dialog at all. Port the walk for it, not the memory.
+  which now covers branch only) are unaffected.
+- Change size, GRD, and riser are all deliberately excluded from the value memory
+  (`MODAL_WALK_MEMORY_SKIP_TOOLS` in `shell.js`) — Kresna's own request, no offer or
+  recording for any of the three. Port the walk for them, not the memory.
 - Change size, GRD, and riser auto-click their own submit button the instant the walk's
   last field is confirmed (`MODAL_WALK_AUTO_SUBMIT_TOOLS` in `shell.js`) — also Kresna's
   own request, overriding this project's usual "never auto-submit a graph-host action

@@ -6488,7 +6488,7 @@ function loadCoreModule(win){
     inpA.dispatchEvent({ type: 'input' });
     inpA._fire('keydown', { key: 'Enter' }); // shape applied
 
-    ok(!winA.__RW._cmdModalWalkValueMemory.transition, 'nothing is recorded for change size — MODAL_WALK_MEMORY_SKIP.transition === true, unlike branch/GRD/riser');
+    ok(!winA.__RW._cmdModalWalkValueMemory.transition, 'nothing is recorded for change size — MODAL_WALK_MEMORY_SKIP_TOOLS, same as GRD and riser, unlike branch');
 
     const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
     winB.localStorage = sharedLS;
@@ -6501,20 +6501,25 @@ function loadCoreModule(win){
     const rows = byIdB['rw-cmd-menu']._children;
     ok(!rows.some(function(r){ return r.innerText === 'Edit each field'; }), 'sanity: the reuse-offer rows are not present');
 
-    // A build from before change size was skip-listed already recorded a `transition` entry
-    // into localStorage on a real page — loading today's build must prune it away, not just
-    // stop adding to it, or the offer would keep showing forever from that one stale write.
+    // A build from before change size/GRD/riser were all skip-listed already recorded
+    // entries for all three into localStorage on a real page (GRD's airflow and riser's
+    // shape were briefly remembered, same as branch still is) — loading today's build
+    // must prune them all away, not just stop adding to them, or the offer would keep
+    // showing forever from those stale writes.
     const staleLS = makeFakeLocalStorage();
-    staleLS.setItem('rw_graph_modal_walk_memory_v1', JSON.stringify({ transition: { shape: 'round' }, vertical: { shape: 'round', 'elevation-input': '40' } }));
+    staleLS.setItem('rw_graph_modal_walk_memory_v1', JSON.stringify({
+      branch: { 'type-select': 'wye' }, transition: { shape: 'round' }, grd: { 'airflow-input': '400' }, vertical: { shape: 'round' }
+    }));
     const { win: winC, byId: byIdC } = makeStubWindow({ host: GRAPH_HOST });
     winC.localStorage = staleLS;
     loadModule(winC, null, null, { activeTool: 'transition' });
 
-    ok(!winC.__RW._cmdModalWalkValueMemory.transition, 'a stale pre-existing transition entry is pruned away on load');
-    ok(winC.__RW._cmdModalWalkValueMemory.vertical && winC.__RW._cmdModalWalkValueMemory.vertical.shape === 'round'
-       && !('elevation-input' in winC.__RW._cmdModalWalkValueMemory.vertical),
-       "a stale riser elevation value is pruned too, while riser's own shape survives");
-    ok(JSON.parse(staleLS.getItem('rw_graph_modal_walk_memory_v1')).transition === undefined,
+    ok(!winC.__RW._cmdModalWalkValueMemory.transition && !winC.__RW._cmdModalWalkValueMemory.grd && !winC.__RW._cmdModalWalkValueMemory.vertical,
+       'stale pre-existing change size, GRD, and riser entries are all pruned away on load');
+    ok(winC.__RW._cmdModalWalkValueMemory.branch && winC.__RW._cmdModalWalkValueMemory.branch['type-select'] === 'wye',
+       "branch's own memory is untouched — it's the only tool not in MODAL_WALK_MEMORY_SKIP_TOOLS");
+    const prunedRaw = JSON.parse(staleLS.getItem('rw_graph_modal_walk_memory_v1'));
+    ok(prunedRaw.transition === undefined && prunedRaw.grd === undefined && prunedRaw.vertical === undefined,
        'the prune is persisted back to localStorage, not just applied in memory for this one page load');
 
     makeTransitionFixture(winC, byIdC);
@@ -6522,9 +6527,11 @@ function loadCoreModule(win){
     ok(byIdC['rw-cmd-input'].value === 'transition.shape = ', 'and the offer does not reappear for change size after the prune');
   }
 
-  /* ---------- 293. GRD walk: a single Airflow prompt, auto-clicking place the instant it's confirmed — and the value is remembered for next time ---------- */
+  /* ---------- 293. GRD walk: a single Airflow prompt, auto-clicking place the instant it's confirmed — like reducer, nothing is ever remembered or offered ---------- */
   {
+    const sharedLS = makeFakeLocalStorage();
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    win.localStorage = sharedLS;
     loadModule(win, null, null, { activeTool: 'grd' });
     const RW = win.__RW;
     const fx = makeGrdFixture(win, byId);
@@ -6541,11 +6548,17 @@ function loadCoreModule(win){
 
     ok(fx.placeBtn._clicked === 1, "Kresna's own request: GRD auto-clicks place the instant its one field is confirmed — no further Enter needed");
     ok(fx.cancelBtn._clicked === 0, 'cancel was never clicked');
-    ok(RW._cmdModalWalkValueMemory.grd && RW._cmdModalWalkValueMemory.grd['airflow-input'] === '400',
-       'the applied airflow is remembered for the next time this modal opens');
+    ok(!RW._cmdModalWalkValueMemory.grd, "nothing is recorded for GRD either — Kresna's follow-up request extended change size's own exclusion to GRD and riser too");
+
+    const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
+    winB.localStorage = sharedLS;
+    loadModule(winB, null, null, { activeTool: 'grd' });
+    makeGrdFixture(winB, byIdB);
+    winB.__RW._cmdModalWalkTick();
+    ok(byIdB['rw-cmd-input'].value === 'grd.airflow-input = ', 'the walk jumps straight into its one field on the next load too — no Edit/use-previous offer ever appears for GRD');
   }
 
-  /* ---------- 294. riser walk: Shape then Destination elevation, in on-screen order — elevation is never remembered ---------- */
+  /* ---------- 294. riser walk: Shape then Destination elevation, in on-screen order — neither is ever remembered ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'vertical' });
@@ -6566,10 +6579,8 @@ function loadCoreModule(win){
     inp._fire('keydown', { key: 'Enter' });
     ok(fx.elevation.value === '35', 'applied to the real control');
 
-    ok(RW._cmdModalWalkValueMemory.vertical && RW._cmdModalWalkValueMemory.vertical.shape === 'round',
-       'shape is remembered, like any other select field');
-    ok(!('elevation-input' in (RW._cmdModalWalkValueMemory.vertical || {})),
-       'elevation is deliberately never remembered — MODAL_WALK_MEMORY_SKIP — since it\'s an absolute height that a different riser is very unlikely to share, and the server rejects two equal elevations outright');
+    ok(!RW._cmdModalWalkValueMemory.vertical,
+       "riser is in MODAL_WALK_MEMORY_SKIP_TOOLS entirely now, like change size and GRD — neither shape nor elevation is ever remembered (elevation never was, being an absolute height a different riser is unlikely to share and the server rejects two equal elevations outright; Kresna's follow-up request then extended the same exclusion to shape too)");
 
     ok(fx.submitBtn._clicked === 1, "Kresna's own request: riser auto-clicks placeriser the instant the walk finishes — no further Enter needed");
     ok(fx.cancelBtn._clicked === 0, 'cancel was never clicked');
@@ -6591,23 +6602,20 @@ function loadCoreModule(win){
     ok(fx.shapeSel.value === 'rectangular', 'the hidden shape control was never touched');
   }
 
-  /* ---------- 296. riser walk: "use previous for all, without confirming" applies remembered shape immediately, leaves elevation untouched, then auto-clicks placeriser ---------- */
+  /* ---------- 296. riser walk: the reuse offer never shows, even if something's already sitting in memory (belt-and-braces — cmdWalkHasMemory checks MODAL_WALK_MEMORY_SKIP_TOOLS directly, not just the write side) ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'vertical' });
     const RW = win.__RW;
-    RW._cmdModalWalkValueMemory = { vertical: { shape: 'round' } }; // elevation was never recorded to begin with — nothing to remember
+    RW._cmdModalWalkValueMemory = { vertical: { shape: 'round' } }; // simulates memory that got in some other way (a direct console assignment, a prune that missed it) — never possible in practice via cmdWalkMemorySet itself
     const fx = makeRiserFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
 
     RW._cmdModalWalkTick();
+    ok(inp.value === 'vertical.shape = ', 'the walk jumps straight into field 1, no offer shown, even though RW._cmdModalWalkValueMemory.vertical is non-empty right now');
     const rows = byId['rw-cmd-menu']._children;
-    ok(rows.length === 3, 'the reuse offer is shown, same as any other tool with something remembered');
-    rows[2]._fire('click', {}); // "use previous for all, without confirming"
-
-    ok(fx.shapeSel.value === 'round', 'the remembered shape was applied immediately');
-    ok(fx.elevation.value === '22', "elevation was never remembered, so cmdWalkAutoApplyAll leaves it at the fixture's own current value — untouched, exactly the same outcome as skipping it in a confirming walk");
-    ok(fx.submitBtn._clicked === 1, 'and placeriser is auto-clicked immediately after, same as every other path through this walk for riser');
-    ok(fx.cancelBtn._clicked === 0, 'cancel was never clicked');
+    ok(!rows.some(function(r){ return r.innerText === 'Edit each field'; }), 'sanity: the reuse-offer rows are not present');
+    ok(fx.shapeSel.value === 'rectangular', 'and nothing was silently applied either — this is an ordinary fresh walk, not a reuse one');
   }
 
   /* ---------- 297. the old round-26 silent auto-fill is gone: opening any of the four dialogs never writes a field on its own, without a walk step ---------- */
