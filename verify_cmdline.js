@@ -6427,7 +6427,7 @@ function loadCoreModule(win){
     ok(inp.value === 'something the user is mid-typing', 'a second tick while the SAME modal stays open never touches the bar again');
   }
 
-  /* ---------- 290. change size/GRD/riser walk: opening the reducer modal walks all four real fields in order and ends on apply/cancelsize ---------- */
+  /* ---------- 290. change size/GRD/riser walk: opening the reducer modal walks all four real fields in order and auto-clicks apply ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'transition' });
@@ -6449,12 +6449,11 @@ function loadCoreModule(win){
     ok(inp.value === 'transition.secondary-input = ', 'field 3 (Height) — still visible, rectangular shape');
     inp._fire('keydown', { key: 'Enter' }); // skip
     ok(inp.value === 'transition.alignment = ', 'field 4 (Alignment)');
-    inp._fire('keydown', { key: 'Enter' }); // skip
+    ok(fx.applyBtn._clicked === 0, 'sanity: apply not clicked yet, mid-walk');
+    inp._fire('keydown', { key: 'Enter' }); // skip field 4 — the last one
 
-    const rows = byId['rw-cmd-menu']._children;
-    ok(rows.length === 2 && rows[0].innerText.indexOf('apply') === 0 && rows[1].innerText.indexOf('cancelsize') === 0,
-       'the walk ends on the change-size dialog\'s own apply/cancelsize prompt, not branch\'s choose/cancelbranch');
-    ok(fx.applyBtn._clicked === 0, 'apply was never actually clicked');
+    ok(fx.applyBtn._clicked === 1, "Kresna's own request: change size auto-clicks apply the instant the walk finishes — no further Enter needed");
+    ok(inp.value === '' && !inp._focused, 'the bar clears and blurs, same as any other command that just ran');
   }
 
   /* ---------- 291. change size walk: switching to round hides the secondary size field, and the walk skips over it entirely ---------- */
@@ -6523,7 +6522,7 @@ function loadCoreModule(win){
     ok(byIdC['rw-cmd-input'].value === 'transition.shape = ', 'and the offer does not reappear for change size after the prune');
   }
 
-  /* ---------- 293. GRD walk: a single Airflow prompt, ending on place/cancelgrd — and the value is remembered for next time ---------- */
+  /* ---------- 293. GRD walk: a single Airflow prompt, auto-clicking place the instant it's confirmed — and the value is remembered for next time ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'grd' });
@@ -6540,9 +6539,8 @@ function loadCoreModule(win){
     inp._fire('keydown', { key: 'Enter' });
     ok(fx.airflow.value === '400', 'applied to the real control');
 
-    const rows = byId['rw-cmd-menu']._children;
-    ok(rows.length === 2 && rows[0].innerText.indexOf('place') === 0 && rows[1].innerText.indexOf('cancelgrd') === 0,
-       'ends on place/cancelgrd, GRD\'s own actions');
+    ok(fx.placeBtn._clicked === 1, "Kresna's own request: GRD auto-clicks place the instant its one field is confirmed — no further Enter needed");
+    ok(fx.cancelBtn._clicked === 0, 'cancel was never clicked');
     ok(RW._cmdModalWalkValueMemory.grd && RW._cmdModalWalkValueMemory.grd['airflow-input'] === '400',
        'the applied airflow is remembered for the next time this modal opens');
   }
@@ -6573,9 +6571,8 @@ function loadCoreModule(win){
     ok(!('elevation-input' in (RW._cmdModalWalkValueMemory.vertical || {})),
        'elevation is deliberately never remembered — MODAL_WALK_MEMORY_SKIP — since it\'s an absolute height that a different riser is very unlikely to share, and the server rejects two equal elevations outright');
 
-    const rows = byId['rw-cmd-menu']._children;
-    ok(rows.length === 2 && rows[0].innerText.indexOf('placeriser') === 0 && rows[1].innerText.indexOf('cancelriser') === 0,
-       'ends on placeriser/cancelriser');
+    ok(fx.submitBtn._clicked === 1, "Kresna's own request: riser auto-clicks placeriser the instant the walk finishes — no further Enter needed");
+    ok(fx.cancelBtn._clicked === 0, 'cancel was never clicked');
   }
 
   /* ---------- 295. riser walk: a plain vertical elbow hides the Shape field entirely — only elevation is walked ---------- */
@@ -6589,13 +6586,12 @@ function loadCoreModule(win){
     RW._cmdModalWalkTick();
     ok(inp.value === 'vertical.elevation-input = ', 'Shape is hidden for this fixture, so the walk starts directly on elevation, the only real field left');
 
-    inp._fire('keydown', { key: 'Enter' }); // skip
-    const rows = byId['rw-cmd-menu']._children;
-    ok(rows.length === 2 && rows[0].innerText.indexOf('placeriser') === 0, 'a single-field walk still ends on the same placeriser/cancelriser prompt');
+    inp._fire('keydown', { key: 'Enter' }); // skip — the last (only) field, so the walk finishes right here
+    ok(fx.submitBtn._clicked === 1, 'a single-field walk still auto-clicks placeriser the instant it finishes');
     ok(fx.shapeSel.value === 'rectangular', 'the hidden shape control was never touched');
   }
 
-  /* ---------- 296. riser walk: "use previous for all, without confirming" applies remembered shape immediately but still prompts fresh for elevation ---------- */
+  /* ---------- 296. riser walk: "use previous for all, without confirming" applies remembered shape immediately, leaves elevation untouched, then auto-clicks placeriser ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'vertical' });
@@ -6610,8 +6606,8 @@ function loadCoreModule(win){
 
     ok(fx.shapeSel.value === 'round', 'the remembered shape was applied immediately');
     ok(fx.elevation.value === '22', "elevation was never remembered, so cmdWalkAutoApplyAll leaves it at the fixture's own current value — untouched, exactly the same outcome as skipping it in a confirming walk");
-    const endRows = byId['rw-cmd-menu']._children;
-    ok(endRows.length === 2 && endRows[0].innerText.indexOf('placeriser') === 0, 'still lands on the ordinary placeriser/cancelriser prompt — the final action always stays a deliberate Enter');
+    ok(fx.submitBtn._clicked === 1, 'and placeriser is auto-clicked immediately after, same as every other path through this walk for riser');
+    ok(fx.cancelBtn._clicked === 0, 'cancel was never clicked');
   }
 
   /* ---------- 297. the old round-26 silent auto-fill is gone: opening any of the four dialogs never writes a field on its own, without a walk step ---------- */

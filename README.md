@@ -573,10 +573,13 @@ Tab-previewed (Tab's own live-preview still works throughout, and a previewed va
 bare Enter, not treated as a skip). A walked checkbox is a typed `on`/`off` prompt like any other
 field — never auto-toggled just by walking onto it, unlike picking one from the ordinary dropdown.
 Clicking an option row with the mouse continues the walk exactly like Enter does. **Once every
-field has been visited, the walk does not submit anything on its own** — it opens the dropdown
-pre-highlighted on that modal's own submit action (`choose`/`apply`/`place`/`placeriser`, with its
-own cancel action also listed), so one further, deliberate Enter is what actually applies it.
-Escape at any point ends the whole walk (fields already set are left as they are; the modal itself
+field has been visited, branch fitting does not submit anything on its own** — it opens the dropdown
+pre-highlighted on `choose` (with `cancelbranch` also listed), so one further, deliberate Enter is
+what actually applies it. **Change size, GRD, and riser are different, at Kresna's own explicit
+request: they auto-click their own submit button (`apply`/`place`/`placeriser`) the instant the
+last field is confirmed — no further Enter needed.** If that button isn't currently usable
+(missing/disabled/hidden), the walk falls back to the same manual prompt branch always uses, rather
+than silently doing nothing. Escape at any point ends the whole walk (fields already set are left as they are; the modal itself
 stays open, so the ordinary `<tool>.`/bare-param typing is still there if you want it), and the
 modal closing by some other path (e.g. its own Cancel clicked by mouse) tears the walk down quietly
 too. `__RW._cmdModalWalkEnabled = false` turns off the auto-start (a manual
@@ -593,9 +596,10 @@ with nothing remembered, every field blank), "use previous for all" (every field
 **pre-filled** with what was applied last time, one at a time, still requiring its own Enter to
 actually apply — nothing is bulk-applied without a chance to look at or edit it first), or **"use
 previous for all, without confirming"** — the same remembered values, but applied to every field
-immediately with no per-field prompt at all, landing straight on the same Choose/Cancel-equivalent
-prompt an ordinary walk ends on (it still doesn't click the submit action itself — only the
-per-field confirms are skipped, not the modal's own final action). A field that's never had a value
+immediately with no per-field prompt at all, then finishing the walk exactly the same way any other
+path through it does: branch (the only tool this choice is reachable for that still uses the manual
+prompt) lands on the Choose/Cancel-equivalent prompt without clicking anything; GRD/riser auto-click
+their own submit button immediately after, same as every other path through their walk. A field that's never had a value
 applied simply opens blank even in "use previous" mode (or is left untouched in the
 without-confirming mode), and a remembered select value that no longer matches any real option
 falls back to the field's own actual current value rather than guessing. Every field type is

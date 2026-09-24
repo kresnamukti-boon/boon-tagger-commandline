@@ -1315,12 +1315,15 @@
   // fields a modal actually has, discovered live. Originally scoped to branch fitting
   // only, extended to change size/GRD/riser once their real field ids/order were
   // confirmed live (all four now read GRAPH_TOOL_MODALS, so no other change was needed
-  // to cover the rest). Also confirmed: the walk never auto-clicks Choose — it ends on
-  // a Choose/Cancel prompt instead (cmdWalkFinish), matching this project's standing
+  // to cover the rest). Ending the walk used to always mean a Choose/Cancel prompt one
+  // deliberate Enter short of actually applying, matching this project's standing
   // caution around graph-host action buttons, which submit real commands to the app's
-  // own autosave journal (see CLAUDE.md's Constraints) — and a bare Enter on an
-  // untouched field just skips it (handled in onInputKeydown, where the draft itself
-  // lives).
+  // own autosave journal (see CLAUDE.md's Constraints) — Kresna's own explicit choice
+  // (AskUserQuestion) overrides that for change size/GRD/riser specifically, which now
+  // auto-click their own submit button the instant the walk finishes
+  // (MODAL_WALK_AUTO_SUBMIT_TOOLS, in cmdWalkFinish below); branch fitting still ends on
+  // the manual prompt. A bare Enter on an untouched field just skips it either way
+  // (handled in onInputKeydown, where the draft itself lives).
   const MODAL_WALK_TOOLS = ['branch', 'transition', 'grd', 'vertical'];
   RW._cmdModalWalkEnabled = true; // console escape hatch: __RW._cmdModalWalkEnabled = false stops auto-start only; RW._cmdStartModalWalk still works by hand
 
@@ -1552,13 +1555,21 @@
     cmdWalkFinish(tool, modal);
   }
 
-  // Ends the walk on the modal's own Choose/Cancel prompt rather than clicking anything
-  // automatically — Kresna's own explicit choice (AskUserQuestion): graph-host action
-  // buttons submit real commands to the app's own autosave journal (see CLAUDE.md's
-  // Constraints), so the walk stops one deliberate Enter short of actually applying.
-  // Reuses the existing findEntry/cmdActionUsable helpers rather than a new lookup, so
-  // an unusable button (missing/disabled/hidden) is quietly left off exactly the way
-  // the ordinary dropdown already omits one.
+  // Change size, GRD, and riser auto-click their own submit button the instant the walk
+  // finishes — Kresna's own explicit choice (AskUserQuestion), overriding the standing
+  // "never auto-submit a graph-host action button" caution (see CLAUDE.md's Constraints)
+  // for these three specifically. Branch fitting is deliberately NOT in this list: it
+  // still ends on the manual Choose/Cancel prompt below, one deliberate Enter short of
+  // actually applying, exactly as every modal used to work before this change.
+  const MODAL_WALK_AUTO_SUBMIT_TOOLS = ['transition', 'grd', 'vertical'];
+  // Ends the walk. For MODAL_WALK_AUTO_SUBMIT_TOOLS, clicks the submit button right away
+  // via RW.runCommand (the same path Enter on the manual prompt below always used) —
+  // skipped if it's not currently usable (missing/disabled/hidden), falling back to the
+  // manual prompt so an unusable button is surfaced rather than silently doing nothing.
+  // For every other tool (branch), ends on the modal's own Choose/Cancel prompt instead of
+  // clicking anything, reusing the existing findEntry/cmdActionUsable helpers so an
+  // unusable button is quietly left off exactly the way the ordinary dropdown already
+  // omits one.
   function cmdWalkFinish(tool, modal){
     const applied = modalWalk.applied, skipped = modalWalk.skipped;
     modalWalk = null;
@@ -1567,6 +1578,15 @@
     const reg = GRAPH_TOOL_MODALS[tool];
     const submitEntry = reg && findEntry(reg.submitCmd);
     const cancelEntry = reg && findEntry(reg.cancelCmd);
+    if (MODAL_WALK_AUTO_SUBMIT_TOOLS.indexOf(tool) !== -1 && submitEntry && cmdActionUsable(submitEntry)){
+      RW.runCommand(submitEntry.name);
+      inputEl.value = '';
+      hideMenu();
+      menuItems = [];
+      menuMode = 'command';
+      inputEl.blur();
+      return;
+    }
     const rows = [submitEntry, cancelEntry].filter(function(e){ return e && cmdActionUsable(e); });
     inputEl.value = '';
     menuItems = rows;
@@ -1582,11 +1602,13 @@
 
   // Third offer choice: same remembered values as "use previous for all", but applies every
   // field immediately instead of opening a per-field prompt and waiting for Enter — Kresna's
-  // own explicit request ("use save without confirming like 2nd option"). Still ends on the
-  // same Choose/Cancel prompt cmdWalkFinish always produces rather than auto-submitting
-  // anything itself — removing the per-field confirm step doesn't touch the modal's own final
-  // action, which keeps the same standing caution every other graph-host action command has
-  // (see CLAUDE.md's Constraints). Applies through RW._cmdApplySetting directly, the same
+  // own explicit request ("use save without confirming like 2nd option"). Still ends by
+  // calling the same cmdWalkFinish every other walk path calls — for branch (the only tool
+  // this choice is reachable for that still waits on a manual prompt) that's a Choose/Cancel
+  // prompt one deliberate Enter short of actually applying; for GRD/riser (change size is
+  // never offered a reuse choice at all, see MODAL_WALK_MEMORY_SKIP.transition), it's the
+  // same auto-submit cmdWalkFinish now does for those tools regardless of how the walk got
+  // there. Applies through RW._cmdApplySetting directly, the same
   // writer every other confirm path in this file already funnels through, rather than
   // opening-then-immediately-confirming a draft (there's no UI step to actually show here). A
   // field with nothing remembered (partial memory) is left untouched and counted as skipped —

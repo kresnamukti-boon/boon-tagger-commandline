@@ -316,10 +316,16 @@ deliberate skip, distinct from `dimension`'s own empty-value behavior, which is 
 that stops the chain — scoped via `settingsDraft.walk`, a flag `dimension`'s own draft never
 carries, so the two chains can't cross-contaminate each other's tests or behavior). A walked
 checkbox opens a typed on/off draft rather than auto-toggling, unlike picking one from the ordinary
-dropdown. The walk never auto-submits: once every field's been visited it opens the dropdown
-pre-highlighted on that modal's own submit action (`choose`/`apply`/`place`/`placeriser`, with its
-own cancel action listed too) and waits for one further, deliberate Enter — the same standing
-caution as every other graph-host action button (see Constraints). `MODAL_WALK_TOOLS` names which
+dropdown. Once every field's been visited, branch fitting still ends on the dropdown pre-highlighted
+on `choose` (with `cancelbranch` also listed) and waits for one further, deliberate Enter — the same
+standing caution as every other graph-host action button (see Constraints). **Change size, GRD, and
+riser are the deliberate exception**: `MODAL_WALK_AUTO_SUBMIT_TOOLS` (`['transition', 'grd',
+'vertical']`, checked in `cmdWalkFinish`) auto-clicks that modal's own submit action
+(`apply`/`place`/`placeriser`) the instant the last field is confirmed, with no further Enter —
+Kresna's own explicit choice (AskUserQuestion), overriding the walk's original design for these
+three tools specifically. Falls back to the manual Choose/Cancel-style prompt if the submit button
+isn't currently usable (missing/disabled/hidden), same check (`cmdActionUsable`) the manual prompt
+itself always used. `MODAL_WALK_TOOLS` names which
 modals get this (`['branch', 'transition', 'grd', 'vertical']` — all four, as of the transition/
 GRD/riser fields being confirmed live); every other piece of the mechanism reads its target from
 `GRAPH_TOOL_MODALS`, so extending it further would be a one-line addition again. Started as branch
@@ -370,10 +376,12 @@ already just applies whichever option row is highlighted. The third choice
 (`cmdWalkAutoApplyAll`, Kresna's own follow-up request — "use save without confirming like 2nd
 option") skips the per-field prompt entirely: it walks every currently-visible field, applies
 `RW._cmdApplySetting` directly wherever something's remembered (recording through the same
-re-read-`.current` path as `cmdWalkAdvance`) and leaves an unremembered field untouched, then lands
-on `cmdWalkFinish`'s own Choose/Cancel prompt exactly like the other two paths — removing the
-per-field confirm step never removes the modal's own final-action confirm, which stays a
-deliberate, separate Enter no matter which of the three choices was picked.
+re-read-`.current` path as `cmdWalkAdvance`) and leaves an unremembered field untouched, then calls
+`cmdWalkFinish` exactly like the other two paths — which, for branch (the only tool this choice is
+reachable for that still uses the manual prompt; change size is never offered a reuse choice at
+all), keeps the modal's own final-action confirm as a deliberate, separate Enter no matter which of
+the three choices was picked. For GRD/riser it's the same auto-submit `cmdWalkFinish` now performs
+for those tools regardless of how the walk got there (see `MODAL_WALK_AUTO_SUBMIT_TOOLS` above).
 `RW._cmdModalWalkMemoryEnabled = false` disables both the offer and new recording (the walk itself
 always still works, starting fresh); `RW._cmdModalWalkMemoryClear(tool)` forgets one tool or
 everything.
@@ -439,6 +447,13 @@ trusting this feature on it.
   button-backed action **except** the "System / network" and "New system" property-group actions
   (`AssignDuctSystem`/`CreateDuctSystem`/`RenameDuctSystem`) — those three are deliberately never
   given table entries. Do not add them without re-confirming scope with the user first.
+- **The modal walk auto-clicking a submit button is scoped to exactly three tools.** The walk's own
+  end-of-walk action button (`apply`/`place`/`placeriser`) is auto-clicked with no further Enter
+  ONLY for change size/GRD/riser (`MODAL_WALK_AUTO_SUBMIT_TOOLS` in `shell.js`) — Kresna's own
+  explicit choice (AskUserQuestion), overriding the walk's original "one further, deliberate Enter"
+  design for these three specifically. Branch fitting's own `choose` is NOT in this list and still
+  requires that Enter. Do not widen `MODAL_WALK_AUTO_SUBMIT_TOOLS` to branch, or add auto-submit to
+  any other graph-host action command outside the modal walk, without re-confirming scope first.
 
 ## Live-testing gotchas (opencli / real-page testing)
 
