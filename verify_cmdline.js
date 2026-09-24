@@ -12,6 +12,46 @@
 const fs = require('fs');
 const path = require('path');
 
+// Restructure (in progress): the real module body now lives under src/ as
+// ES modules assembled into dist/rw_cmdline.js by build_loader.sh (see
+// scripts/build-dist.js) — this harness loads THAT generated file, same
+// discipline as before (exercise the real shipped output, not a
+// reimplementation). A stale dist/ built before the most recent src/ edit
+// has silently passed every test against yesterday's behavior before (this
+// project's own "live-testing gotchas" — see CLAUDE.md), so this checks
+// mtimes up front and refuses to run against a stale build rather than
+// risk it happening here too.
+(function checkDistFreshness(){
+  const distPath = path.join(__dirname, 'dist', 'rw_cmdline.js');
+  if (!fs.existsSync(distPath)) {
+    console.error('dist/rw_cmdline.js is missing — run `bash build_loader.sh` first.');
+    process.exit(1);
+  }
+  const distMtime = fs.statSync(distPath).mtimeMs;
+  const srcRoots = ['src', 'build_loader.sh', path.join('scripts', 'build-dist.js')];
+  let newest = null;
+  (function walk(p){
+    const stat = fs.statSync(p);
+    if (stat.isDirectory()) {
+      for (const name of fs.readdirSync(p)) walk(path.join(p, name));
+      return;
+    }
+    if (!newest || stat.mtimeMs > newest.mtimeMs) newest = { path: p, mtimeMs: stat.mtimeMs };
+  })(path.join(__dirname, srcRoots[0]));
+  for (const rel of srcRoots.slice(1)) {
+    const abs = path.join(__dirname, rel);
+    const stat = fs.statSync(abs);
+    if (!newest || stat.mtimeMs > newest.mtimeMs) newest = { path: abs, mtimeMs: stat.mtimeMs };
+  }
+  if (newest && newest.mtimeMs > distMtime) {
+    console.error(
+      `dist/rw_cmdline.js is stale (${path.relative(__dirname, newest.path)} was edited more ` +
+      `recently) — run \`bash build_loader.sh\` before re-testing.`
+    );
+    process.exit(1);
+  }
+})();
+
 let pass = 0, fail = 0;
 function ok(cond, name){
   if (cond){ pass++; }
@@ -476,7 +516,7 @@ FakeKeyboardEvent.prototype.stopImmediatePropagation = function(){ this._immedia
 function loadModule(win, annotationState, timers, graphDebug){
   timers = timers || makeFakeTimers();
   win._timers = timers;
-  const src = fs.readFileSync(path.join(__dirname, 'rw_cmdline.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, 'dist', 'rw_cmdline.js'), 'utf8');
   const sandboxGlobals = {
     window: win, document: win.document, KeyboardEvent: FakeKeyboardEvent, annotationState: annotationState,
     __graphDebug: graphDebug,

@@ -35,17 +35,37 @@ tracker (`/analytics/api/events/`) is read-only observed, never spoofed.
 
 ## Build / verify commands
 
-There is no package manager, linter, or test suite. The only "build" step is concatenation, and
-the only syntax verification is `node --check`.
+There is no package manager, linter, or (npm-sense) test framework — `node --test` below is
+Node's own built-in runner, not an added dependency. The "build" step is two concatenations, and
+syntax verification is `node --check`.
 
 ```bash
-bash build_loader.sh     # rebuilds console_loader.js (runs node --check on the result)
-node verify_cmdline.js   # synthetic Node harness — DOM stub, drives real registered listeners
+bash build_loader.sh     # 1) assembles src/{core,features,ui,hosts}/*.js + src/console/shell.js
+                          #    into dist/rw_cmdline.js (scripts/build-dist.js; node --check'd)
+                          # 2) concatenates rw_host.js, rw_panelux.js, rw_core.js, dist/rw_cmdline.js
+                          #    into console_loader.js (node --check'd) — same as before this split
+node verify_cmdline.js   # synthetic Node harness — DOM stub, drives real registered listeners.
+                          # Loads dist/rw_cmdline.js (not src/), and refuses to run against a
+                          # dist/ built before the most recent src/ edit — rebuild first.
+node --test               # unit tests for the pure, DOM-free modules under src/core/ — imports
+                          # those ES modules directly (test/*.test.mjs), no DOM stub involved
 ```
 
+**Restructure in progress** (see `PORTING.md` once it lands): `rw_cmdline.js`'s one monolithic
+IIFE is being split into `src/core/` (pure, unit-tested directly), `src/features/` (DOM-touching,
+host-agnostic, dependencies injected), `src/ui/` and `src/hosts/` (annotate vs. graph adapters),
+plus `src/console/shell.js` (what's left of the old file, shrinking each phase) — specifically so
+individual features can be upstreamed as PRs into the two host apps' own native command-line
+modules (see "The two hosts" below). `scripts/build-dist.js` assembles those ES modules back into
+one script by topologically sorting each module's own `import` lines — so module load order is a
+property of the modules themselves, never a manifest to hand-maintain. Both `dist/rw_cmdline.js`
+and `console_loader.js` are committed, same as `console_loader.js` always has been: rebuild and
+commit both after every `src/`/`rw_*.js` edit.
+
 `verify_cmdline.js` is large (1000+ assertions as of round 27) and is this project's only
-automated safety net. It cannot validate against a live page's real DOM/globals — to actually
-verify a change works, it has to be pasted into a real page in Chrome (see README.md's
+automated DOM-level safety net; `node --test`'s `src/core/` unit tests are new and narrower (pure
+functions only, no DOM stub). Neither can validate against a live page's real DOM/globals — to
+actually verify a change works, it has to be pasted into a real page in Chrome (see README.md's
 "Injection" steps). **This project's own established discipline when adding a test**: after
 writing it, revert just the line(s) it's meant to guard and confirm it fails exactly as expected,
 then restore — this has repeatedly caught tests that were accidentally tautological.

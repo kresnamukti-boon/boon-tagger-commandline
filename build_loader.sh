@@ -10,6 +10,16 @@ cd "$(dirname "$0")"
 
 OUT=console_loader.js
 
+# Restructure (in progress): src/core|features|ui|hosts hold ES modules being
+# extracted out of the old monolithic rw_cmdline.js (now src/console/shell.js,
+# unchanged content, appended last) so each feature can eventually be
+# upstreamed into the host app's own native command-line modules — see
+# scripts/build-dist.js's own header and PORTING.md. This step is a no-op
+# concatenation (shell.js only) until the first module lands.
+node scripts/build-dist.js
+DIST_CMDLINE=dist/rw_cmdline.js
+node --check "$DIST_CMDLINE"
+
 cat > "$OUT" <<'HEADER'
 /* Boon Command Line (native-tools-only, dual-target build) — console loader.
  * Usage: F12 -> Console -> paste this entire block -> Enter.
@@ -39,7 +49,7 @@ cat > "$OUT" <<'HEADER'
 HEADER
 
 FIRST=1
-for f in rw_host.js rw_panelux.js rw_core.js rw_cmdline.js; do
+for f in rw_host.js rw_panelux.js rw_core.js "$DIST_CMDLINE"; do
   if [ $FIRST -eq 0 ]; then printf ';\n' >> "$OUT"; fi
   FIRST=0
   echo "// ===== $f =====" >> "$OUT"
