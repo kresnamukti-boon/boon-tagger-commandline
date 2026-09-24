@@ -9,11 +9,16 @@
 //
 // Checked two ways: no import out of src/hosts, src/console or src/ui (the
 // injection/host-wiring layers), and no direct reference to document/window/
-// RW/localStorage in the module's own source. The second check is a plain
-// substring/regex scan, not a parser — deliberately conservative, so it
-// can't be fooled by a module merely mentioning one of these words in a
-// comment without ever touching the live page (checked against a real
-// module below).
+// RW/localStorage — or ambient time/randomness (setTimeout/setInterval/
+// Date.now/Math.random/globalThis) — in the module's own source. Time and
+// randomness get the same treatment as any other live-page fact: a pure
+// module takes `now` as a parameter instead of calling Date.now() itself,
+// the way autoselect-core.js's own breakerStep/goSelectDecision already do,
+// so the exact same inputs always produce the exact same decision. The
+// second check is a plain substring/regex scan, not a parser — deliberately
+// conservative, so it can't be fooled by a module merely mentioning one of
+// these words in a comment without ever touching the live page (checked
+// against a real module below).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -27,7 +32,10 @@ const FORBIDDEN_IMPORT_DIRS = ['src/hosts', 'src/console', 'src/ui'];
 // Matched as whole identifiers (word boundaries), not substrings — so a
 // param named e.g. `windowMs` (autoselect-core.js's own suppression window)
 // or a comment mentioning "the RW namespace" doesn't false-positive.
-const FORBIDDEN_IDENTIFIERS = [/\bdocument\b/, /\bwindow\b/, /\bRW\./, /\blocalStorage\b/];
+const FORBIDDEN_IDENTIFIERS = [
+  /\bdocument\b/, /\bwindow\b/, /\bRW\./, /\blocalStorage\b/,
+  /\bsetTimeout\b/, /\bsetInterval\b/, /\bDate\.now\b/, /\bMath\.random\b/, /\bglobalThis\b/,
+];
 
 function listPureFiles() {
   const files = [];

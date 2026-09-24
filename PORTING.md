@@ -5,6 +5,42 @@ How to move this project's own features into the host app's own native command l
 `pipe-command-line.js`, confirmed live via opencli — see `CLAUDE.md`'s "The native command line
 (graph host)"). Read that section first for what native already has and doesn't.
 
+## Start here (for whoever is doing the native port)
+
+- **Source of truth**: this project lives at
+  `https://github.com/kresnamukti-boon/boon-tagger-commandline`, a public repo. Port from
+  `master`, not a feature branch — every portable module described below is only guaranteed
+  to be there. (If a ticket cites `tagger-scripts/boon-tagger-commandline` as the path, that's
+  wrong — it resolves for nobody. This is the real location.)
+- **Start with #1 below** (swap `src/core/command-line-core.js` in for native's own file) — it's
+  close to a literal file replacement, needs no `command-line-ui.js` changes, and is a bug fix
+  from native's own point of view on two counts: null-tolerant `label`/`aliases` (native's own
+  `entry.label.toLowerCase()` throws on a labelless entry), and `digitPassthrough` as an ordinary
+  parameter in place of native's own `document.getElementById("graph-click-menu")` DOM probe
+  inside `dialogOpen`.
+  **Save #3** (the value-prompt / multi-step input) for last — it needs a genuinely new UI mode
+  in native (`command-line-ui.js` has no concept of a multi-step prompt today), and #5 (the modal
+  walk) depends on it, so there's nothing to port there until #3 exists.
+- **Readiness gate**: a module under `src/core/` or `src/features/` is ready to port once it
+  passes `test/purity.test.mjs` (no DOM/host globals, no ambient time/randomness, no import from
+  `src/hosts`/`src/console`/`src/ui`) and follows the superset rule below. That's a mechanical
+  yes/no — it doesn't require asking anyone.
+- **Two things the code alone won't tell you, both deliberate, both worth knowing before opening
+  a PR that touches the modal walk** (§5 has the full detail): change size, GRD, and riser skip
+  the walk's value memory entirely and auto-submit their last field; branch fitting still ends on
+  a manual Choose/Cancel prompt. These read as an inconsistency across the four modals unless you
+  know they were each asked for individually.
+- Branch fitting's own field-memory (a different, narrower mechanism than the modal-walk memory
+  above) intentionally lives in a separate repo, `boon-duct-workbench` — don't go looking for it
+  here.
+- Separately, and unrelated to this port: the **legacy** `annotation_jobs` bundle (a different
+  target, the older non-native command line) is pinned by SHA-256 (`3c0581e7…`) in
+  `annotation_jobs/tests/test_command_line_toggle.py`. Refreshing that vendored copy is a
+  decision for whoever owns that test, not part of this port.
+- Port only `src/core/`/`src/features/` modules and their tests (`test/*.test.mjs`). Never
+  `console_loader.js` or `dist/rw_cmdline.js` — those are the console-injection build artifacts,
+  not upstream material.
+
 ## Why this exists
 
 The graph ("Duct Takeoff") host now ships its own typed command line, built the same

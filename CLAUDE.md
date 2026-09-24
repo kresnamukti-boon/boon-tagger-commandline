@@ -51,7 +51,7 @@ node --test               # unit tests for the pure, DOM-free modules under src/
                           # those ES modules directly (test/*.test.mjs), no DOM stub involved
 ```
 
-**Restructure in progress** (see `PORTING.md` once it lands): `rw_cmdline.js`'s one monolithic
+**Restructure in progress** (see `PORTING.md`): `rw_cmdline.js`'s one monolithic
 IIFE is being split into `src/core/` (pure, unit-tested directly), `src/features/` (DOM-touching,
 host-agnostic, dependencies injected), `src/ui/` and `src/hosts/` (annotate vs. graph adapters),
 plus `src/console/shell.js` (what's left of the old file, shrinking each phase) — specifically so
