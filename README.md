@@ -556,71 +556,62 @@ is open (they aren't `showModal()`-modal) — a modal's own `<select>` keeps its
 while focused, everything else still seeds the command bar as usual; any *other* dialog (calibrate,
 known-scale) still blocks the command bar entirely, unchanged.
 
-**Three of the four modals (change size, GRD placement, riser elevation) remember their own
-select/checkbox fields and auto-fill them the next time they open** — no re-typing the same values
-duct after duct. Only fields likely to *repeat* are remembered (select/checkbox — e.g. a size
-category or diffuser type), never a number or text field (a dimension, an elevation value), since
-those are more likely to differ from one duct to the next. The moment a recognized modal is
-detected open, any remembered value that differs from the field's current one is applied straight
-to the real control (not just typed into the bar), and the status line reports what got filled in.
-Remembered values survive a page reload/re-paste (stored in `localStorage`, not just for the rest
-of this page) — write one value, close the loader, come back later, and it's still there.
-`__RW._cmdModalMemory` is a plain console-inspectable object (`{tool: {param: value}}`);
-`__RW._cmdModalMemoryClear(tool)` forgets one tool's remembered values, or everything with no
-argument; `__RW._cmdModalMemoryEnabled = false` turns the whole feature off (stops both
-remembering new values and auto-filling old ones). **Branch fitting is deliberately excluded** —
-its own version of this now lives in a separate, standalone repo
-(`boon-duct-workbench`, `~/Projects/boon-projects/`) with no dependency on this one in either
-direction; paste that loader too if you want branch fitting covered as well.
-
-**Opening the branch fitting modal auto-walks its own fields, one value prompt at a time — no
-param names to type at all.** The instant `graph-branch-fitting-modal` is detected open, the
-command bar takes focus on its own and drops straight into a value prompt for its first field
-(on-screen order), the same numeric/select/checkbox/text draft picking that field by name would
-already open. Confirming one (Enter/Space) immediately opens the next, chaining through every
-field currently on the page — the same idea `dimension` already uses for width→height, generalized
-here to however many fields the modal actually has, re-discovered live on every hop rather than a
-fixed list, so a field that only becomes relevant partway through (e.g. a flush-boot glyph that
-only shows for certain Fitting type/Branch shape combos) is still picked up, and one that stops
-being relevant is simply skipped over. **Enter with nothing typed leaves that field untouched and
-just advances** — the walk is for filling in what you want to change, not a forced tour of every
-control; a select only counts as "untouched" when nothing was typed *and* nothing was Tab-previewed
-(Tab's own live-preview still works throughout, and a previewed value is kept on a bare Enter, not
-treated as a skip). A walked checkbox is a typed `on`/`off` prompt like any other field — never
-auto-toggled just by walking onto it, unlike picking one from the ordinary dropdown. Clicking an
-option row with the mouse continues the walk exactly like Enter does. **Once every field has been
-visited, the walk does not submit anything on its own** — it opens the dropdown pre-highlighted on
-`choose` (with `cancelbranch` also listed), so one further, deliberate Enter is what actually
-applies it. Escape at any point ends the whole walk (fields already set are left as they are; the
-modal itself stays open, so the ordinary `branch.`/bare-param typing is still there if you want it),
-and the modal closing by some other path (e.g. its own Cancel clicked by mouse) tears the walk down
-quietly too. Scoped to **branch fitting only** for now — the other three modals (change size, GRD
-placement, riser elevation) keep today's type-the-param-name behavior; `__RW._cmdModalWalkEnabled =
-false` turns off the auto-start (a manual `__RW._cmdStartModalWalk('branch')` still works with the
+**Opening any of the four modals auto-walks its own fields, one value prompt at a time — no param
+names to type at all.** The instant a recognized modal is detected open, the command bar takes
+focus on its own and drops straight into a value prompt for its first field (on-screen order), the
+same numeric/select/checkbox/text draft picking that field by name would already open. Confirming
+one (Enter/Space) immediately opens the next, chaining through every field currently on the page —
+the same idea `dimension` already uses for width→height, generalized here to however many fields
+the modal actually has, re-discovered live on every hop rather than a fixed list, so a field that
+only becomes relevant partway through (e.g. a flush-boot glyph that only shows for certain Fitting
+type/Branch shape combos, change size's own secondary size field for a rectangular shape, or
+riser's own Shape field for a placement with a known duct shape) is still picked up, and one that
+stops being relevant is simply skipped over. **Enter with nothing typed leaves that field untouched
+and just advances** — the walk is for filling in what you want to change, not a forced tour of
+every control; a select only counts as "untouched" when nothing was typed *and* nothing was
+Tab-previewed (Tab's own live-preview still works throughout, and a previewed value is kept on a
+bare Enter, not treated as a skip). A walked checkbox is a typed `on`/`off` prompt like any other
+field — never auto-toggled just by walking onto it, unlike picking one from the ordinary dropdown.
+Clicking an option row with the mouse continues the walk exactly like Enter does. **Once every
+field has been visited, the walk does not submit anything on its own** — it opens the dropdown
+pre-highlighted on that modal's own submit action (`choose`/`apply`/`place`/`placeriser`, with its
+own cancel action also listed), so one further, deliberate Enter is what actually applies it.
+Escape at any point ends the whole walk (fields already set are left as they are; the modal itself
+stays open, so the ordinary `<tool>.`/bare-param typing is still there if you want it), and the
+modal closing by some other path (e.g. its own Cancel clicked by mouse) tears the walk down quietly
+too. `__RW._cmdModalWalkEnabled = false` turns off the auto-start (a manual
+`__RW._cmdStartModalWalk('branch')`, or any of `transition`/`grd`/`vertical`, still works with the
 hatch off), and `__RW._cmdModalWalk` is a plain console-inspectable object while a walk is running.
 
-**The walk remembers what was typed, and offers to reuse it next time.** The instant the branch
-fitting modal is detected open, if anything was applied during an earlier walk, the command bar
-shows a choice instead of jumping straight into field 1 — "Edit each field" (starts exactly like a
-walk with nothing remembered, every field blank), "use previous for all" (every field opens
+**The walk remembers what was typed, and offers to reuse it next time.** The instant a recognized
+modal is detected open, if anything was applied during an earlier walk, the command bar shows a
+choice instead of jumping straight into field 1 — "Edit each field" (starts exactly like a walk
+with nothing remembered, every field blank), "use previous for all" (every field opens
 **pre-filled** with what was applied last time, one at a time, still requiring its own Enter to
 actually apply — nothing is bulk-applied without a chance to look at or edit it first), or **"use
 previous for all, without confirming"** — the same remembered values, but applied to every field
-immediately with no per-field prompt at all, landing straight on the same Choose/Cancel prompt an
-ordinary walk ends on (it still doesn't click Choose itself — only the per-field confirms are
-skipped, not the modal's own final action). A field that's never had a value applied simply opens
-blank even in "use previous" mode (or is left untouched in the without-confirming mode), and a
-remembered select value that no longer matches any real option falls back to the field's own actual
-current value rather than guessing. Every field type is remembered (select, checkbox, number, text)
-— a skipped field (bare Enter, nothing typed, or nothing remembered in the without-confirming mode)
-is never recorded, so its own previously remembered value survives untouched. This is a **separate** mechanism from the four modals' existing "modal memory"
-(above) — deliberately not a reuse of it, since branch fitting is excluded from that one entirely
-(its own field-memory lives in `boon-duct-workbench`) and that one only ever silently auto-fills
-select/checkbox fields with no choice offered. `__RW._cmdModalWalkValueMemory` is a plain
-console-inspectable object (`{tool: {param: value}}`), persisted the same way modal memory is
-(`localStorage`, survives a reload); `__RW._cmdModalWalkMemoryClear(tool)` forgets one tool's
-values or everything with no argument; `__RW._cmdModalWalkMemoryEnabled = false` turns off both the
-offer and remembering new values (the walk itself still works, always starting fresh).
+immediately with no per-field prompt at all, landing straight on the same Choose/Cancel-equivalent
+prompt an ordinary walk ends on (it still doesn't click the submit action itself — only the
+per-field confirms are skipped, not the modal's own final action). A field that's never had a value
+applied simply opens blank even in "use previous" mode (or is left untouched in the
+without-confirming mode), and a remembered select value that no longer matches any real option
+falls back to the field's own actual current value rather than guessing. Every field type is
+remembered (select, checkbox, number, text) **except riser's own Destination elevation** — an
+absolute height that a different riser is unlikely to share, and the server rejects two equal
+elevations outright, so it's always prompted fresh, starting from native's own default. A skipped
+field (bare Enter, nothing typed, or nothing remembered in the without-confirming mode) is never
+recorded, so its own previously remembered value survives untouched. Remembered values survive a
+page reload/re-paste (stored in `localStorage`, not just for the rest of this page) — write one
+value, close the loader, come back later, and it's still there. `__RW._cmdModalWalkValueMemory` is
+a plain console-inspectable object (`{tool: {param: value}}`); `__RW._cmdModalWalkMemoryClear(tool)`
+forgets one tool's values or everything with no argument; `__RW._cmdModalWalkMemoryEnabled = false`
+turns off both the offer and remembering new values (the walk itself still works, always starting
+fresh). This replaced an earlier mechanism (`RW._cmdModalMemory`) that silently auto-filled a
+modal's select/checkbox fields with no choice offered and excluded branch fitting entirely (its own
+field-memory lives in a separate, standalone repo, `boon-duct-workbench`,
+`~/Projects/boon-projects/`, with no dependency on this one in either direction) — once this walk
+memory covered all four modals there was nothing left for the older, silent one to do, so it was
+removed.
 
 **The inspector's "New system" name/service fields are typeable too** (`route.new-system-name`/
 `-service` or bare `name`/`service`) — the "Add" button (`graph-create-system`) stays a manual click

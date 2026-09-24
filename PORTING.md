@@ -102,23 +102,24 @@ Not yet extracted into its own module (still inline in `shell.js`, `RW._cmdToolS
   `store.state.activeTool` is already a plain, directly-readable value; there's no
   annotate-host-style ambiguity to resolve.
 
-### 5. Modals, walk, and both memory systems
+### 5. Modals, walk, and its value memory
 
 Not yet extracted (all in `src/console/shell.js`: `GRAPH_TOOL_MODALS`, `cmdOpenToolModal`,
-`cmdArmOrNoteModal`, `RW._cmdModalMemory*`, `RW._cmdModalWalk*`). To port:
+`cmdArmOrNoteModal`, `RW._cmdModalWalk*`). To port:
 
 - The four `elements.*Modal` references native's own `graph-session-entry.js` already
   holds (`branchFittingModal`, `checkpointTransitionModal`, `checkpointGrdModal`,
   `checkpointRiserModal` — see `openCheckpointDialog()`) are exactly
   `GRAPH_TOOL_MODALS`'s own four dialog ids.
 - Natively, replace the 250ms poll this project uses to detect a modal opening
-  (`RW._cmdModalMemoryTick`/`RW._cmdModalWalkTick`) with a real hook: native's own
-  `openCheckpointDialog()` is already called from `attemptActivateTool` and elsewhere,
-  so a modal's own `dialog.addEventListener('close', ...)`/a wrapper around whatever
-  opens it can fire this synchronously instead of polling.
+  (`RW._cmdModalWalkTick`) with a real hook: native's own `openCheckpointDialog()` is
+  already called from `attemptActivateTool` and elsewhere, so a modal's own
+  `dialog.addEventListener('close', ...)`/a wrapper around whatever opens it can fire
+  this synchronously instead of polling.
 - Branch fitting's own field-memory intentionally lives in a separate repo
   (`boon-duct-workbench`, per the user's own request) — do not port that piece from
-  here; the walk mechanism and the other three modals' ordinary memory are unaffected.
+  here; the walk mechanism and its own value memory (`RW._cmdModalWalkValueMemory`,
+  which now covers all four modals, including branch) are unaffected.
 
 ### 6. `#` system search
 

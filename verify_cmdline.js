@@ -5017,36 +5017,76 @@ function loadCoreModule(win){
     return dialog;
   }
 
-  // Round 26 fixture: a real, open branch-fitting modal with one categorical field (the Fitting
-  // type select) and one non-categorical field (Starting width, a number) — enough to exercise the
-  // remember/auto-fill split without rebuilding all seven of branch's real fields every time.
-  function makeBranchFittingFixture(win, byId){
-    const modal = makeGraphModal(win, byId, 'graph-branch-fitting-modal');
-    const typeSel = makeSelect(byId, 'graph-branch-fitting-type-select', [['tap', 'Tap'], ['wye', 'Wye']]);
-    typeSel.offsetParent = {};
-    modal.appendChild(makeGraphField(byId, 'Fitting type', typeSel));
-    const startWidth = makeElement('input', byId);
-    startWidth.id = 'graph-branch-fitting-starting-width-input'; startWidth.type = 'number'; startWidth.value = '12'; startWidth.offsetParent = {};
-    modal.appendChild(makeGraphField(byId, 'Starting width (in)', startWidth));
-    return { modal: modal, typeSel: typeSel, startWidth: startWidth };
-  }
-
-  // Round 26 follow-up: branch fitting's own modal memory was carved out into a dedicated
-  // standalone repo (boon-duct-workbench) — every remaining round-26 test that needs a live
-  // categorical field now exercises `transition` (change size) instead, via this sibling fixture.
-  // transition's own real field shapes were never individually confirmed live (same still-open
-  // item as grd/vertical), so this mirrors branch fitting's fixture shape rather than a
-  // live-confirmed one — fine, since RW._cmdModalMemory's own remember/auto-fill rule reads each
-  // control's live TYPE, never a specific id.
+  // The reducer/change-size modal's real fields, confirmed live via opencli (see CLAUDE.md/
+  // PORTING.md): a Shape select, a primary size input, a secondary size input (native hides it
+  // for a round shape, shown here by default since rectangular is the fixture's own default),
+  // and an Alignment select — plus real, usable submit/cancel buttons, same reasoning as
+  // makeBranchWalkFixture's own (cmdActionUsable needs offsetParent set to offer them).
   function makeTransitionFixture(win, byId){
     const modal = makeGraphModal(win, byId, 'graph-checkpoint-transition-modal');
-    const sizeSel = makeSelect(byId, 'graph-checkpoint-transition-size-select', [['reducer', 'Reducer'], ['increaser', 'Increaser']]);
-    sizeSel.offsetParent = {};
-    modal.appendChild(makeGraphField(byId, 'Change type', sizeSel));
-    const newWidth = makeElement('input', byId);
-    newWidth.id = 'graph-checkpoint-transition-new-width-input'; newWidth.type = 'number'; newWidth.value = '10'; newWidth.offsetParent = {};
-    modal.appendChild(makeGraphField(byId, 'New width (in)', newWidth));
-    return { modal: modal, sizeSel: sizeSel, newWidth: newWidth };
+    const shapeSel = makeSelect(byId, 'graph-checkpoint-transition-shape', [['rectangular', 'Rectangular'], ['round', 'Round']]);
+    shapeSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Shape', shapeSel));
+    const primary = makeElement('input', byId);
+    primary.id = 'graph-checkpoint-transition-primary-input'; primary.type = 'number'; primary.value = '12'; primary.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Width (in)', primary));
+    const secondary = makeElement('input', byId);
+    secondary.id = 'graph-checkpoint-transition-secondary-input'; secondary.type = 'number'; secondary.value = '8'; secondary.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Height (in)', secondary));
+    const alignmentSel = makeSelect(byId, 'graph-checkpoint-transition-alignment', [['center', 'Center'], ['left', 'Left'], ['right', 'Right']]);
+    alignmentSel.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Alignment', alignmentSel));
+    const applyBtn = makeElement('button', byId);
+    applyBtn.id = 'graph-checkpoint-transition-submit'; applyBtn.offsetParent = {};
+    modal.appendChild(applyBtn);
+    const cancelBtn = makeElement('button', byId);
+    cancelBtn.id = 'graph-checkpoint-transition-cancel'; cancelBtn.offsetParent = {};
+    modal.appendChild(cancelBtn);
+    return { modal: modal, shapeSel: shapeSel, primary: primary, secondary: secondary, alignmentSel: alignmentSel, applyBtn: applyBtn, cancelBtn: cancelBtn };
+  }
+
+  // The GRD placement modal's real fields, confirmed live: one optional Airflow number
+  // (min 0, native clears it to "" on every open) — plus real, usable submit/cancel buttons.
+  function makeGrdFixture(win, byId){
+    const modal = makeGraphModal(win, byId, 'graph-checkpoint-grd-modal');
+    const airflow = makeElement('input', byId);
+    airflow.id = 'graph-checkpoint-grd-airflow-input'; airflow.type = 'number'; airflow.min = '0'; airflow.value = ''; airflow.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Airflow (CFM) (optional)', airflow));
+    const placeBtn = makeElement('button', byId);
+    placeBtn.id = 'graph-checkpoint-grd-submit'; placeBtn.offsetParent = {};
+    modal.appendChild(placeBtn);
+    const cancelBtn = makeElement('button', byId);
+    cancelBtn.id = 'graph-checkpoint-grd-cancel'; cancelBtn.offsetParent = {};
+    modal.appendChild(cancelBtn);
+    return { modal: modal, airflow: airflow, placeBtn: placeBtn, cancelBtn: cancelBtn };
+  }
+
+  // The riser elevation modal's real fields, confirmed live: a Shape select (native hides it
+  // entirely for a plain vertical elbow — `hideShape` models that the same way the branch
+  // walk's own conditional-field test does, by leaving offsetParent unset rather than by
+  // setting the wrapping label's `.hidden`, since cmdIsVisible/RW._cmdToolSettingsList's
+  // default view check the CONTROL's own offsetParent, never its label's `hidden` attribute)
+  // and a Destination elevation number, which native prefills with its own default (current
+  // elevation ±10 for an elbow) — modeled here as already carrying a non-empty default, same
+  // as the real dialog always does, so a walk test starting from "nothing typed yet" matches
+  // what a real open actually looks like.
+  function makeRiserFixture(win, byId, opts){
+    const hideShape = !!(opts && opts.hideShape);
+    const modal = makeGraphModal(win, byId, 'graph-checkpoint-riser-modal');
+    const shapeSel = makeSelect(byId, 'graph-checkpoint-riser-shape', [['rectangular', 'Rectangular'], ['round', 'Round']]);
+    if (!hideShape) shapeSel.offsetParent = {};
+    const shapeField = makeGraphField(byId, 'Shape', shapeSel);
+    modal.appendChild(shapeField);
+    const elevation = makeElement('input', byId);
+    elevation.id = 'graph-checkpoint-riser-elevation-input'; elevation.type = 'number'; elevation.value = '22'; elevation.offsetParent = {};
+    modal.appendChild(makeGraphField(byId, 'Destination elevation (ft)', elevation));
+    const submitBtn = makeElement('button', byId);
+    submitBtn.id = 'graph-checkpoint-riser-submit'; submitBtn.offsetParent = {};
+    modal.appendChild(submitBtn);
+    const cancelBtn = makeElement('button', byId);
+    cancelBtn.id = 'graph-checkpoint-riser-cancel'; cancelBtn.offsetParent = {};
+    modal.appendChild(cancelBtn);
+    return { modal: modal, shapeSel: shapeSel, shapeField: shapeField, elevation: elevation, submitBtn: submitBtn, cancelBtn: cancelBtn };
   }
 
   // Round 28 fixture: a branch fitting modal with all four field TYPES the walk has to
@@ -6155,184 +6195,6 @@ function loadCoreModule(win){
        'the annotate host\'s own vocabulary is untouched by a graph-only gate');
   }
 
-  /* ---------- 268. round 26: writing a SELECT field inside transition's own open modal is remembered (in-memory and persisted) ---------- */
-  // Round 26 follow-up: was branch fitting's own modal — branch was carved out into a dedicated
-  // standalone repo (boon-duct-workbench), so this and its siblings below now exercise
-  // `transition` (change size) instead. See test 277 for branch's own exclusion.
-  {
-    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
-    const fakeLS = makeFakeLocalStorage();
-    win.localStorage = fakeLS;
-    loadModule(win, null, null, { activeTool: 'transition' });
-    const RW = win.__RW;
-    makeTransitionFixture(win, byId);
-
-    RW._cmdApplySetting('transition', 'size-select', 'increaser');
-    ok(RW._cmdModalMemory.transition && RW._cmdModalMemory.transition['size-select'] === 'increaser',
-       'the select write is remembered in RW._cmdModalMemory, keyed by tool and param');
-    const rawPersisted = fakeLS.getItem('rw_graph_modal_memory_v1');
-    const persisted = rawPersisted ? JSON.parse(rawPersisted) : null;
-    ok(!!persisted && !!persisted.transition && persisted.transition['size-select'] === 'increaser',
-       'and persisted to localStorage under the same shape');
-  }
-
-  /* ---------- 269. round 26: writing a NUMBER field inside the same modal is NOT remembered — only select/checkbox are ---------- */
-  {
-    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
-    win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'transition' });
-    const RW = win.__RW;
-    makeTransitionFixture(win, byId);
-
-    RW._cmdApplySetting('transition', 'new-width-input', '20');
-    ok(!RW._cmdModalMemory.transition || RW._cmdModalMemory.transition['new-width-input'] === undefined,
-       'a numeric field — more likely to differ duct to duct — is never remembered');
-  }
-
-  /* ---------- 270. round 26: writing a select/checkbox field in the ORDINARY (non-modal) inspector is NOT remembered — scoped to "branch windows" only ---------- */
-  {
-    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
-    win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'route' });
-    const RW = win.__RW;
-    const inspector = makeGraphInspector(win, byId);
-    const gaugeSel = makeSelect(byId, 'graph-gauge-select', [['26', '26ga'], ['24', '24ga']]);
-    gaugeSel.offsetParent = {};
-    inspector.appendChild(makeGraphField(byId, 'Gauge', gaugeSel));
-
-    RW._cmdApplySetting('route', 'gauge-select', '24');
-    ok(!RW._cmdModalMemory.route,
-       'a select field on the ordinary always-visible inspector (no modal open) is never remembered — this only applies inside the four config-dialog modals');
-  }
-
-  /* ---------- 271. round 26: opening the modal auto-fills a remembered value, and reports one combined status ---------- */
-  {
-    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
-    win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'transition' });
-    const RW = win.__RW;
-    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
-    const fixture = makeTransitionFixture(win, byId);
-    ok(fixture.sizeSel.value === 'reducer', 'sanity: the field starts on its own default, not the remembered value');
-
-    RW._cmdModalMemoryTick();
-    ok(fixture.sizeSel.value === 'increaser', 'the remembered value was applied to the real control the moment the modal was detected open');
-    ok(RW._lastStatus.indexOf('transition') !== -1 && RW._lastStatus.indexOf('auto-filled') !== -1 && RW._lastStatus.indexOf('Change type') !== -1,
-       'one combined status names the tool and the field(s) that were filled in');
-  }
-
-  /* ---------- 272. round 26: auto-fill only fires ONCE per open — it does not re-apply or re-report every tick while the modal stays open ---------- */
-  {
-    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
-    win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'transition' });
-    const RW = win.__RW;
-    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
-    const fixture = makeTransitionFixture(win, byId);
-
-    RW._cmdModalMemoryTick();
-    fixture.sizeSel.value = 'reducer'; // simulate the user changing it back by hand after the auto-fill
-    RW._lastStatus = '';
-    RW._cmdModalMemoryTick(); // still open — must NOT re-apply over the user's own change
-    ok(fixture.sizeSel.value === 'reducer', 'a second tick while the SAME modal stays open does not re-apply the remembered value');
-    ok(RW._lastStatus === '', 'and does not re-report the auto-fill status either');
-  }
-
-  /* ---------- 273. round 26: RW._cmdModalMemoryEnabled = false disables both remembering and auto-fill ---------- */
-  {
-    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
-    win.localStorage = makeFakeLocalStorage();
-    loadModule(win, null, null, { activeTool: 'transition' });
-    const RW = win.__RW;
-    RW._cmdModalMemoryEnabled = false;
-    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' } };
-    const fixture = makeTransitionFixture(win, byId);
-
-    RW._cmdModalMemoryTick();
-    ok(fixture.sizeSel.value === 'reducer', 'auto-fill is skipped entirely with the hatch off');
-
-    RW._cmdApplySetting('transition', 'size-select', 'increaser');
-    ok(RW._cmdModalMemory.transition['size-select'] === undefined || Object.keys(RW._cmdModalMemory.transition || {}).length === 1,
-       'and a fresh write is not (re-)remembered either — the pre-seeded value above is untouched, nothing new is added');
-  }
-
-  /* ---------- 274. round 26: RW._cmdModalMemoryClear clears one tool, or everything with no argument ---------- */
-  {
-    const { win } = makeStubWindow({ host: GRAPH_HOST });
-    const fakeLS = makeFakeLocalStorage();
-    win.localStorage = fakeLS;
-    loadModule(win, null, null, { activeTool: 'transition' });
-    const RW = win.__RW;
-    RW._cmdModalMemory = { transition: { 'size-select': 'increaser' }, grd: { 'type-select': 'ceiling' } };
-
-    RW._cmdModalMemoryClear('transition');
-    ok(!RW._cmdModalMemory.transition, '"transition" alone is cleared');
-    ok(!!RW._cmdModalMemory.grd, 'a different tool\'s memory is untouched');
-    ok(JSON.parse(fakeLS.getItem('rw_graph_modal_memory_v1')).transition === undefined, 'the clear is persisted too');
-
-    RW._cmdModalMemoryClear();
-    ok(Object.keys(RW._cmdModalMemory).length === 0, 'no argument clears everything');
-  }
-
-  /* ---------- 275. round 26: a value remembered in one page load is auto-filled in a later one that shares the same browser storage ---------- */
-  // Simulates "next instance" most literally: two separate loadModule() calls
-  // (two separate page loads/reloads) sharing one fake localStorage instance.
-  {
-    const sharedLS = makeFakeLocalStorage();
-
-    const { win: winA, byId: byIdA } = makeStubWindow({ host: GRAPH_HOST });
-    winA.localStorage = sharedLS;
-    loadModule(winA, null, null, { activeTool: 'transition' });
-    makeTransitionFixture(winA, byIdA);
-    winA.__RW._cmdApplySetting('transition', 'size-select', 'increaser');
-
-    const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
-    winB.localStorage = sharedLS; // "the same browser" — reload/re-paste, not a fresh browser profile
-    loadModule(winB, null, null, { activeTool: 'transition' });
-    ok(winB.__RW._cmdModalMemory.transition && winB.__RW._cmdModalMemory.transition['size-select'] === 'increaser',
-       'the freshly-loaded instance already has the remembered value on startup, before anything is typed');
-
-    const fixtureB = makeTransitionFixture(winB, byIdB);
-    winB.__RW._cmdModalMemoryTick();
-    ok(fixtureB.sizeSel.value === 'increaser', 'and auto-fills it into the real control once its own modal is detected open — no re-typing needed');
-  }
-
-  /* ---------- 276. round 26: no localStorage available — remembering/loading never throws, falls back to in-memory only ---------- */
-  {
-    const { win, byId } = makeStubWindow({ host: GRAPH_HOST }); // no win.localStorage at all — the default
-    let threw = false;
-    let RW;
-    try {
-      loadModule(win, null, null, { activeTool: 'transition' });
-      RW = win.__RW;
-      makeTransitionFixture(win, byId);
-      RW._cmdApplySetting('transition', 'size-select', 'increaser');
-    } catch (e) { threw = true; }
-    ok(!threw, 'no localStorage on the page never throws, on load or on write');
-    ok(RW._cmdModalMemory.transition && RW._cmdModalMemory.transition['size-select'] === 'increaser',
-       'the value is still remembered in-memory for the rest of this page — it just will not survive a reload');
-  }
-
-  /* ---------- 277. round 26 follow-up: branch fitting's own memory is EXCLUDED — carved out into a dedicated standalone repo (boon-duct-workbench) ---------- */
-  {
-    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
-    const fakeLS = makeFakeLocalStorage();
-    win.localStorage = fakeLS;
-    loadModule(win, null, null, { activeTool: 'branch' });
-    const RW = win.__RW;
-    const fixture = makeBranchFittingFixture(win, byId);
-
-    RW._cmdApplySetting('branch', 'type-select', 'wye');
-    ok(!RW._cmdModalMemory.branch, 'a select write inside branch\'s own modal is no longer remembered at all');
-    const rawPersisted = fakeLS.getItem('rw_graph_modal_memory_v1');
-    ok(!rawPersisted || !JSON.parse(rawPersisted).branch, 'nor persisted');
-
-    RW._cmdModalMemory = { branch: { 'type-select': 'wye' } }; // even a manually-seeded value (e.g. old data from before this round)
-    fixture.typeSel.value = 'tap';
-    RW._cmdModalMemoryTick();
-    ok(fixture.typeSel.value === 'tap', 'is never auto-filled either — branch\'s own dedicated repo is the only place this now lives');
-  }
-
   /* ---------- 278. round 27: derives the real duct toolbar, badges and all ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
@@ -6565,22 +6427,186 @@ function loadCoreModule(win){
     ok(inp.value === 'something the user is mid-typing', 'a second tick while the SAME modal stays open never touches the bar again');
   }
 
-  /* ---------- 290. round 28: scoped to branch fitting only — a transition modal opening does not start a walk ---------- */
+  /* ---------- 290. change size/GRD/riser walk: opening the reducer modal walks all four real fields in order and ends on apply/cancelsize ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'transition' });
     const RW = win.__RW;
-    makeTransitionFixture(win, byId);
+    const fx = makeTransitionFixture(win, byId);
     const inp = byId['rw-cmd-input'];
 
     RW._cmdModalWalkTick();
+    ok(inp.value === 'transition.shape = ', 'field 1 (Shape) opens on its own, no keystroke needed — the walk now covers change size, not just branch');
+    ok(RW._lastStatus.indexOf('1/4') !== -1, 'reports progress (field 1) against all 4 currently-visible fields (rectangular default: both size fields shown)');
 
-    ok(inp.value === '', 'no walk starts for a modal outside MODAL_WALK_TOOLS');
-    ok(inp._focused !== true, 'the bar is never focused either');
-    ok(RW._cmdModalWalk === null, 'RW._cmdModalWalk stays null');
+    inp._fire('keydown', { key: 'Enter' }); // keep current shape (rectangular), advance
+    ok(inp.value === 'transition.primary-input = ', 'field 2 (Width)');
+    inp.value = 'transition.primary-input = 14';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.primary.value === '14', 'applied to the real control');
+
+    ok(inp.value === 'transition.secondary-input = ', 'field 3 (Height) — still visible, rectangular shape');
+    inp._fire('keydown', { key: 'Enter' }); // skip
+    ok(inp.value === 'transition.alignment = ', 'field 4 (Alignment)');
+    inp._fire('keydown', { key: 'Enter' }); // skip
+
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 2 && rows[0].innerText.indexOf('apply') === 0 && rows[1].innerText.indexOf('cancelsize') === 0,
+       'the walk ends on the change-size dialog\'s own apply/cancelsize prompt, not branch\'s choose/cancelbranch');
+    ok(fx.applyBtn._clicked === 0, 'apply was never actually clicked');
   }
 
-  /* ---------- 291. round 28: a typed value on each field type walks select -> number -> checkbox -> select, writing every real control ---------- */
+  /* ---------- 291. change size walk: switching to round hides the secondary size field, and the walk skips over it entirely ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    const fx = makeTransitionFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick(); // field 1: shape
+    fx.secondary.offsetParent = null; // simulate native's own onShapeChange hiding it for round, same idiom as branch's flush-boot fields
+    inp.value = 'transition.shape = round';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+
+    ok(inp.value === 'transition.primary-input = ', 'field 2 (the one remaining size field, now labeled for a diameter in the real app)');
+    inp._fire('keydown', { key: 'Enter' }); // skip
+    ok(inp.value === 'transition.alignment = ', 'secondary-input is skipped over entirely — straight to Alignment, the next currently-visible field');
+  }
+
+  /* ---------- 292. change size walk: a value remembered in one load offers "use previous" the next time the SAME modal opens ---------- */
+  {
+    const sharedLS = makeFakeLocalStorage();
+    const { win: winA, byId: byIdA } = makeStubWindow({ host: GRAPH_HOST });
+    winA.localStorage = sharedLS;
+    loadModule(winA, null, null, { activeTool: 'transition' });
+    makeTransitionFixture(winA, byIdA);
+    const inpA = byIdA['rw-cmd-input'];
+    winA.__RW._cmdModalWalkTick();
+    inpA.value = 'transition.shape = round';
+    inpA.dispatchEvent({ type: 'input' });
+    inpA._fire('keydown', { key: 'Enter' }); // shape applied, remembered
+
+    const { win: winB, byId: byIdB } = makeStubWindow({ host: GRAPH_HOST });
+    winB.localStorage = sharedLS;
+    loadModule(winB, null, null, { activeTool: 'transition' });
+    makeTransitionFixture(winB, byIdB);
+    const inpB = byIdB['rw-cmd-input'];
+    winB.__RW._cmdModalWalkTick();
+
+    ok(inpB.value === '', 'the walk does not jump straight into field 1 this time');
+    const rows = byIdB['rw-cmd-menu']._children;
+    ok(rows.length === 3 && rows[0].innerText === 'Edit each field', 'the same Edit/reuse offer branch fitting already has is now offered for change size too');
+  }
+
+  /* ---------- 293. GRD walk: a single Airflow prompt, ending on place/cancelgrd — and the value is remembered for next time ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'grd' });
+    const RW = win.__RW;
+    const fx = makeGrdFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(inp.value === 'grd.airflow-input = ', 'the walk opens the one real GRD field, Airflow');
+    ok(RW._lastStatus.indexOf('1/1') !== -1, 'progress reports the modal\'s own single field');
+
+    inp.value = 'grd.airflow-input = 400';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.airflow.value === '400', 'applied to the real control');
+
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 2 && rows[0].innerText.indexOf('place') === 0 && rows[1].innerText.indexOf('cancelgrd') === 0,
+       'ends on place/cancelgrd, GRD\'s own actions');
+    ok(RW._cmdModalWalkValueMemory.grd && RW._cmdModalWalkValueMemory.grd['airflow-input'] === '400',
+       'the applied airflow is remembered for the next time this modal opens');
+  }
+
+  /* ---------- 294. riser walk: Shape then Destination elevation, in on-screen order — elevation is never remembered ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'vertical' });
+    const RW = win.__RW;
+    const fx = makeRiserFixture(win, byId);
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(inp.value === 'vertical.shape = ', 'field 1: Shape (visible for this fixture — a riser placed with a known duct shape)');
+    inp.value = 'vertical.shape = round';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.shapeSel.value === 'round', 'shape applied');
+
+    ok(inp.value === 'vertical.elevation-input = ', "field 2: Destination elevation — opens with NO prefill even though the fixture's own default (\"22\") is non-empty, since a walk field always starts from the bar's own empty draft, not the control's live value");
+    inp.value = 'vertical.elevation-input = 35';
+    inp.dispatchEvent({ type: 'input' });
+    inp._fire('keydown', { key: 'Enter' });
+    ok(fx.elevation.value === '35', 'applied to the real control');
+
+    ok(RW._cmdModalWalkValueMemory.vertical && RW._cmdModalWalkValueMemory.vertical.shape === 'round',
+       'shape is remembered, like any other select field');
+    ok(!('elevation-input' in (RW._cmdModalWalkValueMemory.vertical || {})),
+       'elevation is deliberately never remembered — MODAL_WALK_MEMORY_SKIP — since it\'s an absolute height that a different riser is very unlikely to share, and the server rejects two equal elevations outright');
+
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 2 && rows[0].innerText.indexOf('placeriser') === 0 && rows[1].innerText.indexOf('cancelriser') === 0,
+       'ends on placeriser/cancelriser');
+  }
+
+  /* ---------- 295. riser walk: a plain vertical elbow hides the Shape field entirely — only elevation is walked ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'vertical' });
+    const RW = win.__RW;
+    const fx = makeRiserFixture(win, byId, { hideShape: true });
+    const inp = byId['rw-cmd-input'];
+
+    RW._cmdModalWalkTick();
+    ok(inp.value === 'vertical.elevation-input = ', 'Shape is hidden for this fixture, so the walk starts directly on elevation, the only real field left');
+
+    inp._fire('keydown', { key: 'Enter' }); // skip
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 2 && rows[0].innerText.indexOf('placeriser') === 0, 'a single-field walk still ends on the same placeriser/cancelriser prompt');
+    ok(fx.shapeSel.value === 'rectangular', 'the hidden shape control was never touched');
+  }
+
+  /* ---------- 296. riser walk: "use previous for all, without confirming" applies remembered shape immediately but still prompts fresh for elevation ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'vertical' });
+    const RW = win.__RW;
+    RW._cmdModalWalkValueMemory = { vertical: { shape: 'round' } }; // elevation was never recorded to begin with — nothing to remember
+    const fx = makeRiserFixture(win, byId);
+
+    RW._cmdModalWalkTick();
+    const rows = byId['rw-cmd-menu']._children;
+    ok(rows.length === 3, 'the reuse offer is shown, same as any other tool with something remembered');
+    rows[2]._fire('click', {}); // "use previous for all, without confirming"
+
+    ok(fx.shapeSel.value === 'round', 'the remembered shape was applied immediately');
+    ok(fx.elevation.value === '22', "elevation was never remembered, so cmdWalkAutoApplyAll leaves it at the fixture's own current value — untouched, exactly the same outcome as skipping it in a confirming walk");
+    const endRows = byId['rw-cmd-menu']._children;
+    ok(endRows.length === 2 && endRows[0].innerText.indexOf('placeriser') === 0, 'still lands on the ordinary placeriser/cancelriser prompt — the final action always stays a deliberate Enter');
+  }
+
+  /* ---------- 297. the old round-26 silent auto-fill is gone: opening any of the four dialogs never writes a field on its own, without a walk step ---------- */
+  {
+    const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
+    loadModule(win, null, null, { activeTool: 'transition' });
+    const RW = win.__RW;
+    ok(RW._cmdModalMemory === undefined, 'RW._cmdModalMemory no longer exists at all — the walk\'s own memory is the only mechanism left');
+    ok(RW._cmdModalMemoryTick === undefined, 'and neither does its own tick function');
+    const fx = makeTransitionFixture(win, byId);
+
+    RW._cmdModalWalkTick(); // the walk itself opens field 1's prompt, but must not silently WRITE anything on its own
+    ok(fx.shapeSel.value === 'rectangular' && fx.primary.value === '12' && fx.secondary.value === '8' && fx.alignmentSel.value === 'center',
+       'every real control is untouched — a value only ever changes once the walk\'s own confirm step actually applies it');
+  }
+
+  /* ---------- 298. round 28: a typed value on each field type walks select -> number -> checkbox -> select, writing every real control ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6611,7 +6637,7 @@ function loadCoreModule(win){
     ok(fx.alignmentSel.value === 'bottom', 'field 4 (select) was applied, completing the walk');
   }
 
-  /* ---------- 292. round 28: Enter with nothing typed leaves the field untouched and advances — it is a skip, not a re-apply ---------- */
+  /* ---------- 299. round 28: Enter with nothing typed leaves the field untouched and advances — it is a skip, not a re-apply ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6629,7 +6655,7 @@ function loadCoreModule(win){
     ok(inp.value === 'branch.damper-check = ', 'and advances to field 3');
   }
 
-  /* ---------- 293. round 28: a Tab-previewed select is KEPT on a bare Enter, not treated as a skip ---------- */
+  /* ---------- 300. round 28: a Tab-previewed select is KEPT on a bare Enter, not treated as a skip ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6646,7 +6672,7 @@ function loadCoreModule(win){
     ok(inp.value === 'branch.starting-width-input = ', 'and the walk still advances normally');
   }
 
-  /* ---------- 294. round 28: a walk-driven checkbox is a typed on/off draft, never an immediate auto-toggle ---------- */
+  /* ---------- 301. round 28: a walk-driven checkbox is a typed on/off draft, never an immediate auto-toggle ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6665,7 +6691,7 @@ function loadCoreModule(win){
     ok(fx.damper.checked === true, 'typing "on" and confirming it DOES flip the real control');
   }
 
-  /* ---------- 295. round 28: the walk ends on a Choose/Cancel prompt, never clicking Choose automatically ---------- */
+  /* ---------- 302. round 28: the walk ends on a Choose/Cancel prompt, never clicking Choose automatically ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6688,7 +6714,7 @@ function loadCoreModule(win){
     ok(fx.chooseBtn._clicked === 1, 'one further, deliberate Enter now actually clicks Choose');
   }
 
-  /* ---------- 296. round 28: an unusable Choose button is left off the end-of-walk prompt, same as the ordinary dropdown ---------- */
+  /* ---------- 303. round 28: an unusable Choose button is left off the end-of-walk prompt, same as the ordinary dropdown ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6705,7 +6731,7 @@ function loadCoreModule(win){
     ok(rows[0].style.cssText.indexOf('rgba(255,140,0,0.3)') !== -1, 'and it is the one highlighted, since it is now the only option');
   }
 
-  /* ---------- 297. round 28: the next field is re-discovered live on every hop, not snapshotted at walk-start ---------- */
+  /* ---------- 304. round 28: the next field is re-discovered live on every hop, not snapshotted at walk-start ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6724,7 +6750,7 @@ function loadCoreModule(win){
     ok(inp.value === 'branch.alignment-select = ', "and it IS picked up the moment it becomes visible, on the very next hop — the field list is re-read live, not frozen at walk-start");
   }
 
-  /* ---------- 298. round 28: Escape mid-walk ends the WHOLE walk, and it cannot be resumed by a later Enter ---------- */
+  /* ---------- 305. round 28: Escape mid-walk ends the WHOLE walk, and it cannot be resumed by a later Enter ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6750,7 +6776,7 @@ function loadCoreModule(win){
     ok(RW._cmdModalWalk === null, 'and RW._cmdModalWalk is still null');
   }
 
-  /* ---------- 299. round 28: the modal closing mid-walk (e.g. the app's own Cancel clicked by mouse) tears the walk down quietly ---------- */
+  /* ---------- 306. round 28: the modal closing mid-walk (e.g. the app's own Cancel clicked by mouse) tears the walk down quietly ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6768,7 +6794,7 @@ function loadCoreModule(win){
     ok(inp.value === '', 'the bar is cleared rather than left on a field that no longer exists');
   }
 
-  /* ---------- 300. round 28: RW._cmdModalWalkEnabled = false disables auto-start only ---------- */
+  /* ---------- 307. round 28: RW._cmdModalWalkEnabled = false disables auto-start only ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6784,7 +6810,7 @@ function loadCoreModule(win){
     ok(inp.value === 'branch.type-select = ', 'and it opens the first field exactly like the auto-start path would');
   }
 
-  /* ---------- 301. round 28: clicking an option row with the mouse continues the walk exactly like pressing Enter does ---------- */
+  /* ---------- 308. round 28: clicking an option row with the mouse continues the walk exactly like pressing Enter does ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6801,7 +6827,7 @@ function loadCoreModule(win){
     ok(inp.value === 'branch.starting-width-input = ', 'and — unlike a plain click outside a walk — it also advanced to the next field rather than clearing/blurring');
   }
 
-  /* ---------- 302. round 28 regression guard: `dimension`'s own chain is unaffected — no walk state is created, and an empty value still stops it (not skips it) ---------- */
+  /* ---------- 309. round 28 regression guard: `dimension`'s own chain is unaffected — no walk state is created, and an empty value still stops it (not skips it) ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'route' });
@@ -6823,7 +6849,7 @@ function loadCoreModule(win){
     ok(inp.value === '' && !inp._focused, 'and the chain stops right there, exactly as it always has');
   }
 
-  /* ---------- 303. round 29: with no memory at all, the walk still jumps straight to field 1 — zero regression on round 28's own behavior ---------- */
+  /* ---------- 310. round 29: with no memory at all, the walk still jumps straight to field 1 — zero regression on round 28's own behavior ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6838,7 +6864,7 @@ function loadCoreModule(win){
     ok(RW._cmdModalWalk && RW._cmdModalWalk.reuse === false, 'and it is running in non-reuse mode');
   }
 
-  /* ---------- 304. round 29: completing a walk records every APPLIED field's value — a SKIPPED field is never recorded ---------- */
+  /* ---------- 311. round 29: completing a walk records every APPLIED field's value — a SKIPPED field is never recorded ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6859,9 +6885,9 @@ function loadCoreModule(win){
        'the skipped field is never recorded');
   }
 
-  /* ---------- 305. round 29: a value remembered in one page load offers "use previous" the next time the SAME modal opens in a later load ---------- */
+  /* ---------- 312. round 29: a value remembered in one page load offers "use previous" the next time the SAME modal opens in a later load ---------- */
   // Same "two separate loadModule() calls sharing one fake localStorage instance" idiom as
-  // round 26's own persistence test (274/275).
+  // test 292's own change-size persistence check.
   {
     const sharedLS = makeFakeLocalStorage();
 
@@ -6893,7 +6919,7 @@ function loadCoreModule(win){
     ok(winB.__RW._cmdModalWalk === null, 'and no walk has actually started yet — nothing was chosen');
   }
 
-  /* ---------- 306. round 29: choosing "Edit each field" opens field 1 blank, same as a fresh walk with no memory ---------- */
+  /* ---------- 313. round 29: choosing "Edit each field" opens field 1 blank, same as a fresh walk with no memory ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6911,7 +6937,7 @@ function loadCoreModule(win){
     ok(RW._cmdModalWalk && RW._cmdModalWalk.reuse === false, 'the walk is now actually running, in non-reuse mode');
   }
 
-  /* ---------- 307. round 29: choosing "use previous for all" pre-fills each remembered field; Enter applies it and advances ---------- */
+  /* ---------- 314. round 29: choosing "use previous for all" pre-fills each remembered field; Enter applies it and advances ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6935,7 +6961,7 @@ function loadCoreModule(win){
     ok(fx.startWidth.value === '18', 'and applying it writes the real control too');
   }
 
-  /* ---------- 308. round 29: mid-reuse-walk, a field with nothing remembered for it opens blank ---------- */
+  /* ---------- 315. round 29: mid-reuse-walk, a field with nothing remembered for it opens blank ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6952,7 +6978,7 @@ function loadCoreModule(win){
     ok(inp.value === 'branch.starting-width-input = ', 'field 2 has no remembered value, so it opens blank, exactly like a non-reuse walk');
   }
 
-  /* ---------- 309. round 29: a remembered select value that no longer matches any current option falls back to the ordinary current-value highlight ---------- */
+  /* ---------- 316. round 29: a remembered select value that no longer matches any current option falls back to the ordinary current-value highlight ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6971,7 +6997,7 @@ function loadCoreModule(win){
        "the field's own actual CURRENT value (\"Tap\") is highlighted instead, same as an ordinary walk would show");
   }
 
-  /* ---------- 310. round 29: RW._cmdModalWalkMemoryEnabled = false disables both the offer and remembering new/updated values ---------- */
+  /* ---------- 317. round 29: RW._cmdModalWalkMemoryEnabled = false disables both the offer and remembering new/updated values ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -6998,7 +7024,7 @@ function loadCoreModule(win){
     ok(!('damper-check' in RW._cmdModalWalkValueMemory.branch), 'and a genuinely new value is not recorded either');
   }
 
-  /* ---------- 311. round 29: RW._cmdModalWalkMemoryClear clears one tool's memory, or everything with no argument ---------- */
+  /* ---------- 318. round 29: RW._cmdModalWalkMemoryClear clears one tool's memory, or everything with no argument ---------- */
   {
     const { win } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -7014,7 +7040,7 @@ function loadCoreModule(win){
     ok(Object.keys(RW._cmdModalWalkValueMemory).length === 0, 'clearing with no argument wipes everything');
   }
 
-  /* ---------- 312. round 29: ignoring the offer leaves no walk state behind, and the unchanged edge does not re-show it ---------- */
+  /* ---------- 319. round 29: ignoring the offer leaves no walk state behind, and the unchanged edge does not re-show it ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -7034,7 +7060,7 @@ function loadCoreModule(win){
     ok(inp.value === 'select', 'the offer is not re-shown — the edge has not changed, so the bar is left exactly as the user typed it');
   }
 
-  /* ---------- 313. round 29 follow-up: "use previous for all, without confirming" applies every remembered field immediately, no per-field prompt ---------- */
+  /* ---------- 320. round 29 follow-up: "use previous for all, without confirming" applies every remembered field immediately, no per-field prompt ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });
@@ -7060,7 +7086,7 @@ function loadCoreModule(win){
     ok(fx.chooseBtn._clicked === 0, 'Choose has still NOT been clicked automatically — only the per-field confirms were skipped, not the final action');
   }
 
-  /* ---------- 314. round 29 follow-up: applying without confirming still records into walk-value memory, re-reading the control's own live value rather than trusting the remembered one blindly ---------- */
+  /* ---------- 321. round 29 follow-up: applying without confirming still records into walk-value memory, re-reading the control's own live value rather than trusting the remembered one blindly ---------- */
   {
     const { win, byId } = makeStubWindow({ host: GRAPH_HOST });
     loadModule(win, null, null, { activeTool: 'branch' });

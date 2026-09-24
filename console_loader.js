@@ -1924,7 +1924,6 @@ return {isElementVisible, isActionUsable};
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       const armNote = cmdArmOrNoteModal(tool, modal);
-      cmdRememberModalValue(tool, modal, param, v ? 'on' : 'off');
       RW._commitStatus && RW._commitStatus(
         tool + '.' + param + ' set to ' + (v ? 'on' : 'off') + ' — ' + armNote + revealNote
         + (confirmed ? '' : ' (confirm it actually applied)')
@@ -1940,7 +1939,6 @@ return {isElementVisible, isActionUsable};
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       const armNote = cmdArmOrNoteModal(tool, modal);
-      cmdRememberModalValue(tool, modal, param, matched.value);
       RW._commitStatus && RW._commitStatus(
         tool + '.' + param + ' set to "' + matched.text + '" — ' + armNote + revealNote
         + (confirmed ? '' : ' (confirm it actually applied)')
@@ -1973,120 +1971,6 @@ return {isElementVisible, isActionUsable};
       + (confirmed ? '' : ' (confirm it actually applied)')
     );
     return true;
-  };
-
-  // ----- graph host only: remember & auto-fill the four config-dialog modals' own categorical fields (round 26) -----
-  // Kresna's own request, confirmed via AskUserQuestion: all four modals (branch fitting, change
-  // size, GRD placement, riser elevation) get this, persisted across reloads (localStorage), no
-  // typed command needed — the remembered fields are auto-filled the instant a modal opens.
-  //
-  // "Fields that tend to repeat" is drawn from live control TYPE (select/checkbox), not a
-  // hardcoded per-modal field list — this project's own live-discovery convention
-  // (RW._cmdToolSettingsList's id-prefix sweep, no hardcoded per-param table) applies here too,
-  // and it happens to land exactly on the split Kresna was steered toward: branch fitting's own
-  // Fitting type/Branch shape/Alignment/Damper (select/checkbox) get remembered; Starting
-  // width/Width/Height (number) don't, since those are more likely to differ duct to duct. Change
-  // size/GRD/riser's own real field shapes were never individually confirmed live (see round 19's
-  // still-open item) — this rule needs no such confirmation to be correct, since it reads each
-  // control's live type, never a specific id.
-  const GRAPH_MODAL_MEMORY_KEY = 'rw_graph_modal_memory_v1';
-
-  // window.localStorage, not a bare `localStorage` global reference — this file already relies on
-  // `window` for everything else host-environment-shaped (window.innerHeight, window.__graphDebug,
-  // ...), and it's what lets the synthetic test harness (verify_cmdline.js) supply its own fake
-  // store per test via the stub window object, with no change needed to loadModule's own sandbox
-  // globals list.
-  function cmdModalMemoryLoad(){
-    try {
-      const ls = window.localStorage;
-      const raw = ls ? ls.getItem(GRAPH_MODAL_MEMORY_KEY) : null;
-      return raw ? JSON.parse(raw) : {};
-    } catch (e){ return {}; } // private browsing / quota / disabled storage — fail to "nothing remembered", never throw
-  }
-  function cmdModalMemorySave(){
-    try { if (window.localStorage) window.localStorage.setItem(GRAPH_MODAL_MEMORY_KEY, JSON.stringify(RW._cmdModalMemory)); }
-    catch (e){ /* same fail-open — a value just won't persist past this page */ }
-  }
-  RW._cmdModalMemory = RW_IS_GRAPH ? cmdModalMemoryLoad() : {}; // {tool: {param: 'on'/'off'/<select value>}} — console-inspectable
-  RW._cmdModalMemoryEnabled = true; // console escape hatch: __RW._cmdModalMemoryEnabled = false stops both remembering and auto-filling
-  // Round 26 follow-up: branch fitting's own memory moved to a dedicated standalone repo
-  // (boon-duct-workbench, ~/Projects/boon-projects/) — no dependency in either direction, but
-  // this is now the ONE place branch's own fields are remembered, so this repo excludes it
-  // entirely rather than keep two independent copies of the same idea that could drift apart.
-  // change size/GRD/riser (transition/grd/vertical) are unaffected.
-  const MODAL_MEMORY_EXCLUDED_TOOLS = ['branch'];
-  // Console helper: clears one tool's remembered values, or everything with no argument.
-  // Clearing 'branch' is a documented no-op now — nothing is ever recorded there to begin with.
-  RW._cmdModalMemoryClear = function(tool){
-    if (tool) delete RW._cmdModalMemory[tool]; else RW._cmdModalMemory = {};
-    cmdModalMemorySave();
-  };
-
-  // Called from RW._cmdApplySetting's own checkbox/select branches right after a real write —
-  // `modal` is only truthy when that write happened while the tool's OWN config-dialog modal was
-  // open (RW._cmdApplySetting already resolves this fresh per call), which is exactly what scopes
-  // remembering to "change-size/GRD/riser windows" and not the ordinary always-visible inspector —
-  // a write to route's own `gauge-select`, say, is never remembered by this. `branch` is excluded
-  // here too (see MODAL_MEMORY_EXCLUDED_TOOLS above).
-  function cmdRememberModalValue(tool, modal, param, value){
-    if (!modal || !RW._cmdModalMemoryEnabled) return;
-    if (MODAL_MEMORY_EXCLUDED_TOOLS.indexOf(tool) !== -1) return;
-    RW._cmdModalMemory[tool] = RW._cmdModalMemory[tool] || {};
-    RW._cmdModalMemory[tool][param] = value;
-    cmdModalMemorySave();
-  }
-
-  // Silently applies a remembered value to a real control — no status line, no arm/re-arm note,
-  // no re-recording into memory (this only ever reads from it). Only ever called with type
-  // 'select'/'checkbox', the only two kinds this remembers.
-  function cmdWriteRememberedValue(el, type, value){
-    if (type === 'checkbox') el.checked = (value === 'on');
-    else el.value = value; // select — the option's own .value, exactly as stored
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
-  // Called once each time a recognized modal transitions from closed to open (see
-  // RW._cmdModalMemoryTick below) — fills in whichever of its own select/checkbox fields have a
-  // remembered value that differs from the field's current one, then reports ONE combined status
-  // line rather than spamming one per field (RW._commitStatus is a single overwritten line, not a
-  // log — see rw_core.js).
-  function cmdAutoFillModalMemory(tool){
-    if (!RW._cmdModalMemoryEnabled) return;
-    if (MODAL_MEMORY_EXCLUDED_TOOLS.indexOf(tool) !== -1) return; // branch — see its own dedicated repo instead
-    const remembered = RW._cmdModalMemory[tool];
-    if (!remembered) return;
-    const filled = [];
-    RW._cmdToolSettingsList(tool).forEach(function(item){
-      if (item.type !== 'select' && item.type !== 'checkbox') return;
-      const value = remembered[item.param];
-      if (value === undefined || value === item.current) return;
-      const el = document.getElementById(item.id);
-      if (!el) return;
-      cmdWriteRememberedValue(el, item.type, value);
-      filled.push(item.label || item.param);
-    });
-    if (filled.length){
-      RW._commitStatus && RW._commitStatus(
-        tool + ': auto-filled ' + filled.length + ' remembered field' + (filled.length === 1 ? '' : 's')
-        + ' from last time (' + filled.join(', ') + ')'
-      );
-    }
-  }
-
-  // Edge-triggered the same way RW._cmdToolWatchTick is (see below): only a transition INTO a
-  // recognized modal being open fires the auto-fill, never every tick it stays open, and never a
-  // transition to closed. Deliberately independent of RW._cmdAutoSelect (that gate is specific to
-  // the unrelated auto-select-to-select feature) — only RW.enabled and this feature's own hatch
-  // apply. Ticked from the same timer RW._cmdToolWatchTick already runs on (RW._cmdStartToolWatch
-  // below), rather than a second interval.
-  RW._cmdModalMemoryLastOpen = null;
-  RW._cmdModalMemoryTick = function(){
-    if (!RW_IS_GRAPH || !RW.enabled || !RW._cmdModalMemoryEnabled) return;
-    const cur = cmdOpenModalTool();
-    if (cur === RW._cmdModalMemoryLastOpen) return;
-    RW._cmdModalMemoryLastOpen = cur;
-    if (cur) cmdAutoFillModalMemory(cur);
   };
 
   // ----- graph host only: `dimension` — width then height, one after another (round 20) -----
@@ -2181,30 +2065,36 @@ return {isElementVisible, isActionUsable};
   // command bar should drop straight into a value prompt for its first field, then
   // chain into the next one — the same idea `dimension` already uses to go width then
   // height (above), generalized here from a fixed two-param list into however many
-  // fields a modal actually has, discovered live. Confirmed via AskUserQuestion: scoped
-  // to **branch fitting only** for now ("might expand later") — every other piece here
-  // reads its target modal from GRAPH_TOOL_MODALS, so covering one of the other three is
-  // just adding its tool name to MODAL_WALK_TOOLS below, no other change needed. Also
-  // confirmed: the walk never auto-clicks Choose — it ends on a Choose/Cancel prompt
-  // instead (cmdWalkFinish), matching this project's standing caution around graph-host
-  // action buttons, which submit real commands to the app's own autosave journal (see
-  // CLAUDE.md's Constraints) — and a bare Enter on an untouched field just skips it
-  // (handled in onInputKeydown, where the draft itself lives).
-  const MODAL_WALK_TOOLS = ['branch'];
+  // fields a modal actually has, discovered live. Originally scoped to branch fitting
+  // only, extended to change size/GRD/riser once their real field ids/order were
+  // confirmed live (all four now read GRAPH_TOOL_MODALS, so no other change was needed
+  // to cover the rest). Also confirmed: the walk never auto-clicks Choose — it ends on
+  // a Choose/Cancel prompt instead (cmdWalkFinish), matching this project's standing
+  // caution around graph-host action buttons, which submit real commands to the app's
+  // own autosave journal (see CLAUDE.md's Constraints) — and a bare Enter on an
+  // untouched field just skips it (handled in onInputKeydown, where the draft itself
+  // lives).
+  const MODAL_WALK_TOOLS = ['branch', 'transition', 'grd', 'vertical'];
   RW._cmdModalWalkEnabled = true; // console escape hatch: __RW._cmdModalWalkEnabled = false stops auto-start only; RW._cmdStartModalWalk still works by hand
 
   // ----- round 29: remember what was typed during a walk, and offer to reuse it -----
   // Kresna's own request: the next time the SAME modal opens, offer a choice — "Edit each
-  // field" or "use previous for all" — rather than starting from scratch every time. This is
-  // a DELIBERATELY SEPARATE mechanism from RW._cmdModalMemory (round 26) — not a reuse of it —
-  // for two reasons: (1) `branch` is excluded from that mechanism entirely (its own
-  // field-memory lives in a separate repo, boon-duct-workbench, per Kresna's own earlier
-  // request to split it out) and this repo's own walk-memory is explicitly meant to cover
-  // branch anyway; (2) round 26's memory silently auto-fills select/checkbox fields with no
-  // choice offered, while this remembers EVERY field type (confirmed via AskUserQuestion) and
-  // always asks first rather than silently overwriting anything. Seeing both `RW._cmdModalMemory`
-  // (excludes branch) and `RW._cmdModalWalkValueMemory` (branch's only current user) in the same
-  // file is intentional, not a leftover inconsistency — don't try to unify them.
+  // field" or "use previous for all" — rather than starting from scratch every time. This
+  // used to be a deliberately separate mechanism from an older round-26 memory that
+  // silently auto-filled a modal's select/checkbox fields with no choice offered and
+  // excluded branch fitting entirely (its own field-memory lives in a separate repo,
+  // boon-duct-workbench). That older mechanism was removed once every modal was covered
+  // by this one: it always asks first rather than silently overwriting anything, and it
+  // remembers every field type, not just select/checkbox — there was nothing left for the
+  // silent one to do that this doesn't already cover, so keeping both would have meant
+  // recording the same value twice.
+  //
+  // Riser elevation is the one field this deliberately never remembers
+  // (MODAL_WALK_MEMORY_SKIP below): it's an absolute height, the same dialog serves a
+  // plain riser, an elbow up/down, and editing an existing one, and the server rejects two
+  // equal elevations outright — a reused value from a different riser is far more likely
+  // to be wrong than right. The walk still prompts for it every time, starting from
+  // native's own default (current elevation ±10 for an elbow).
   const GRAPH_MODAL_WALK_MEMORY_KEY = 'rw_graph_modal_walk_memory_v1';
   function cmdWalkMemoryLoad(){
     try {
@@ -2227,10 +2117,19 @@ return {isElementVisible, isActionUsable};
     const t = RW._cmdModalWalkValueMemory[tool];
     return t ? t[param] : undefined;
   }
+  // Params a tool's walk should never remember, even though every other field it has
+  // is fair game — see the riser elevation reasoning above. Checked in cmdWalkMemorySet
+  // only, not cmdWalkMemoryGet: nothing is ever written for a skipped param, so there's
+  // nothing to read back either, but keeping the check on the write side (rather than
+  // e.g. filtering it out of MODAL_WALK_TOOLS entirely) means a future param on the same
+  // tool that SHOULD be remembered still works with no extra plumbing.
+  const MODAL_WALK_MEMORY_SKIP = { vertical: ['elevation-input'] };
   // Called only from cmdWalkAdvance, only on an actual apply (never a skip) — a skipped field's
   // own previously remembered value (if any) is left exactly as it was.
   function cmdWalkMemorySet(tool, param, value){
     if (!RW._cmdModalWalkMemoryEnabled) return;
+    const skip = MODAL_WALK_MEMORY_SKIP[tool];
+    if (skip && skip.indexOf(param) !== -1) return;
     RW._cmdModalWalkValueMemory[tool] = RW._cmdModalWalkValueMemory[tool] || {};
     RW._cmdModalWalkValueMemory[tool][param] = value;
     cmdWalkMemorySave();
@@ -2493,13 +2392,9 @@ return {isElementVisible, isActionUsable};
   }
 
   // Auto-starts the walk the instant a walked modal (MODAL_WALK_TOOLS) transitions from
-  // closed to open. A separate edge variable from RW._cmdModalMemoryLastOpen —
-  // deliberately not shared: branch is excluded from modal memory entirely
-  // (MODAL_MEMORY_EXCLUDED_TOOLS above), so memory's own tick never fires for it, and
-  // even for a tool that had both eventually, the two features should stay free to
-  // evolve independently rather than being coupled through one shared edge. Ticked from
-  // the same shared timer as the others (see RW._cmdStartToolWatch below), not a second
-  // interval. The mid-walk teardown below runs regardless of RW._cmdModalWalkEnabled —
+  // closed to open. Ticked from the same shared timer as RW._cmdToolWatchTick (see
+  // RW._cmdStartToolWatch below), not a second interval. The mid-walk teardown below
+  // runs regardless of RW._cmdModalWalkEnabled —
   // a walk already in progress when the hatch gets flipped off should still clean up
   // properly if its modal closes, exactly like every other "fail toward doing nothing,
   // not toward a stuck half-state" rule in this file.
@@ -2931,19 +2826,12 @@ return {isElementVisible, isActionUsable};
     RW._cmdStopToolWatch();
     resetWatchState(); // seed with the ACTUAL current value, not an assumed null, so an immediate
                         // start can never spuriously fire — a revert needs a non-null->null edge.
-    // Round 26: deliberately re-seeded to null (not the actual current state) every start — unlike
-    // resetWatchState() just above, this means a modal that's ALREADY open at the moment the
-    // loader is (re-)pasted still gets one auto-fill pass, rather than being treated as
-    // already-seen and skipped. Harmless either way if nothing's remembered yet, and idempotent
-    // if a field already matches what's remembered.
-    RW._cmdModalMemoryLastOpen = null;
-    // Round 28: same re-seed-to-null reasoning as modal memory just above, so a
-    // walked modal already open at (re-)paste time still gets its own walk started.
-    // Ticked after RW._cmdModalMemoryTick, not before — load-bearing once a tool
-    // is ever added to both MODAL_WALK_TOOLS and modal memory: memory's auto-fill
-    // must land on the real controls before the walk reads their `current` value.
+    // Round 28: deliberately re-seeded to null (not the actual current state) every start —
+    // unlike resetWatchState() just above, this means a walked modal that's ALREADY open at the
+    // moment the loader is (re-)pasted still gets its own walk started, rather than being treated
+    // as already-seen and skipped.
     RW._cmdModalWalkLastOpen = null;
-    RW._cmdToolWatchTimer = setInterval(function(){ RW._cmdToolWatchTick(); RW._cmdModalMemoryTick(); RW._cmdModalWalkTick(); }, AUTOSEL_POLL_MS);
+    RW._cmdToolWatchTimer = setInterval(function(){ RW._cmdToolWatchTick(); RW._cmdModalWalkTick(); }, AUTOSEL_POLL_MS);
   };
 
   // A separate, always-on document keydown listener (capture phase) purely

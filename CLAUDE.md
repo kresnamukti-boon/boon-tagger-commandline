@@ -303,44 +303,48 @@ has its own Choose/Cancel-equivalent action commands (branch: `choose`/`cancelbr
 size: `apply`/`cancelsize`; GRD: `place`/`cancelgrd`; riser: `placeriser`/`cancelriser`) — the `×`
 close buttons are deliberately not exposed.
 
-**Modal memory** (graph host): select/checkbox fields inside these four modals are remembered
-per-tool (`RW._cmdModalMemory`, persisted to `localStorage`, wrapped in try/catch so a disabled/
-unavailable store just degrades to in-memory-only) and auto-filled the instant a modal is detected
-open (edge-triggered off the same 250ms poll the auto-select watcher already runs). Number/text
-fields are never remembered (more likely to differ duct to duct than select/checkbox fields are).
-**Branch fitting is excluded from this mechanism entirely** — its own field-memory now lives in a
-separate, independent repo, `boon-duct-workbench`, per the user's own request to split it out;
-`transition`/`grd`/`vertical` are unaffected.
+**Modal field-walk** (graph host, all four modals): the instant a walked modal is detected open
+(the same edge-triggered 250ms poll the auto-select watcher already runs,
+`RW._cmdModalWalkTick`/`RW._cmdModalWalkLastOpen`), the command bar takes focus and opens a value
+prompt on the modal's first field, then chains into the next one as each is confirmed — the same
+mechanism `dimension` uses for width→height (see below), generalized from a fixed two-param array
+into a live re-derivation on every hop (`cmdWalkNextItem`), so a field that's conditionally visible
+(branch's own flush-boot glyphs; change size's own secondary size field, hidden for a round shape;
+riser's own Shape field, hidden for a plain vertical elbow) is picked up or skipped correctly
+without any hardcoded list. Enter with nothing typed leaves that field untouched and advances (a
+deliberate skip, distinct from `dimension`'s own empty-value behavior, which is a parse failure
+that stops the chain — scoped via `settingsDraft.walk`, a flag `dimension`'s own draft never
+carries, so the two chains can't cross-contaminate each other's tests or behavior). A walked
+checkbox opens a typed on/off draft rather than auto-toggling, unlike picking one from the ordinary
+dropdown. The walk never auto-submits: once every field's been visited it opens the dropdown
+pre-highlighted on that modal's own submit action (`choose`/`apply`/`place`/`placeriser`, with its
+own cancel action listed too) and waits for one further, deliberate Enter — the same standing
+caution as every other graph-host action button (see Constraints). `MODAL_WALK_TOOLS` names which
+modals get this (`['branch', 'transition', 'grd', 'vertical']` — all four, as of the transition/
+GRD/riser fields being confirmed live); every other piece of the mechanism reads its target from
+`GRAPH_TOOL_MODALS`, so extending it further would be a one-line addition again. Started as branch
+fitting only; extended once change size's four fields (Shape, primary/secondary size, Alignment),
+GRD's one field (Airflow, optional), and riser's two fields (Shape, hidden for a plain elbow;
+Destination elevation) were each confirmed live via opencli (see "The four graph config-dialog
+modals" table above and `PORTING.md`). `RW._cmdModalWalkEnabled = false` disables auto-start only;
+`RW._cmdStartModalWalk(tool)` still works by hand with the hatch off, and `RW._cmdModalWalk` is
+console-inspectable while a walk is in progress.
 
-**Modal field-walk** (round 28, graph host, branch fitting only so far): the instant
-`graph-branch-fitting-modal` is detected open (the same edge-triggered 250ms poll modal memory
-uses, `RW._cmdModalWalkTick`/`RW._cmdModalWalkLastOpen`, its own independent edge variable —
-deliberately not shared with modal memory's, since branch is excluded from memory entirely), the
-command bar takes focus and opens a value prompt on the modal's first field, then chains into the
-next one as each is confirmed — the same mechanism `dimension` uses for width→height (see below),
-generalized from a fixed two-param array into a live re-derivation on every hop
-(`cmdWalkNextItem`), so a field that's conditionally visible (branch's own flush-boot glyphs) is
-picked up or skipped correctly without any hardcoded list. Enter with nothing typed leaves that
-field untouched and advances (a deliberate skip, distinct from `dimension`'s own empty-value
-behavior, which is a parse failure that stops the chain — scoped via `settingsDraft.walk`, a flag
-`dimension`'s own draft never carries, so the two chains can't cross-contaminate each other's
-tests or behavior). A walked checkbox opens a typed on/off draft rather than auto-toggling, unlike
-picking one from the ordinary dropdown. The walk never auto-submits: once every field's been
-visited it opens the dropdown pre-highlighted on `choose` (with `cancelbranch` listed too) and
-waits for one further, deliberate Enter — the same standing caution as every other graph-host
-action button (see Constraints). `MODAL_WALK_TOOLS` is a one-name list (`['branch']`) gating which
-modals get this — extending to change size/GRD/riser is meant to be a one-line addition, since
-every other piece of the mechanism already reads its target from `GRAPH_TOOL_MODALS`.
-`RW._cmdModalWalkEnabled = false` disables auto-start only; `RW._cmdStartModalWalk(tool)` still
-works by hand with the hatch off, and `RW._cmdModalWalk` is console-inspectable while a walk is
-in progress.
-
-**Modal walk value memory** (round 29, branch fitting only, riding the same `MODAL_WALK_TOOLS`
-gate): a **separate, independent** system from `RW._cmdModalMemory` above — not a reuse of it,
-deliberately. `RW._cmdModalMemory` excludes `branch` entirely (its field-memory lives in
-`boon-duct-workbench`) and only ever silently auto-fills select/checkbox fields; this instead
-remembers **every** field type the walk touches (`RW._cmdModalWalkValueMemory`, its own
-`localStorage` key) and always asks first rather than auto-applying anything. `cmdWalkStart`
+**Modal walk value memory** (all four modals, riding the same `MODAL_WALK_TOOLS` gate): remembers
+**every** field type the walk touches (`RW._cmdModalWalkValueMemory`, persisted to `localStorage`,
+wrapped in try/catch so a disabled/unavailable store just degrades to in-memory-only) and always
+asks first rather than auto-applying anything — this replaced an earlier mechanism
+(`RW._cmdModalMemory`, round 26) that silently auto-filled a modal's select/checkbox fields with no
+choice offered and excluded branch fitting entirely (its own field-memory lives in a separate,
+independent repo, `boon-duct-workbench`, per the user's own request to split it out); once this
+memory covered all four modals there was nothing left for that older, silent one to do, so it was
+removed rather than kept alongside a mechanism that fully supersedes it. **Riser's own Destination
+elevation field is the one deliberate exception**: `MODAL_WALK_MEMORY_SKIP` (`{vertical:
+['elevation-input']}`) stops it from ever being recorded, since it's an absolute height, the same
+dialog serves a plain riser, an elbow up/down, and editing an existing one, and the server rejects
+two equal elevations outright — a value reused from a different riser is far more likely to be
+wrong than right. The walk still prompts for it every time, starting from native's own default
+(current elevation ±10 for an elbow); only riser's own Shape field is remembered. `cmdWalkStart`
 checks `cmdWalkHasMemory(tool)` before opening field 1: if anything's remembered, it shows a
 three-row choice ("Edit each field" / "use previous for all" / "use previous for all, without
 confirming") via `cmdWalkOfferChoice` — and, load-bearing, **`modalWalk` itself is not created
@@ -522,14 +526,17 @@ trusting this feature on it.
 - The real mechanism behind the annotate host's own zoom (CSS transform / canvas backing
   resolution / PDF-library API / an `annotationState` field) is unknown; `RW._zoomDiagnose()`
   exists to answer this via a before/after diff but nothing consumes its answer yet.
-- The end-user action that opens the change-size/GRD-placement graph modals was never found live
-  (branch and riser are both confirmed reachable) — doesn't affect the mechanism (identical code
-  path for all four), only how to trigger these two for a future live check.
+- Resolved: change size opens from a route checkpoint's own "Reducer / transition" menu item; GRD
+  opens from "Place GRD"/"Add GRD here"; riser opens from "Riser (elevation change)", "Vertical
+  elbow", or "Edit riser" (an existing riser). All confirmed live via opencli.
 - None of the 8 modal-action button ids or the "New system" name/service fields are individually
   confirmed via `CONFIRMED_WRITE_IDS` yet.
-- Whether change size/GRD/riser's own real fields are select/checkbox-shaped the way branch
-  fitting's confirmed ones are — unknown; if any turn out all-numeric, modal memory simply has
-  nothing to do there, which isn't a bug.
+- Resolved: change size's own fields are Shape (select, rectangular/round), a primary and — for
+  rectangular only — a secondary size (both number), and Alignment (select, center/left/right,
+  reset to center by native on every open). GRD has one field, Airflow (number, optional, native
+  clears it on every open). Riser has Shape (select, hidden entirely for a plain vertical elbow)
+  and Destination elevation (number, native prefills a default). None of the three are
+  checkbox-shaped — every walked field on all four modals combined is now either select or number.
 - Whether a real **piping**-trade-pack toolbar actually renders the same `.graph-tool-key` badge
   markup the duct pack's does — `PIPE_TOOL_KEYS` was read from source, never seen rendered live.
   If it renders differently, `cmdDeriveGraphTools` would silently fall back to the (wrong-keyed,
@@ -541,10 +548,12 @@ trusting this feature on it.
 - `graph-toggle-annotations` being genuinely submit-free was read from the bundle's own
   client-side state handler, not independently confirmed by watching the revision counter across a
   live click.
-- Whether the branch fitting modal's own field-walk (round 28) auto-focusing the command bar fights
-  the app's own focus handling on a real page — the app may focus the dialog's first field itself
-  the instant it opens, and which focus wins was never checked live, only in the synthetic harness.
-  Needs a real human live-test, not just automation.
+- Whether the modal field-walk's own auto-focusing of the command bar fights the app's own focus
+  handling on a real page, on any of the four modals it now covers (branch, change size, GRD,
+  riser) — the app may focus the dialog's first field itself the instant it opens (confirmed for
+  reducer/GRD/riser: native's own `.focus()` calls on `checkpointTransitionPrimaryInput`/
+  `checkpointGrdAirflowInput`/`checkpointRiserElevationInput`), and which focus wins was never
+  checked live, only in the synthetic harness. Needs a real human live-test, not just automation.
 - Branch's real field ids/order/types are only partly confirmed from round 19's live session; the
   walk reads them live so it needs no hardcoded list, but the on-screen order it actually produces
   on a real popup (all 6-7 fields, not just the two used in that session) should still be eyeballed
