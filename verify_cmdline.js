@@ -6501,6 +6501,26 @@ function loadCoreModule(win){
     ok(inpB.value === 'transition.shape = ', 'the walk jumps straight into field 1 on the next load too — no Edit/use-previous offer ever appears for reducer');
     const rows = byIdB['rw-cmd-menu']._children;
     ok(!rows.some(function(r){ return r.innerText === 'Edit each field'; }), 'sanity: the reuse-offer rows are not present');
+
+    // A build from before change size was skip-listed already recorded a `transition` entry
+    // into localStorage on a real page — loading today's build must prune it away, not just
+    // stop adding to it, or the offer would keep showing forever from that one stale write.
+    const staleLS = makeFakeLocalStorage();
+    staleLS.setItem('rw_graph_modal_walk_memory_v1', JSON.stringify({ transition: { shape: 'round' }, vertical: { shape: 'round', 'elevation-input': '40' } }));
+    const { win: winC, byId: byIdC } = makeStubWindow({ host: GRAPH_HOST });
+    winC.localStorage = staleLS;
+    loadModule(winC, null, null, { activeTool: 'transition' });
+
+    ok(!winC.__RW._cmdModalWalkValueMemory.transition, 'a stale pre-existing transition entry is pruned away on load');
+    ok(winC.__RW._cmdModalWalkValueMemory.vertical && winC.__RW._cmdModalWalkValueMemory.vertical.shape === 'round'
+       && !('elevation-input' in winC.__RW._cmdModalWalkValueMemory.vertical),
+       "a stale riser elevation value is pruned too, while riser's own shape survives");
+    ok(JSON.parse(staleLS.getItem('rw_graph_modal_walk_memory_v1')).transition === undefined,
+       'the prune is persisted back to localStorage, not just applied in memory for this one page load');
+
+    makeTransitionFixture(winC, byIdC);
+    winC.__RW._cmdModalWalkTick();
+    ok(byIdC['rw-cmd-input'].value === 'transition.shape = ', 'and the offer does not reappear for change size after the prune');
   }
 
   /* ---------- 293. GRD walk: a single Airflow prompt, ending on place/cancelgrd — and the value is remembered for next time ---------- */

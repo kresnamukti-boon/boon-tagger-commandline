@@ -1834,6 +1834,25 @@ return {isElementVisible, isActionUsable};
   // he doesn't want the Edit/use-previous offer for reducer at all, so nothing about that
   // dialog is ever recorded (the walk itself still runs, prompting fresh every time).
   const MODAL_WALK_MEMORY_SKIP = { transition: true, vertical: ['elevation-input'] };
+  // A tool/param can land in MODAL_WALK_MEMORY_SKIP after already being recorded by an older
+  // build of this file (change size's own shape WAS remembered before this skip-list entry
+  // existed) — cmdWalkMemoryLoad would otherwise resurrect that stale localStorage value every
+  // page load, and cmdWalkHasMemory would keep showing the Edit/use-previous offer for a tool
+  // that's supposed to never show it again. Runs once at load, right after the skip-list itself
+  // is known, and persists the cleanup so it only ever has to run once per browser.
+  (function cmdWalkMemoryPrune(){
+    let changed = false;
+    Object.keys(RW._cmdModalWalkValueMemory).forEach(function(tool){
+      const skip = MODAL_WALK_MEMORY_SKIP[tool];
+      if (skip === true){ delete RW._cmdModalWalkValueMemory[tool]; changed = true; return; }
+      if (Array.isArray(skip)){
+        const t = RW._cmdModalWalkValueMemory[tool];
+        skip.forEach(function(param){ if (param in t){ delete t[param]; changed = true; } });
+        if (Object.keys(t).length === 0) delete RW._cmdModalWalkValueMemory[tool];
+      }
+    });
+    if (changed) cmdWalkMemorySave();
+  })();
   // Called only from cmdWalkAdvance, only on an actual apply (never a skip) — a skipped field's
   // own previously remembered value (if any) is left exactly as it was.
   function cmdWalkMemorySet(tool, param, value){
