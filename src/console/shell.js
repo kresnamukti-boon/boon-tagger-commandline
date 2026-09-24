@@ -37,6 +37,10 @@
   // stays a plain script, on purpose, since it's the thing being hollowed
   // out module by module — see CLAUDE.md's "Build / verify commands").
   const { matchCommands: coreMatchCommands, resolveCommand: coreResolveCommand } = __m_command_line_core;
+  const { paramMatchesQuery: coreParamMatchesQuery, parseBoolish: coreParseBoolish, matchOption: coreMatchOption, parseAndClampNumber: coreParseAndClampNumber } = __m_settings_core;
+  const { isolationEscapes: coreIsolationEscapes } = __m_isolation_core;
+  const { matchTags: coreMatchTags } = __m_search_core;
+  const { shadowedActions: coreShadowedActions } = __m_table_core;
 
   /* ---------- command table ---------- */
   // NATIVE-TOOLS-ONLY BRANCH: no workbench entries — only the host app's own
@@ -305,18 +309,7 @@
   // alias (rank 1) and beats `fitting` as a name-prefix (rank 2), while
   // typing `fitting` in full is an exact name (rank 0) either way.
   function cmdShadowedActions(tools){
-    const names = tools.map(function(t){ return t.name; });
-    const rows = [];
-    GRAPH_ACTIONS.forEach(function(a){
-      const tokens = [a.name].concat(a.aliases || []);
-      const clashed = tokens.filter(function(t){ return names.indexOf(t) !== -1; });
-      if (clashed.length) rows.push({
-        action: a.name,
-        shadowed: clashed,
-        reachableAs: tokens.filter(function(t){ return names.indexOf(t) === -1; })
-      });
-    });
-    return rows;
+    return coreShadowedActions(tools, GRAPH_ACTIONS);
   }
 
   // Enforced in RW.runCommand's button-dispatch path, not just by omission
@@ -767,19 +760,18 @@
   // system field by its second word, not just its first, and "diameter"
   // matches the very same width control once its label has flipped under a
   // round profile. Never treated as a stable identifier the way `param` is;
-  // purely an extra, live-read alias for matching.
-  function cmdLabelWords(label){
-    return label ? label.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean) : [];
-  }
+  // purely an extra, live-read alias for matching. (Word-splitting itself
+  // now lives in src/core/settings-core.js's own labelWords, called
+  // internally by coreParamMatchesQuery below — no caller here needs the
+  // split words directly anymore, so the old cmdLabelWords wrapper was
+  // removed rather than kept as dead code.)
 
   // Shared match predicate for both the "<tool>." drill-in list and the bare-
   // param blend below: a query matches a settings item if it prefixes the
   // item's own id-derived param name (unchanged, pre-round-18 behavior) OR
   // prefixes any word of its live on-screen label (round 18's addition).
   function cmdParamMatchesQuery(item, q){
-    if (!q) return true;
-    if (item.param.toLowerCase().indexOf(q) === 0) return true;
-    return cmdLabelWords(item.label).some(function(w){ return w.indexOf(q) === 0; });
+    return coreParamMatchesQuery(item, q);
   }
 
   // The one predicate this round fixes: which "graph-" control is actually
@@ -1039,8 +1031,10 @@
   // isn't really what picking a different tool WHILE A DIALOG IS OPEN would
   // mean anyway; Cancel/Escape is the way out of a modal, unchanged.
   function cmdIsolationEscapes(entry, modalOpen){
-    if (entry.kind === NATIVE && !modalOpen) return true;
-    return GRAPH_ISOLATION_ALLOWED.indexOf(entry.name) !== -1;
+    return coreIsolationEscapes(entry, modalOpen, {
+      isNativeTool: function(e){ return e.kind === NATIVE; },
+      allowedNames: GRAPH_ISOLATION_ALLOWED
+    });
   }
   RW._cmdIsolateTools = true; // console escape hatch: __RW._cmdIsolateTools = false restores the old additive behavior
   // Round 23: console escape hatch for the digit-passthrough bail-out in the global
@@ -1078,26 +1072,14 @@
   // Accepts on/off/true/false/1/0/yes/no, case-insensitive. Returns null (not a boolean) for
   // anything else, so a genuinely invalid value can be told apart from a real "off".
   function cmdParseBoolish(value){
-    const q = String(value).trim().toLowerCase();
-    if (['on', 'true', '1', 'yes'].indexOf(q) !== -1) return true;
-    if (['off', 'false', '0', 'no'].indexOf(q) !== -1) return false;
-    return null;
+    return coreParseBoolish(value);
   }
 
   // Matches a typed value against a live <select>'s own options — either an exact 1-based index
   // (the numbered list the user asked for) or the option's own text/value, exact match first,
   // then a prefix match. Never hardcoded: options always come from the real element.
   function cmdMatchOption(options, value){
-    const q = String(value).trim();
-    const idx = parseInt(q, 10);
-    if (!isNaN(idx) && String(idx) === q){
-      const byIndex = options.find(function(o){ return o.index === idx; });
-      if (byIndex) return byIndex;
-    }
-    const ql = q.toLowerCase();
-    return options.find(function(o){ return o.text.toLowerCase() === ql || o.value.toLowerCase() === ql; })
-        || options.find(function(o){ return o.text.toLowerCase().indexOf(ql) === 0; })
-        || null;
+    return coreMatchOption(options, value);
   }
 
   // Writes a value to the real control (numeric, checkbox, or select — branching on
@@ -1220,10 +1202,9 @@
       return true;
     }
 
-    let v = parseFloat(value);
-    if (isNaN(v)){ RW._commitStatus && RW._commitStatus('"' + value + '" is not a number'); return false; }
-    if (el.min !== '' && el.min != null) v = Math.max(parseFloat(el.min), v);
-    if (el.max !== '' && el.max != null) v = Math.min(parseFloat(el.max), v);
+    const clamped = coreParseAndClampNumber(value, el.min, el.max);
+    if (!clamped.ok){ RW._commitStatus && RW._commitStatus('"' + value + '" is not a number'); return false; }
+    const v = clamped.value;
     el.value = String(v); // explicit — a real <input>.value setter stringifies internally anyway
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1822,20 +1803,7 @@
   };
 
   RW._cmdMatchTags = function(query){
-    const list = RW._cmdTagList || [];
-    const q = (query||'').trim().toLowerCase();
-    const ranked = [];
-    list.forEach(function(tag, idx){
-      const name = (tag.name||'').toLowerCase();
-      let rank = -1;
-      if (!q) rank = 2;
-      else if (name === q) rank = 0;
-      else if (name.indexOf(q) === 0) rank = 1;
-      else if (name.indexOf(q) !== -1) rank = 2;
-      if (rank !== -1) ranked.push({tag:tag, idx:idx, rank:rank});
-    });
-    ranked.sort(function(a,b){ return a.rank - b.rank; });
-    return ranked.map(function(r){ return {tag:r.tag, idx:r.idx}; });
+    return coreMatchTags(RW._cmdTagList || [], query);
   };
 
   // Every tag selection goes through direct assignment regardless of

@@ -13,6 +13,10 @@ import {
   commandBarShouldCapture,
   spaceRepeatAction,
 } from '../src/core/command-line-core.js';
+import { labelWords, paramMatchesQuery, parseBoolish, matchOption, parseAndClampNumber } from '../src/core/settings-core.js';
+import { isolationEscapes } from '../src/core/isolation-core.js';
+import { matchTags } from '../src/core/search-core.js';
+import { shadowedActions } from '../src/core/table-core.js';
 
 // ---------- matchCommands ----------
 // Pins the ranking documented in command-line-core.js's own header, which
@@ -158,4 +162,109 @@ test('spaceRepeatAction: nothing armed but a remembered tool repeats it', () => 
 
 test('spaceRepeatAction: neither armed nor remembered is a no-op', () => {
   assert.deepEqual(spaceRepeatAction({ query: '', lastTool: null, toolArmed: false }), { action: 'none' });
+});
+
+// ---------- settings-core ----------
+
+test('labelWords: splits on non-alphanumerics, drops empties, lowercases', () => {
+  assert.deepEqual(labelWords('Width (in)'), ['width', 'in']);
+  assert.deepEqual(labelWords('System / network'), ['system', 'network']);
+  assert.deepEqual(labelWords(''), []);
+  assert.deepEqual(labelWords(null), []);
+});
+
+test('paramMatchesQuery: matches by param-name prefix or any label word prefix', () => {
+  const item = { param: 'width-input', label: 'Diameter (in)' };
+  assert.equal(paramMatchesQuery(item, 'width'), true);
+  assert.equal(paramMatchesQuery(item, 'diameter'), true);
+  assert.equal(paramMatchesQuery(item, 'in'), true); // second label word
+  assert.equal(paramMatchesQuery(item, 'zzz'), false);
+  assert.equal(paramMatchesQuery(item, ''), true);
+});
+
+test('parseBoolish: accepts on/off spellings case-insensitively, else null', () => {
+  for (const v of ['on', 'TRUE', '1', 'Yes']) assert.equal(parseBoolish(v), true);
+  for (const v of ['off', 'FALSE', '0', 'No']) assert.equal(parseBoolish(v), false);
+  assert.equal(parseBoolish('maybe'), null);
+});
+
+test('matchOption: exact 1-based index wins over text/value', () => {
+  const options = [{ index: 1, value: 'a', text: 'Alpha' }, { index: 2, value: 'b', text: 'Beta' }];
+  assert.deepEqual(matchOption(options, '2'), options[1]);
+});
+
+test('matchOption: exact text/value beats a prefix match', () => {
+  const options = [{ index: 1, value: 'b', text: 'Beta' }, { index: 2, value: 'be', text: 'Be' }];
+  assert.deepEqual(matchOption(options, 'be'), options[1]); // exact text match, not the Beta prefix
+});
+
+test('matchOption: falls back to a text prefix match, else null', () => {
+  const options = [{ index: 1, value: 'b', text: 'Beta' }];
+  assert.deepEqual(matchOption(options, 'Bet'), options[0]);
+  assert.equal(matchOption(options, 'zzz'), null);
+});
+
+test('parseAndClampNumber: clamps to min/max, rejects non-numeric', () => {
+  assert.deepEqual(parseAndClampNumber('5', '0', '10'), { ok: true, value: 5 });
+  assert.deepEqual(parseAndClampNumber('-3', '0', '10'), { ok: true, value: 0 });
+  assert.deepEqual(parseAndClampNumber('99', '0', '10'), { ok: true, value: 10 });
+  assert.deepEqual(parseAndClampNumber('abc', '0', '10'), { ok: false });
+});
+
+test('parseAndClampNumber: "" or null min/max means no bound', () => {
+  assert.deepEqual(parseAndClampNumber('5', '', null), { ok: true, value: 5 });
+});
+
+// ---------- isolation-core ----------
+
+const isNativeTool = (e) => e.kind === 'native';
+const allowedNames = ['select', 'finish', 'cancel', 'dimension'];
+
+test('isolationEscapes: a native tool escapes isolation when no modal is open', () => {
+  assert.equal(isolationEscapes({ name: 'flex', kind: 'native' }, false, { isNativeTool, allowedNames }), true);
+});
+
+test('isolationEscapes: a native tool does NOT escape while a modal is open, unless it is in the allowed list', () => {
+  assert.equal(isolationEscapes({ name: 'flex', kind: 'native' }, true, { isNativeTool, allowedNames }), false);
+  assert.equal(isolationEscapes({ name: 'select', kind: 'native' }, true, { isNativeTool, allowedNames }), true);
+});
+
+test('isolationEscapes: a non-tool action escapes only via the allowed list', () => {
+  assert.equal(isolationEscapes({ name: 'dimension', kind: 'action' }, false, { isNativeTool, allowedNames }), true);
+  assert.equal(isolationEscapes({ name: 'undo', kind: 'action' }, false, { isNativeTool, allowedNames }), false);
+});
+
+// ---------- search-core ----------
+
+test('matchTags: empty query keeps the original list order', () => {
+  const list = [{ name: 'Zeta' }, { name: 'Alpha' }];
+  assert.deepEqual(matchTags(list, ''), [{ tag: list[0], idx: 0 }, { tag: list[1], idx: 1 }]);
+});
+
+test('matchTags: exact name outranks a prefix, which outranks a substring', () => {
+  const exact = { name: 'duct' };
+  const prefix = { name: 'ductwork' };
+  const substring = { name: 'air duct' };
+  const ranked = matchTags([substring, prefix, exact], 'duct');
+  assert.deepEqual(ranked.map((r) => r.tag), [exact, prefix, substring]);
+});
+
+test('matchTags: no match returns an empty list', () => {
+  assert.deepEqual(matchTags([{ name: 'duct' }], 'zzz'), []);
+});
+
+// ---------- table-core ----------
+
+test('shadowedActions: a tool name shadows a same-named action, which stays reachable by its other tokens', () => {
+  const tools = [{ name: 'evidence' }];
+  const actions = [{ name: 'evidence', aliases: ['attach'] }];
+  assert.deepEqual(shadowedActions(tools, actions), [
+    { action: 'evidence', shadowed: ['evidence'], reachableAs: ['attach'] },
+  ]);
+});
+
+test('shadowedActions: no clash means no row', () => {
+  const tools = [{ name: 'route' }];
+  const actions = [{ name: 'undo', aliases: [] }];
+  assert.deepEqual(shadowedActions(tools, actions), []);
 });

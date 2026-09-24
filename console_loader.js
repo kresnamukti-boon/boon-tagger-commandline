@@ -419,6 +419,171 @@ function spaceRepeatAction({ query, lastTool, toolArmed }) {
 return {matchCommands, resolveCommand, commandDispatch, commandBarShouldCapture, spaceRepeatAction};
 })();
 
+// ===== src/core/isolation-core.js =====
+const __m_isolation_core = (function(){
+// Pure predicate behind the graph host's isolation restriction (while a
+// tool is armed, most of the command table is refused) — no DOM, no host
+// globals. The decision of WHICH tool (if any) to isolate to
+// (RW._cmdIsolatedTool) stays in shell.js/src/features, since it reads live
+// app state; only "does this one entry escape isolation" is pure.
+
+// `entry` is a command-table row ({name, kind, ...}); `modalOpen` is
+// whether one of the graph host's own config-dialog modals is open right
+// now. `isNativeTool(entry)` tells a real dispatchable tool apart from an
+// action/other entry (this project's own convention: `entry.kind ===
+// 'native'`, passed in rather than hardcoded so this file has no opinion
+// on that string). `allowedNames` is the flat list of non-tool commands
+// (select/finish/cancel/the modal actions/dimension) that stay reachable
+// regardless of isolation.
+//
+// Switching directly to a DIFFERENT native tool while one is armed escapes
+// isolation (typing/picking another tool's name arms it immediately, no
+// "type select first" detour) — but only while isolation comes from an
+// actually-armed tool, never while it comes from an OPEN CONFIG-DIALOG
+// MODAL: dispatching a different tool's key over an open dialog was never a
+// considered/tested scenario, so `modalOpen` suppresses that exemption.
+function isolationEscapes(entry, modalOpen, { isNativeTool, allowedNames }) {
+  if (isNativeTool(entry) && !modalOpen) return true;
+  return allowedNames.includes(entry.name);
+}
+
+return {isolationEscapes};
+})();
+
+// ===== src/core/search-core.js =====
+const __m_search_core = (function(){
+// Pure ranking behind `#` tag/system search — no DOM, no host globals. Live
+// detection of the real tag/system list (RW._cmdDetectTags) stays in
+// shell.js/src/features, since it reads annotationState/the DOM; only
+// ranking an already-known list against a query is pure.
+//
+// Ranking: empty query keeps every tag in its own original order (rank 2
+// for all, a stable sort — so `#` alone lists the full detected list, not a
+// re-sorted one); otherwise exact name=0, name-prefix=1, name-substring=2.
+function matchTags(list, query) {
+  const q = (query ?? '').trim().toLowerCase();
+  const ranked = [];
+  list.forEach((tag, idx) => {
+    const name = (tag.name ?? '').toLowerCase();
+    let rank = -1;
+    if (!q) rank = 2;
+    else if (name === q) rank = 0;
+    else if (name.indexOf(q) === 0) rank = 1;
+    else if (name.indexOf(q) !== -1) rank = 2;
+    if (rank !== -1) ranked.push({ tag, idx, rank });
+  });
+  ranked.sort((a, b) => a.rank - b.rank);
+  return ranked.map((r) => ({ tag: r.tag, idx: r.idx }));
+}
+
+return {matchTags};
+})();
+
+// ===== src/core/settings-core.js =====
+const __m_settings_core = (function(){
+// Pure helpers behind the settings drill-down (`tool.param = value`) — no
+// DOM, no host globals. The DOM sweep that discovers live controls and
+// writes to them stays in shell.js/src/features (a later restructure phase)
+// since it genuinely needs `document`; only the label/query matching, the
+// on/off parsing and the numeric clamp are pure enough to live here.
+
+// Splits a live label into lowercase words a bare query can prefix-match
+// against individually — e.g. "Width (in)" -> ['width','in'], "System /
+// network" -> ['system','network'] — so typing "network" matches the
+// system field by its second word, not just its first, and a query still
+// matches a control whose label has changed since it was first swept.
+function labelWords(label) {
+  return label ? label.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean) : [];
+}
+
+// Shared match predicate for both the "<tool>." drill-in list and the bare-
+// param blend: a query matches a settings item if it prefixes the item's
+// own id-derived param name, OR prefixes any word of its live on-screen
+// label.
+function paramMatchesQuery(item, q) {
+  if (!q) return true;
+  if (item.param.toLowerCase().indexOf(q) === 0) return true;
+  return labelWords(item.label).some((w) => w.indexOf(q) === 0);
+}
+
+// Accepts on/off/true/false/1/0/yes/no, case-insensitive. Returns null (not
+// a boolean) for anything else, so a genuinely invalid value can be told
+// apart from a real "off".
+function parseBoolish(value) {
+  const q = String(value).trim().toLowerCase();
+  if (['on', 'true', '1', 'yes'].includes(q)) return true;
+  if (['off', 'false', '0', 'no'].includes(q)) return false;
+  return null;
+}
+
+// Matches a typed value against a live <select>'s own options (each
+// {index, value, text}, 1-based index matching the numbered list a user
+// sees) — either an exact 1-based index, or the option's own text/value,
+// exact match first, then a prefix match. Never hardcoded: the caller
+// always builds `options` fresh from the real element.
+function matchOption(options, value) {
+  const q = String(value).trim();
+  const idx = parseInt(q, 10);
+  if (!isNaN(idx) && String(idx) === q) {
+    const byIndex = options.find((o) => o.index === idx);
+    if (byIndex) return byIndex;
+  }
+  const ql = q.toLowerCase();
+  return options.find((o) => o.text.toLowerCase() === ql || o.value.toLowerCase() === ql)
+    || options.find((o) => o.text.toLowerCase().indexOf(ql) === 0)
+    || null;
+}
+
+// Parses a typed numeric value and clamps it to a control's own live
+// min/max (each `''`/null/undefined meaning "no bound", matching a real
+// <input>'s own min/max attributes read as strings). Returns {ok:false}
+// for a non-numeric value, else {ok:true, value}. Deliberately does NOT
+// guard against a non-numeric min/max producing NaN (matching the exact
+// original inline behavior this was extracted from, byte for byte, rather
+// than silently fixing a latent edge case in the same change) — a min/max
+// that doesn't parse propagates NaN through Math.max/min same as before.
+function parseAndClampNumber(value, min, max) {
+  let v = parseFloat(value);
+  if (isNaN(v)) return { ok: false };
+  if (min !== '' && min != null) v = Math.max(parseFloat(min), v);
+  if (max !== '' && max != null) v = Math.min(parseFloat(max), v);
+  return { ok: true, value: v };
+}
+
+return {labelWords, paramMatchesQuery, parseBoolish, matchOption, parseAndClampNumber};
+})();
+
+// ===== src/core/table-core.js =====
+const __m_table_core = (function(){
+// Pure helpers over a command table's own shape — no DOM, no host globals.
+
+// Which action entries a given tool table shadows, and what each is still
+// reachable by. Table order IS the resolution rule (the caller's own
+// RW._cmdTable is tools-then-actions, and both findEntry/RW._cmdMatch scan
+// it in that order — exact name before exact alias) — so a collision is
+// deterministic, never ambiguous: the TOOL wins its own name, and the
+// action keeps every other token (name/alias) it has that the tool table
+// doesn't also use.
+function shadowedActions(tools, actions) {
+  const names = tools.map((t) => t.name);
+  const rows = [];
+  actions.forEach((a) => {
+    const tokens = [a.name].concat(a.aliases || []);
+    const clashed = tokens.filter((t) => names.includes(t));
+    if (clashed.length) {
+      rows.push({
+        action: a.name,
+        shadowed: clashed,
+        reachableAs: tokens.filter((t) => !names.includes(t)),
+      });
+    }
+  });
+  return rows;
+}
+
+return {shadowedActions};
+})();
+
 // ===== src/console/shell.js =====
 // RW vcmd — AutoCAD-style command line, NATIVE-TOOLS-ONLY, DUAL-TARGET
 // BRANCH: type a native app tool's name/alias (or a tag/system via #name)
@@ -459,6 +624,10 @@ return {matchCommands, resolveCommand, commandDispatch, commandBarShouldCapture,
   // stays a plain script, on purpose, since it's the thing being hollowed
   // out module by module — see CLAUDE.md's "Build / verify commands").
   const { matchCommands: coreMatchCommands, resolveCommand: coreResolveCommand } = __m_command_line_core;
+  const { paramMatchesQuery: coreParamMatchesQuery, parseBoolish: coreParseBoolish, matchOption: coreMatchOption, parseAndClampNumber: coreParseAndClampNumber } = __m_settings_core;
+  const { isolationEscapes: coreIsolationEscapes } = __m_isolation_core;
+  const { matchTags: coreMatchTags } = __m_search_core;
+  const { shadowedActions: coreShadowedActions } = __m_table_core;
 
   /* ---------- command table ---------- */
   // NATIVE-TOOLS-ONLY BRANCH: no workbench entries — only the host app's own
@@ -727,18 +896,7 @@ return {matchCommands, resolveCommand, commandDispatch, commandBarShouldCapture,
   // alias (rank 1) and beats `fitting` as a name-prefix (rank 2), while
   // typing `fitting` in full is an exact name (rank 0) either way.
   function cmdShadowedActions(tools){
-    const names = tools.map(function(t){ return t.name; });
-    const rows = [];
-    GRAPH_ACTIONS.forEach(function(a){
-      const tokens = [a.name].concat(a.aliases || []);
-      const clashed = tokens.filter(function(t){ return names.indexOf(t) !== -1; });
-      if (clashed.length) rows.push({
-        action: a.name,
-        shadowed: clashed,
-        reachableAs: tokens.filter(function(t){ return names.indexOf(t) === -1; })
-      });
-    });
-    return rows;
+    return coreShadowedActions(tools, GRAPH_ACTIONS);
   }
 
   // Enforced in RW.runCommand's button-dispatch path, not just by omission
@@ -1189,19 +1347,18 @@ return {matchCommands, resolveCommand, commandDispatch, commandBarShouldCapture,
   // system field by its second word, not just its first, and "diameter"
   // matches the very same width control once its label has flipped under a
   // round profile. Never treated as a stable identifier the way `param` is;
-  // purely an extra, live-read alias for matching.
-  function cmdLabelWords(label){
-    return label ? label.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean) : [];
-  }
+  // purely an extra, live-read alias for matching. (Word-splitting itself
+  // now lives in src/core/settings-core.js's own labelWords, called
+  // internally by coreParamMatchesQuery below — no caller here needs the
+  // split words directly anymore, so the old cmdLabelWords wrapper was
+  // removed rather than kept as dead code.)
 
   // Shared match predicate for both the "<tool>." drill-in list and the bare-
   // param blend below: a query matches a settings item if it prefixes the
   // item's own id-derived param name (unchanged, pre-round-18 behavior) OR
   // prefixes any word of its live on-screen label (round 18's addition).
   function cmdParamMatchesQuery(item, q){
-    if (!q) return true;
-    if (item.param.toLowerCase().indexOf(q) === 0) return true;
-    return cmdLabelWords(item.label).some(function(w){ return w.indexOf(q) === 0; });
+    return coreParamMatchesQuery(item, q);
   }
 
   // The one predicate this round fixes: which "graph-" control is actually
@@ -1461,8 +1618,10 @@ return {matchCommands, resolveCommand, commandDispatch, commandBarShouldCapture,
   // isn't really what picking a different tool WHILE A DIALOG IS OPEN would
   // mean anyway; Cancel/Escape is the way out of a modal, unchanged.
   function cmdIsolationEscapes(entry, modalOpen){
-    if (entry.kind === NATIVE && !modalOpen) return true;
-    return GRAPH_ISOLATION_ALLOWED.indexOf(entry.name) !== -1;
+    return coreIsolationEscapes(entry, modalOpen, {
+      isNativeTool: function(e){ return e.kind === NATIVE; },
+      allowedNames: GRAPH_ISOLATION_ALLOWED
+    });
   }
   RW._cmdIsolateTools = true; // console escape hatch: __RW._cmdIsolateTools = false restores the old additive behavior
   // Round 23: console escape hatch for the digit-passthrough bail-out in the global
@@ -1500,26 +1659,14 @@ return {matchCommands, resolveCommand, commandDispatch, commandBarShouldCapture,
   // Accepts on/off/true/false/1/0/yes/no, case-insensitive. Returns null (not a boolean) for
   // anything else, so a genuinely invalid value can be told apart from a real "off".
   function cmdParseBoolish(value){
-    const q = String(value).trim().toLowerCase();
-    if (['on', 'true', '1', 'yes'].indexOf(q) !== -1) return true;
-    if (['off', 'false', '0', 'no'].indexOf(q) !== -1) return false;
-    return null;
+    return coreParseBoolish(value);
   }
 
   // Matches a typed value against a live <select>'s own options — either an exact 1-based index
   // (the numbered list the user asked for) or the option's own text/value, exact match first,
   // then a prefix match. Never hardcoded: options always come from the real element.
   function cmdMatchOption(options, value){
-    const q = String(value).trim();
-    const idx = parseInt(q, 10);
-    if (!isNaN(idx) && String(idx) === q){
-      const byIndex = options.find(function(o){ return o.index === idx; });
-      if (byIndex) return byIndex;
-    }
-    const ql = q.toLowerCase();
-    return options.find(function(o){ return o.text.toLowerCase() === ql || o.value.toLowerCase() === ql; })
-        || options.find(function(o){ return o.text.toLowerCase().indexOf(ql) === 0; })
-        || null;
+    return coreMatchOption(options, value);
   }
 
   // Writes a value to the real control (numeric, checkbox, or select — branching on
@@ -1642,10 +1789,9 @@ return {matchCommands, resolveCommand, commandDispatch, commandBarShouldCapture,
       return true;
     }
 
-    let v = parseFloat(value);
-    if (isNaN(v)){ RW._commitStatus && RW._commitStatus('"' + value + '" is not a number'); return false; }
-    if (el.min !== '' && el.min != null) v = Math.max(parseFloat(el.min), v);
-    if (el.max !== '' && el.max != null) v = Math.min(parseFloat(el.max), v);
+    const clamped = coreParseAndClampNumber(value, el.min, el.max);
+    if (!clamped.ok){ RW._commitStatus && RW._commitStatus('"' + value + '" is not a number'); return false; }
+    const v = clamped.value;
     el.value = String(v); // explicit — a real <input>.value setter stringifies internally anyway
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -2244,20 +2390,7 @@ return {matchCommands, resolveCommand, commandDispatch, commandBarShouldCapture,
   };
 
   RW._cmdMatchTags = function(query){
-    const list = RW._cmdTagList || [];
-    const q = (query||'').trim().toLowerCase();
-    const ranked = [];
-    list.forEach(function(tag, idx){
-      const name = (tag.name||'').toLowerCase();
-      let rank = -1;
-      if (!q) rank = 2;
-      else if (name === q) rank = 0;
-      else if (name.indexOf(q) === 0) rank = 1;
-      else if (name.indexOf(q) !== -1) rank = 2;
-      if (rank !== -1) ranked.push({tag:tag, idx:idx, rank:rank});
-    });
-    ranked.sort(function(a,b){ return a.rank - b.rank; });
-    return ranked.map(function(r){ return {tag:r.tag, idx:r.idx}; });
+    return coreMatchTags(RW._cmdTagList || [], query);
   };
 
   // Every tag selection goes through direct assignment regardless of
