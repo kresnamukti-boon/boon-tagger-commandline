@@ -35,11 +35,11 @@ function eq(actual, expected, name) {
 
 /* ---------- a small fake page ---------- */
 const READY_HINT = 'Finish inserts this fitting. The connected pipe resumes from its outlet.';
-function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRail = true, selected = null, selectionReadable = true, systemDisabled = false, finishDisabled = false, finishInToast = false, bootstrap = true } = {}) {
+function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRail = true, selected = null, selectionReadable = true, systemDisabled = false, finishDisabled = false, finishInToast = false, bootstrap = true, withSettings = true, settingsHidden = false } = {}) {
   const byId = {};
   const listeners = { window: {}, document: {} };
   const warnings = [];
-  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [], sizeChanges: 0, sizeSaves: 0, revision: 4, finishClicks: 0, systemChanges: [], selectedEntityId: selected };
+  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [], sizeChanges: 0, sizeSaves: 0, settingChanges: [], settingSaves: 0, revertMaterial: false, revision: 4, finishClicks: 0, systemChanges: [], selectedEntityId: selected };
 
   function el(tag) {
     const own = {};
@@ -116,6 +116,31 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   sysSel.options = [['', 'Choose a system'], ['s1', '1 - Cold Water (domestic)'], ['s2', '2 - Sanitary (waste)'], ['s3', '3 - Cold Water Riser (domestic)']].map(([value, text]) => ({ value, text }));
   sysSel.addEventListener('change', () => { state.systemChanges.push(sysSel.value); });
   doc.body.appendChild(sysSel);
+
+  // native's "Pipe properties" block: next-draw facts. With nothing selected a change only reads the facts; with a
+  // pipe selected the diameter / source changes (and the custom box's blur or Enter) would SAVE a resize.
+  const settings = {};
+  if (withSettings) {
+    const sect = el('section'); sect.id = 'graph-piping-facts'; doc.body.appendChild(sect);
+    const mk = (id, opts, value) => {
+      const sel = el('select'); sel.id = id; sel._hiddenFromLayout = settingsHidden; sel.value = value;
+      sel.options = opts.map(([v, t]) => ({ value: v, text: t }));
+      sect.appendChild(sel); settings[id] = sel; return sel;
+    };
+    const dsrc = mk('graph-pipe-diameter-source', ['label', 'legend', 'schedule', 'inference', 'unresolved'].map((v) => [v, v]), 'label');
+    const dia = mk('graph-pipe-diameter', [['', 'Unresolved'], ['0.5', '1/2'], ['0.75', '3/4'], ['1', '1'], ['1.5', '1-1/2'], ['2', '2'], ['2.5', '2-1/2'], ['3', '3'], ['4', '4'], ['custom', 'Custom']], '2');
+    const cus = el('input'); cus.id = 'graph-pipe-diameter-custom'; cus.hidden = true; cus._hiddenFromLayout = settingsHidden; cus.value = ''; sect.appendChild(cus); settings[cus.id] = cus;
+    const mat = mk('graph-pipe-material', [['', 'Choose'], ['pvc', 'PVC'], ['copper', 'Copper'], ['cast_iron', 'Cast iron'], ['abs', 'ABS']], 'pvc');
+    const msrc = mk('graph-pipe-material-source', ['label', 'legend', 'schedule', 'inference'].map((v) => [v, v]), 'label');
+    const saved = () => { if (state.selectedEntityId) state.settingSaves += 1; };
+    dsrc.addEventListener('change', () => { state.settingChanges.push(['dsource', dsrc.value]); dia.disabled = cus.disabled = dsrc.value === 'unresolved'; saved(); });
+    dia.addEventListener('change', () => { state.settingChanges.push(['diameter', dia.value]); cus.hidden = dia.value !== 'custom'; saved(); if (dia.value === 'custom' && state.selectedEntityId) cus.focus(); });
+    cus.addEventListener('input', () => { state.settingChanges.push(['custom-input', cus.value]); });
+    cus.addEventListener('change', () => { state.settingChanges.push(['custom-change', cus.value]); });
+    cus.addEventListener('blur', saved); cus.addEventListener('keydown', (e) => { if (e.key === 'Enter') saved(); });
+    mat.addEventListener('change', () => { state.settingChanges.push(['material', mat.value]); saved(); if (state.revertMaterial) { const old = state.revertMaterial; setTimeout(() => { mat.value = old; }, 60); } });
+    msrc.addEventListener('change', () => { state.settingChanges.push(['msource', msrc.value]); saved(); });
+  }
 
   // native builds the placement panel (hidden) and its label menu at init; we only ever re-use their ids
   {
@@ -260,7 +285,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
     return { hintEl, pan, fields, cont, ctl };
   }
   function closePanel() { const pan = byId['graph-pipe-bbox-op-panel']; if (pan) pan.hidden = true; }
-  return { doc, win, RW, state, warnings, context, press, el, byId, listeners, panel, root, openPanel, closePanel, tick() { state.timers.forEach((f) => f()); } };
+  return { doc, win, RW, state, warnings, context, press, el, byId, listeners, panel, root, settings, openPanel, closePanel, tick() { state.timers.forEach((f) => f()); } };
 }
 
 function loadShell(page) {
@@ -289,7 +314,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     ok(!!input(page), 'the bar input is mounted');
     const names = page.RW._pipeTable().map((e) => e.name);
     eq(names.slice(0, 14), ['select', 'route', 'extend', 'terminate', 'transition', 'cut', 'split-run', 'valve', 'fixture', 'equipment', 'fitting', 'vertical', 'service', 'evidence'], 'table: the 14 rail tools, in rail order');
-    eq(names.slice(14), ['undo', 'redo', 'zoomfit', 'zoomin', 'zoomout', 'ruler', 'components', 'adjust'], 'table: then the 7 actions and the adjust command');
+    eq(names.slice(14), ['undo', 'redo', 'zoomfit', 'zoomin', 'zoomout', 'ruler', 'components', 'adjust', 'diameter', 'dsource', 'material', 'msource'], 'table: then the 7 actions, the adjust command and the four setting commands');
     const info = page.RW._pipeTableInfo();
     eq([info.source, info.skipped, info.aliasDropped, info.shadowedActions], ['toolbar', [], [], []], 'table info: clean derivation from the toolbar');
     ok(/piping command line ready: 14 tools, 7 actions/.test(page.state.statuses[0]), 'startup status line');
@@ -1416,6 +1441,148 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     page.press(page.byId['rw-pipe-input'], ' ');
     eq(page.state.finishClicks, 0, 'unconfirmed sizes: Space does not finish');
     ok(menuShown(page), 'the rows come back');
+  }
+
+  /* ----- Step 5: setting commands (diameter, dsource, material, msource) ----- */
+  const cmd = (page, text) => { focusBar(page); mountedBar(page).value = ''; typeText(page, text); page.press(mountedBar(page), 'Enter'); };
+  const prompt5 = (page) => menuRows(page)[0] || '';
+  const fresh5 = (opts) => { const p = makePage(opts); loadShell(p); return p; };
+  {
+    // listed only while the control is on the page, visible and enabled
+    const page = fresh5(); focusBar(page); typeText(page, 'd');
+    ok(menuRows(page).some((r) => r.indexOf('diameter') === 0) && menuRows(page).some((r) => r.indexOf('dsource') === 0), 'settings are listed when the controls are usable');
+    const hidden = fresh5({ settingsHidden: true }); focusBar(hidden); typeText(hidden, 'd');
+    ok(!menuRows(hidden).some((r) => /^(diameter|dsource)/.test(r)), 'hidden controls: not listed');
+    cmd(hidden, 'diameter');
+    ok(/Diameter: hidden right now/.test(lastStatus(hidden)), 'hidden: typed directly, refused with the reason');
+    const none = fresh5({ withSettings: false }); cmd(none, 'material');
+    ok(/Material: not on this page/.test(lastStatus(none)), 'no such control on the page: refused');
+  }
+  {
+    // diameter: a standard size picks the option (no custom box), reads back, saves nothing
+    const page = fresh5(); cmd(page, 'diameter');
+    ok(/Diameter \(now 2", applies to the next pipe\): type a size/.test(prompt5(page)), 'diameter prompt shows the current size and what it applies to');
+    typeText(page, '2-1/2'); page.press(mountedBar(page), 'Enter');
+    eq([page.settings['graph-pipe-diameter'].value, page.settings['graph-pipe-diameter-custom'].value], ['2.5', ''], 'a standard size picks the select option');
+    ok(/Diameter set to 2-1\/2" \(next pipe\)/.test(lastStatus(page)), 'and says so');
+    eq([page.state.settingSaves, page.state.settingChanges], [0, [['diameter', '2.5']]], 'nothing saved; exactly one change event');
+    eq([menuShown(page), page.doc.activeElement], [false, null], 'the prompt closes and the bar lets go of the keyboard');
+    const log = page.RW._pipeLog; eq([log.length, log[log.length - 1].kind, log[log.length - 1].what], [1, 'setting', 'set diameter to 2-1/2"'], 'one action-log entry');
+  }
+  {
+    // diameter: a non-standard size picks Custom and fills the box (input + change only, never blur / Enter)
+    const page = fresh5(); cmd(page, 'dia'); typeText(page, '1.75'); page.press(mountedBar(page), 'Enter');
+    eq([page.settings['graph-pipe-diameter'].value, page.settings['graph-pipe-diameter-custom'].value], ['custom', '1-3/4'], 'custom: the select goes to Custom and the box is filled');
+    eq(page.state.settingChanges.map((c) => c[0]), ['diameter', 'custom-input', 'custom-change'], 'custom: events are change, then input and change on the box');
+    ok(/Diameter set to 1-3\/4"/.test(lastStatus(page)), 'custom: read back and reported');
+    eq(page.state.settingSaves, 0, 'custom: nothing saved');
+  }
+  {
+    // bad sizes keep the prompt open and write nothing; Esc and an empty Enter cancel
+    const page = fresh5(); cmd(page, 'diameter');
+    typeText(page, 'abc'); page.press(mountedBar(page), 'Enter');
+    ok(/not a size/.test(lastStatus(page)) && menuShown(page), 'not a size: said so, prompt stays');
+    mountedBar(page).value = ''; typeText(page, '100'); page.press(mountedBar(page), 'Enter');
+    ok(/3\/8" to 48"/.test(lastStatus(page)), 'out of range: said so');
+    eq(page.state.settingChanges, [], 'neither wrote anything');
+    page.press(mountedBar(page), 'Escape');
+    eq([menuShown(page), page.state.settingChanges.length, lastStatus(page)], [false, 0, 'Diameter: unchanged'], 'Esc cancels, unchanged');
+    cmd(page, 'diameter'); page.press(mountedBar(page), 'Enter');
+    eq([menuShown(page), page.state.settingChanges.length], [false, 0], 'an empty Enter cancels too');
+  }
+  {
+    // select settings: filter by typing, pick by number, or take the highlighted row (Space = Enter)
+    const page = fresh5(); cmd(page, 'dsource');
+    ok(/Diameter source \(now label/.test(prompt5(page)), 'dsource prompt header');
+    eq(menuRows(page).slice(1).map((r) => r.replace(/\s+\(now\)$/, '')), ['1. label', '2. legend', '3. schedule', '4. inference', '5. unresolved'], 'the options come from the live select');
+    typeText(page, 'leg'); eq(menuRows(page).slice(1), ['2. legend'], 'typing filters the rows');
+    page.press(mountedBar(page), ' ');
+    eq([page.settings['graph-pipe-diameter-source'].value, /Diameter source set to legend/.test(lastStatus(page))], ['legend', true], 'Space confirms like Enter');
+    cmd(page, 'material'); typeText(page, '4'); page.press(mountedBar(page), 'Enter');
+    eq(page.settings['graph-pipe-material'].value, 'cast_iron', 'a row number picks that option');
+    cmd(page, 'mat'); typeText(page, 'cop'); page.press(mountedBar(page), 'Enter');
+    eq(page.settings['graph-pipe-material'].value, 'copper', 'material by prefix, by its alias');
+    cmd(page, 'msource'); page.press(mountedBar(page), 'ArrowDown'); page.press(mountedBar(page), 'Enter');
+    eq(page.settings['graph-pipe-material-source'].value, 'legend', 'the highlighted row is taken when nothing is typed');
+    cmd(page, 'material'); typeText(page, 'zzz'); page.press(mountedBar(page), 'Enter');
+    ok(/no option matches/.test(lastStatus(page)), 'no match: said so, nothing written');
+    eq(page.state.settingSaves, 0, 'no saves anywhere');
+  }
+  {
+    // source "unresolved" locks the diameter: refused with the reason, even typed directly
+    const page = fresh5(); cmd(page, 'dsource'); typeText(page, 'unres'); page.press(mountedBar(page), 'Enter');
+    cmd(page, 'diameter');
+    ok(/Diameter: the app has it disabled right now/.test(lastStatus(page)), 'unresolved: the app disabled the diameter, the bar says so');
+    page.settings['graph-pipe-diameter'].disabled = false; page.settings['graph-pipe-diameter-custom'].disabled = false;
+    cmd(page, 'diameter');
+    ok(/source is "unresolved"/.test(lastStatus(page)), 'even if the page forgot to lock it, the bar refuses on the source');
+  }
+  {
+    // a selection: every setting refused, nothing written, nothing saved
+    for (const [name, label] of [['diameter', 'Diameter'], ['dsource', 'Diameter source'], ['material', 'Material'], ['msource', 'Material source']]) {
+      const page = fresh5({ selected: 'pipe-9' }); cmd(page, name);
+      ok(new RegExp('^' + label + ': something is selected').test(lastStatus(page)) && /Esc to deselect/.test(lastStatus(page)), name + ': refused with a selection, with the reason');
+      eq([page.state.settingChanges, page.state.settingSaves, menuShown(page)], [[], 0, false], name + ': nothing written, no prompt');
+    }
+    const unreadable = fresh5({ selectionReadable: false }); cmd(unreadable, 'material');
+    ok(/could not tell whether something is selected/.test(lastStatus(unreadable)) && unreadable.state.settingChanges.length === 0, 'selection unreadable: fail closed');
+  }
+  {
+    // a fitting being placed: refused
+    const page = fresh5(); page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); page.tick();
+    cmd(page, 'material');
+    ok(/Material: a fitting is being placed: finish it or press Esc first/.test(lastStatus(page)) && page.state.settingChanges.length === 0, 'placement open: refused with the reason, nothing written');
+  }
+  {
+    // the host's own guard on the ONLY function that writes settings (a second layer behind the shell's)
+    const w = (p, key, plan) => p.RW._pipeHost.writeSetting(key, plan);
+    const sel = { mode: 'select', selectValue: 'copper' };
+    { const p = fresh5(); eq([w(p, 'material', sel).ok, p.settings['graph-pipe-material'].value], [true, 'copper'], 'nothing selected, no panel: the host writes'); }
+    { const p = fresh5(); p.state.selectedEntityId = 'pipe-1'; eq([w(p, 'material', sel).ok, p.settings['graph-pipe-material'].value, p.state.settingChanges.length], [false, 'pvc', 0], 'something selected: the host refuses'); }
+    { const p = fresh5({ selectionReadable: false }); eq([w(p, 'material', sel).ok, p.settings['graph-pipe-material'].value], [false, 'pvc'], 'selection unreadable: the host refuses'); }
+    { const p = fresh5(); p.openPanel({ tool: 'fitting', hint: 'x', groups: [] }); eq([w(p, 'material', sel).ok, p.settings['graph-pipe-material'].value], [false, 'pvc'], 'a fitting panel open: the host refuses'); }
+    { const p = fresh5({ settingsHidden: true }); eq([w(p, 'material', sel).ok, p.settings['graph-pipe-material'].value], [false, 'pvc'], 'hidden control: the host refuses'); }
+    { const p = fresh5(); p.settings['graph-pipe-material'].disabled = true; eq(w(p, 'material', sel).ok, false, 'disabled control: the host refuses'); }
+    { const p = fresh5(); p.settings['graph-pipe-diameter-source'].value = 'unresolved'; eq([w(p, 'diameter', { mode: 'select', selectValue: '3' }).ok, p.settings['graph-pipe-diameter'].value], [false, '2'], 'diameter with source unresolved: the host refuses'); }
+    { const p = fresh5(); eq(w(p, 'nope', sel).ok, false, 'an unknown setting: refused'); }
+    { const p = fresh5(); p.settings['graph-pipe-diameter-custom'].disabled = true; eq([w(p, 'diameter', { mode: 'custom', customText: '1-3/4' }).ok, p.settings['graph-pipe-diameter'].value], [false, '2'], 'custom box disabled: the host refuses before touching the select'); }
+  }
+  {
+    // the prompt is cancelled the moment it stops being safe (something gets selected while it is open)
+    const page = fresh5(); cmd(page, 'material');
+    ok(menuShown(page), 'prompt open');
+    page.state.selectedEntityId = 'pipe-3'; page.tick();
+    ok(!menuShown(page) && /something is selected/.test(lastStatus(page)), 'a selection appears: the prompt closes with the reason');
+    page.press(mountedBar(page), 'Enter');
+    eq(page.state.settingChanges, [], 'and the Enter that follows writes nothing');
+  }
+  {
+    // the shell's own last check before writing (the poll has not run yet): refuses with the reason, writes nothing
+    const page = fresh5(); cmd(page, 'material'); typeText(page, 'abs');
+    page.state.selectedEntityId = 'pipe-3'; // selected between the prompt and the Enter, no poll in between
+    page.press(mountedBar(page), 'Enter');
+    ok(/^Material: something is selected/.test(lastStatus(page)), 'selected just before Enter: the shell refuses with the reason');
+    eq([page.state.settingChanges, page.state.settingSaves, page.RW._pipeLog.length], [[], 0, 0], 'and nothing was written or logged');
+  }
+  {
+    // the page changing the value back is noticed and reported
+    const page = fresh5(); page.state.revertMaterial = 'pvc'; cmd(page, 'material'); typeText(page, 'abs'); page.press(mountedBar(page), 'Enter');
+    ok(/Material set to ABS/.test(lastStatus(page)), 'set and read back at once');
+    await new Promise((r) => setTimeout(r, 600));
+    ok(/Material: the app changed it back \(now PVC\)/.test(lastStatus(page)), 'a moment later the revert is reported');
+  }
+  {
+    // the key guard covers the settings controls right after a write
+    const page = fresh5(); cmd(page, 'diameter'); typeText(page, '1.75'); page.press(mountedBar(page), 'Enter');
+    const e1 = page.press(page.settings['graph-pipe-diameter-custom'], 'Enter');
+    ok(e1.defaultPrevented && e1.immediateStopped, 'Enter aimed at the custom box right after a write is swallowed');
+    const e2 = page.press(page.byId['graph-undo-command'], 'Enter');
+    ok(!e2.defaultPrevented, 'but Enter elsewhere is untouched');
+  }
+  {
+    // Step 5 never touches the other commands' behaviour
+    const page = fresh5(); cmd(page, 'route');
+    ok(page.state.activeTool === 'route', 'tools still arm normally');
   }
 
   console.log(`${pass} passed, ${fail} failed`);

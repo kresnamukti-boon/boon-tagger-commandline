@@ -4,7 +4,7 @@
 // page and against the Node test harness.
 import { isElementVisible } from '../features/actions.js';
 
-export function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, adjustLabelText = 'Adjust ports', unavailableMark = 'unavailable' }) {
+export function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, settingIds = {}, unresolvedValue = 'unresolved', adjustLabelText = 'Adjust ports', unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -243,6 +243,62 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, adj
         fire(custom, 'input'); fire(custom, 'change');
       }
       return { ok: true, selectValue: select.value, customValue: custom ? custom.value : '' };
+    },
+
+    // Step 5: the next-draw "Pipe properties" controls, one plain snapshot each:
+    // { found, visible, disabled, value, options: [{ value, text }] }, plus whether a fitting panel is open
+    // and the selection facts. `custom` also reports the box's text.
+    readSettings() {
+      const panel = doc.getElementById(panelIds.panel);
+      const sel = this.readSelection();
+      const controls = {};
+      for (const key of Object.keys(settingIds)) {
+        const el = doc.getElementById(settingIds[key]);
+        controls[key] = !el ? { found: false } : {
+          found: true, visible: isElementVisible(el), disabled: !!el.disabled, value: String(el.value ?? ''),
+          options: Array.from(el.options || []).map((o) => ({ value: o.value, text: String(o.text || o.textContent || '').trim() })),
+        };
+      }
+      return { panelOpen: !!panel && !panel.hidden, ...sel, controls };
+    },
+
+    // Put one value into one setting control (what a person's pick does). The ONLY place settings are
+    // written. It re-checks the whole guard itself, right before writing: no fitting panel open, nothing
+    // selected (and readable), the control present, visible and enabled, and for the diameter the source
+    // not "unresolved". `plan` is { mode: 'select', selectValue } or, for the diameter, { mode: 'custom',
+    // customText }. Returns { ok, reason?, selectValue, customValue } with what the controls hold afterwards.
+    writeSetting(key, plan) {
+      const panel = doc.getElementById(panelIds.panel);
+      if (panel && !panel.hidden) return { ok: false, reason: 'placement' };
+      const sel = this.readSelection();
+      if (!sel.selectionReadable || sel.selectedEntityId) return { ok: false, reason: 'selection' };
+      const el = settingIds[key] ? doc.getElementById(settingIds[key]) : null;
+      if (!el || el.disabled || !isElementVisible(el)) return { ok: false, reason: 'control' };
+      if (key === 'diameter') {
+        const src = doc.getElementById(settingIds.dsource);
+        if (!src || src.value === unresolvedValue) return { ok: false, reason: 'unresolved' };
+      }
+      const fire = (node, type) => node.dispatchEvent(new win.Event(type, { bubbles: true }));
+      let custom = null;
+      if (plan.mode === 'custom') {
+        custom = key === 'diameter' && settingIds.custom ? doc.getElementById(settingIds.custom) : null;
+        if (!custom || custom.disabled) return { ok: false, reason: 'control' };
+        el.value = 'custom';
+        fire(el, 'change');
+        custom.value = plan.customText;
+        fire(custom, 'input'); fire(custom, 'change'); // never blur or Enter: that is native's commit path
+      } else {
+        el.value = plan.selectValue;
+        fire(el, 'change');
+        custom = key === 'diameter' && settingIds.custom ? doc.getElementById(settingIds.custom) : null;
+      }
+      return { ok: true, selectValue: el.value, customValue: custom ? custom.value : '' };
+    },
+
+    // Is this one of the five Pipe properties controls (diameter, its custom box, either source, material)?
+    isSettingControl(el) {
+      const id = el && el.id;
+      return !!id && Object.keys(settingIds).some((k) => settingIds[k] === id);
     },
 
     // Is this one of native's per-port size controls (a select or custom box)?

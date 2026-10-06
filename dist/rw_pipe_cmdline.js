@@ -150,6 +150,24 @@ const PIPE_ADJUST = { labelText: 'Adjust ports' };
 const PIPE_ADJUST_ENTRY = {
   id: 'adjust', name: 'adjust', label: 'Adjust ports', aliases: ['ports', 'adj'], kind: 'adjust',
 };
+// Step 5: native's next-draw "Pipe properties" controls. Typed commands for them; written only when nothing is
+// selected and no fitting is being placed (with a selection native's diameter handlers send a SAVED resize).
+const PIPE_SETTING_IDS = {
+  diameter: 'graph-pipe-diameter',
+  custom: 'graph-pipe-diameter-custom',
+  dsource: 'graph-pipe-diameter-source',
+  material: 'graph-pipe-material',
+  msource: 'graph-pipe-material-source',
+};
+// `control` names the PIPE_SETTING_IDS key the entry writes; `valueKind` is how a value is entered.
+const PIPE_SETTING_ENTRIES = [
+  { id: 'diameter', name: 'diameter', label: 'Diameter', aliases: ['dia'], kind: 'setting', control: 'diameter', valueKind: 'size' },
+  { id: 'dsource', name: 'dsource', label: 'Diameter source', aliases: [], kind: 'setting', control: 'dsource', valueKind: 'pick' },
+  { id: 'material', name: 'material', label: 'Material', aliases: ['mat'], kind: 'setting', control: 'material', valueKind: 'pick' },
+  { id: 'msource', name: 'msource', label: 'Material source', aliases: [], kind: 'setting', control: 'msource', valueKind: 'pick' },
+];
+// The diameter source value that makes native lock both diameter controls.
+const PIPE_SOURCE_UNRESOLVED = 'unresolved';
 const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
@@ -237,7 +255,7 @@ const PIPE_FIXTURE_DISPLAY_NAMES = {
 const PIPE_FIXTURE_TOOL = 'fixture';
 const PIPE_FITTING_TOOL = 'fitting';
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_KEYS, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY, PIPE_SETTING_IDS, PIPE_SETTING_ENTRIES, PIPE_SOURCE_UNRESOLVED, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_KEYS, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -287,7 +305,7 @@ const __m_pipe_host = (function(){
 // page and against the Node test harness.
 const { isElementVisible } = __m_actions;
 
-function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, adjustLabelText = 'Adjust ports', unavailableMark = 'unavailable' }) {
+function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, settingIds = {}, unresolvedValue = 'unresolved', adjustLabelText = 'Adjust ports', unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -526,6 +544,62 @@ function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, adjustLabe
         fire(custom, 'input'); fire(custom, 'change');
       }
       return { ok: true, selectValue: select.value, customValue: custom ? custom.value : '' };
+    },
+
+    // Step 5: the next-draw "Pipe properties" controls, one plain snapshot each:
+    // { found, visible, disabled, value, options: [{ value, text }] }, plus whether a fitting panel is open
+    // and the selection facts. `custom` also reports the box's text.
+    readSettings() {
+      const panel = doc.getElementById(panelIds.panel);
+      const sel = this.readSelection();
+      const controls = {};
+      for (const key of Object.keys(settingIds)) {
+        const el = doc.getElementById(settingIds[key]);
+        controls[key] = !el ? { found: false } : {
+          found: true, visible: isElementVisible(el), disabled: !!el.disabled, value: String(el.value ?? ''),
+          options: Array.from(el.options || []).map((o) => ({ value: o.value, text: String(o.text || o.textContent || '').trim() })),
+        };
+      }
+      return { panelOpen: !!panel && !panel.hidden, ...sel, controls };
+    },
+
+    // Put one value into one setting control (what a person's pick does). The ONLY place settings are
+    // written. It re-checks the whole guard itself, right before writing: no fitting panel open, nothing
+    // selected (and readable), the control present, visible and enabled, and for the diameter the source
+    // not "unresolved". `plan` is { mode: 'select', selectValue } or, for the diameter, { mode: 'custom',
+    // customText }. Returns { ok, reason?, selectValue, customValue } with what the controls hold afterwards.
+    writeSetting(key, plan) {
+      const panel = doc.getElementById(panelIds.panel);
+      if (panel && !panel.hidden) return { ok: false, reason: 'placement' };
+      const sel = this.readSelection();
+      if (!sel.selectionReadable || sel.selectedEntityId) return { ok: false, reason: 'selection' };
+      const el = settingIds[key] ? doc.getElementById(settingIds[key]) : null;
+      if (!el || el.disabled || !isElementVisible(el)) return { ok: false, reason: 'control' };
+      if (key === 'diameter') {
+        const src = doc.getElementById(settingIds.dsource);
+        if (!src || src.value === unresolvedValue) return { ok: false, reason: 'unresolved' };
+      }
+      const fire = (node, type) => node.dispatchEvent(new win.Event(type, { bubbles: true }));
+      let custom = null;
+      if (plan.mode === 'custom') {
+        custom = key === 'diameter' && settingIds.custom ? doc.getElementById(settingIds.custom) : null;
+        if (!custom || custom.disabled) return { ok: false, reason: 'control' };
+        el.value = 'custom';
+        fire(el, 'change');
+        custom.value = plan.customText;
+        fire(custom, 'input'); fire(custom, 'change'); // never blur or Enter: that is native's commit path
+      } else {
+        el.value = plan.selectValue;
+        fire(el, 'change');
+        custom = key === 'diameter' && settingIds.custom ? doc.getElementById(settingIds.custom) : null;
+      }
+      return { ok: true, selectValue: el.value, customValue: custom ? custom.value : '' };
+    },
+
+    // Is this one of the five Pipe properties controls (diameter, its custom box, either source, material)?
+    isSettingControl(el) {
+      const id = el && el.id;
+      return !!id && Object.keys(settingIds).some((k) => settingIds[k] === id);
     },
 
     // Is this one of native's per-port size controls (a select or custom box)?
@@ -1224,7 +1298,8 @@ function planEntry(entry, state) {
 function planQuery(table, query, stateFor) {
   const entry = resolveCommand(table, query);
   if (!entry) return { action: 'status', message: `unknown command: ${String(query ?? '').trim()}` };
-  return planEntry(entry, stateFor(entry));
+  // A refused plan still names the entry, so the caller can say why instead of running something else.
+  return { ...planEntry(entry, stateFor(entry)), entry };
 }
 
 // Which entries the dropdown lists: every tool (a disabled one stays visible so its reason can be
@@ -1234,7 +1309,7 @@ function listEntries(table, stateFor) {
   const rows = [];
   for (const entry of table) {
     const state = stateFor(entry);
-    if ((entry.kind === 'action' || entry.kind === 'adjust') && !state.usable) continue;
+    if ((entry.kind === 'action' || entry.kind === 'adjust' || entry.kind === 'setting') && !state.usable) continue;
     rows.push({ entry, state });
   }
   return rows;
@@ -1582,6 +1657,88 @@ function sizesFinishGate({ perPort, stage, confirmed, current, violations, selec
 return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, planSizeInput, planSizeWrite, effectiveSize, rolesFromLabel, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, SIZE_CHOICE_ADJUST, sizeChoiceRows, editableFields, SIZES_IDLE, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate};
 })();
 
+// ===== src/core/pipe-setting-core.js =====
+const __m_pipe_setting_core = (function(){
+// Pure logic for the piping "setting" commands (Step 5): diameter, dsource, material, msource. These
+// four are the next-draw facts in native's "Pipe properties" block. No DOM, no clicks.
+//
+// Why a safety decision exists at all: native's change handlers on the diameter and diameter-source
+// controls do two different things (pipe-session-ui.js). With NOTHING selected they only set what the
+// next pipe will use (no save). With a resizable pipe selected they send a real resize command to the
+// autosave journal (the custom box commits on blur or Enter). Material is wired to the local read
+// only, but all four follow one rule: write only when nothing is selected and no fitting is being
+// placed, and fail closed when the selection can't be read.
+const { planSizeInput, planSizeWrite, parseSizeInput } = __m_pipe_size_core;
+
+const lower = (s) => String(s ?? '').trim().toLowerCase();
+
+// May the bar write this control right now? Every fact arrives as an argument.
+//   f { label, found, visible, disabled, panelOpen, selectionReadable, selectedEntityId, sourceUnresolved }
+// Order matters only for which reason is shown; every failing fact refuses.
+function settingVerdict(f) {
+  const label = f?.label ?? 'setting';
+  const no = (reason, message) => ({ ok: false, reason, message: `${label}: ${message}` });
+  if (!f || !f.found) return no('missing', 'not on this page');
+  if (!f.visible) return no('hidden', 'hidden right now (the app shows it only while a pipe run can be drawn)');
+  if (f.disabled) return no('disabled', 'the app has it disabled right now');
+  if (f.panelOpen) return no('placement', 'a fitting is being placed: finish it or press Esc first');
+  if (!f.selectionReadable) return no('selection-unreadable', 'could not tell whether something is selected, so nothing was changed');
+  if (f.selectedEntityId) {
+    return no('selected', 'something is selected on the drawing, and changing this would change it and save. Press Esc to deselect first (resizing an existing pipe is a later step)');
+  }
+  if (f.sourceUnresolved) return no('unresolved', 'the diameter source is "unresolved", so the app locks the size. Set dsource first');
+  return { ok: true };
+}
+
+// Typed text or a row number -> one of the select's options. `options` [{ value, text }].
+// Order: row number (1-based), exact value or text, then a unique prefix, then a unique substring.
+// Ambiguous or empty -> { ok: false, message }.
+function optionMatch(options, query) {
+  const list = (options ?? []).map((o) => ({ value: String(o.value ?? ''), text: String(o.text ?? '') }));
+  const q = lower(query);
+  if (!q) return { ok: false, message: 'type or pick one of the options' };
+  if (/^\d+$/.test(q)) {
+    const hit = list[Number(q) - 1];
+    if (hit) return { ok: true, option: hit };
+  }
+  const exact = list.filter((o) => lower(o.value) === q || lower(o.text) === q);
+  if (exact.length === 1) return { ok: true, option: exact[0] };
+  const unique = (found) => (found.length === 1 ? { ok: true, option: found[0] } : null);
+  const byPrefix = list.filter((o) => lower(o.text).startsWith(q) || lower(o.value).startsWith(q));
+  if (byPrefix.length) return unique(byPrefix) ?? { ok: false, message: `"${query}" matches several options: be more specific` };
+  const bySub = list.filter((o) => lower(o.text).includes(q) || lower(o.value).includes(q));
+  if (bySub.length) return unique(bySub) ?? { ok: false, message: `"${query}" matches several options: be more specific` };
+  return { ok: false, message: `no option matches "${query}"` };
+}
+
+// Typed diameter -> how to put it into native's select + custom pair. Same parser and range as the
+// port sizes; a standard size picks the option, anything else picks "custom" and fills the box.
+function diameterPlan(raw, optionValues) {
+  const size = planSizeInput(raw);
+  if (!size.ok) return size;
+  return { ok: true, value: size.value, ...planSizeWrite(size.value, optionValues) };
+}
+
+// Did the page take what we wrote? `wanted` is a diameterPlan result ({ mode, selectValue | customText })
+// or { mode: 'select', selectValue } for the select-only settings; `read` is what the controls hold now.
+function readbackVerdict(wanted, read) {
+  if (!wanted || !read) return { ok: false, message: 'could not read the value back' };
+  if (wanted.mode === 'custom') {
+    const want = parseSizeInput(wanted.customText);
+    const got = read.selectValue === 'custom' ? parseSizeInput(read.customValue) : null;
+    return want !== null && got === want ? { ok: true } : { ok: false, message: 'the app shows a different size' };
+  }
+  return String(read.selectValue ?? '') === String(wanted.selectValue ?? '') ? { ok: true } : { ok: false, message: 'the app shows a different value' };
+}
+
+// The select's own option row -> the text shown in the bar's list.
+function optionRowText(option, index) {
+  return `${index + 1}. ${option.text || option.value || '(blank)'}`;
+}
+
+return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowText};
+})();
+
 // ===== src/pipe/pipe-shell.js =====
 // RW vpipe: AutoCAD-style command line for the PIPING graph page. Type a tool name (or its key
 // letter, or an alias) from anywhere on the page and the real tool-rail button is clicked; type an
@@ -1611,6 +1768,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
     PIPE_FINISH_TOOLS, PIPE_FINISH_KEYS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
     PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY,
+    PIPE_SETTING_IDS, PIPE_SETTING_ENTRIES, PIPE_SOURCE_UNRESOLVED,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
@@ -1622,6 +1780,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows,
   } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
+  const { settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowText } = __m_pipe_setting_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
   } = __m_pipe_table_core;
@@ -1629,7 +1788,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
   const { createPipeHost } = __m_pipe_host;
 
   const host = createPipeHost({
-    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, adjustLabelText: PIPE_ADJUST.labelText, unavailableMark: PIPE_UNAVAILABLE_MARK,
+    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, settingIds: PIPE_SETTING_IDS, unresolvedValue: PIPE_SOURCE_UNRESOLVED, adjustLabelText: PIPE_ADJUST.labelText, unavailableMark: PIPE_UNAVAILABLE_MARK,
   });
 
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
@@ -1656,7 +1815,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       curatedAliases: PIPE_TOOL_ALIASES, actions: PIPE_GRAPH_ACTIONS,
     });
   }
-  function currentTable() { return buildTable(derive().tools, PIPE_GRAPH_ACTIONS).concat([PIPE_ADJUST_ENTRY]); }
+  function currentTable() { return buildTable(derive().tools, PIPE_GRAPH_ACTIONS).concat([PIPE_ADJUST_ENTRY], PIPE_SETTING_ENTRIES); }
   // Can the bar tick/untick native's Adjust ports box right now? (see adjustVerdict)
   function adjustFacts() {
     const snap = host.readPanel();
@@ -1666,7 +1825,22 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       found: a.found, visible: a.visible, disabled: a.disabled,
     };
   }
+  // Can the bar write this setting right now? (see settingVerdict; the host checks it again when writing)
+  function settingFacts(entry) {
+    const st = host.readSettings();
+    const c = st.controls[entry.control] || { found: false };
+    const src = st.controls.dsource || { found: false };
+    return {
+      label: entry.label, found: c.found, visible: c.visible, disabled: c.disabled,
+      panelOpen: st.panelOpen, selectionReadable: st.selectionReadable, selectedEntityId: st.selectedEntityId,
+      sourceUnresolved: entry.control === 'diameter' && src.found && src.value === PIPE_SOURCE_UNRESOLVED,
+    };
+  }
   function stateFor(entry) {
+    if (entry.kind === 'setting') {
+      const v = settingVerdict(settingFacts(entry));
+      return { usable: v.ok, forbidden: false, reason: v.ok ? null : v.message.replace(/^[^:]+: /, '') };
+    }
     if (entry.kind === 'adjust') {
       const v = adjustVerdict(adjustFacts());
       return { usable: v.ok, forbidden: false, reason: v.ok ? null : v.message.replace(/^adjust ports: /, '') };
@@ -1713,6 +1887,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     const iso = isolationVerdict({ panelOpen: host.readPanel().open, name: entry.name, allowed: PIPE_ISOLATION_ALLOWED });
     if (!iso.ok) { status(iso.message); return false; }
     if (entry.kind === 'adjust') return runAdjust();
+    if (entry.kind === 'setting') return startSetting(entry);
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
@@ -1746,7 +1921,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
   // The label prompt for native's Place Fitting panel (Step 2).
   const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
-  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', adjust: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
+  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', adjust: '#8ecae6', setting: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
 
   function ensureMenu() {
     if (menuEl) return;
@@ -1793,6 +1968,12 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       head.textContent = sizesUi.header;
       menuEl.appendChild(head);
     }
+    if (settingUi.active && settingUi.header) {
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
+      head.textContent = settingUi.header;
+      menuEl.appendChild(head);
+    }
     if (prompt.active && prompt.header) {
       const head = document.createElement('div');
       head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
@@ -1805,6 +1986,8 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       let usable, color, label;
       if (row.size) {
         usable = true; color = COLORS.tool; label = row.size.text;
+      } else if (row.setting) {
+        usable = true; color = COLORS.tool; label = optionRowText(row.setting.option, row.setting.index) + (row.setting.current ? '  (now)' : '');
       } else if (row.system) {
         usable = true; color = COLORS.system; label = row.system.name;
       } else if (row.prompt) {
@@ -1823,7 +2006,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       el.textContent = label;
       if (i === menuHighlight) highlighted = el;
       el.addEventListener('mousedown', function(ev){ ev.preventDefault(); }); // keep focus through the click
-      el.addEventListener('click', function(){ if (row.size) pickSizeChoice(row.size); else if (row.system) pickSystem(row.system); else if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
+      el.addEventListener('click', function(){ if (row.size) pickSizeChoice(row.size); else if (row.setting) applyPickedSetting(row.setting.option); else if (row.system) pickSystem(row.system); else if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
       menuEl.appendChild(el);
     });
     positionMenu();
@@ -1840,6 +2023,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
   function openMenu(query) {
     if (prompt.active) { refreshPrompt(); return; }
     if (sizesUi.active) { return; } // the sizes step owns the menu; typing is the value being entered
+    if (settingUi.active) { refreshSettingRows(); return; } // the setting prompt owns the menu
     const sq = systemQuery(query);
     if (sq !== null) { openSystemMenu(sq); return; }
     menuItems = rowsFor(query);
@@ -2159,6 +2343,130 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     }
   }
 
+  /* ---------- Step 5: setting commands (diameter, dsource, material, msource) ---------- */
+  // Each opens a small prompt in the bar (a size to type, or the select's own options to pick) and writes
+  // native's next-draw control only when nothing is selected and no fitting is being placed (with a pipe
+  // selected, native's diameter handlers send a saved resize). The host checks again before writing.
+  const settingUi = { active: false, stage: null, entry: null, options: [], header: '' };
+  function settingNow(entry, st) {
+    const c = st.controls[entry.control] || {};
+    if (entry.control === 'diameter') {
+      const size = effectiveSize({ selectValue: c.value, customValue: (st.controls.custom || {}).value });
+      return size ? formatSize(size) + '"' : 'unresolved';
+    }
+    const hit = (c.options || []).filter(function(o){ return o.value === c.value; })[0];
+    return hit ? (hit.text || hit.value || 'blank') : (c.value || 'blank');
+  }
+  function renderSettingHeader() {
+    const st = host.readSettings();
+    const entry = settingUi.entry;
+    settingUi.header = entry.label + ' (now ' + settingNow(entry, st) + ', applies to the next pipe): '
+      + (settingUi.stage === 'value' ? 'type a size, Enter applies, Esc cancels. Use 2-1/2, not 2 1/2' : 'pick one (type to filter, or a number), Esc cancels');
+  }
+  function refreshSettingRows() {
+    const st = host.readSettings();
+    const c = st.controls[settingUi.entry.control] || { options: [] };
+    settingUi.options = c.options || [];
+    renderSettingHeader();
+    ensureMenu();
+    if (settingUi.stage === 'value') {
+      menuItems = []; menuHighlight = -1;
+      menuEl.innerHTML = '';
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+      head.textContent = settingUi.header;
+      menuEl.appendChild(head);
+      positionMenu();
+      menuEl.style.display = 'block';
+      return;
+    }
+    const q = (inputEl ? inputEl.value : '').trim().toLowerCase();
+    const rows = settingUi.options.map(function(o, i){ return { setting: { option: o, index: i, current: o.value === c.value } }; });
+    menuItems = q ? rows.filter(function(r){
+      const o = r.setting.option;
+      return (/^\d+$/.test(q) && r.setting.index + 1 === Number(q)) || o.text.toLowerCase().indexOf(q) !== -1 || o.value.toLowerCase().indexOf(q) !== -1;
+    }) : rows;
+    const cur = menuItems.findIndex(function(r){ return r.setting.current; });
+    menuHighlight = menuItems.length ? (q || cur < 0 ? 0 : cur) : -1;
+    renderMenu();
+  }
+  function startSetting(entry) {
+    const v = settingVerdict(settingFacts(entry));
+    if (!v.ok) { status(v.message); return false; }
+    mountBar();
+    if (!inputEl) return false;
+    settingUi.active = true; settingUi.entry = entry; settingUi.stage = entry.valueKind === 'size' ? 'value' : 'pick';
+    inputEl.value = '';
+    inputEl.focus();
+    refreshSettingRows();
+    return true;
+  }
+  function endSetting(how) {
+    if (!settingUi.active) return;
+    const label = settingUi.entry ? settingUi.entry.label : 'setting';
+    settingUi.active = false; settingUi.stage = null; settingUi.entry = null; settingUi.options = []; settingUi.header = '';
+    if (inputEl) inputEl.value = '';
+    hideMenu();
+    if (how === 'cancelled') status(label + ': unchanged');
+  }
+  function enterSetting() {
+    const entry = settingUi.entry;
+    const typed = inputEl.value.trim();
+    if (settingUi.stage === 'value') {
+      if (!typed) { endSetting('cancelled'); if (inputEl) inputEl.blur(); return; }
+      const st = host.readSettings();
+      const plan = diameterPlan(typed, ((st.controls.diameter || {}).options || []).map(function(o){ return o.value; }));
+      if (!plan.ok) { status(entry.label + ': ' + plan.message); return; }
+      applySetting(entry, plan, formatSize(plan.value) + '"');
+      return;
+    }
+    if (typed) {
+      const m = optionMatch(settingUi.options, typed);
+      if (!m.ok) { status(entry.label + ': ' + m.message); return; }
+      applyPickedSetting(m.option);
+    } else if (menuHighlight >= 0 && menuItems[menuHighlight] && menuItems[menuHighlight].setting) {
+      applyPickedSetting(menuItems[menuHighlight].setting.option);
+    } else status(entry.label + ': nothing matches');
+  }
+  function applyPickedSetting(option) {
+    if (!settingUi.active) return;
+    applySetting(settingUi.entry, { mode: 'select', selectValue: option.value }, option.text || option.value || 'blank');
+  }
+  function applySetting(entry, plan, shown) {
+    const v = settingVerdict(settingFacts(entry));
+    if (!v.ok) { status(v.message); endSetting(); if (inputEl) inputEl.blur(); return false; }
+    logAction('setting', 'set ' + entry.name + ' to ' + shown);
+    const r = host.writeSetting(entry.control, plan);
+    if (!r.ok) {
+      unlogLast(); status(entry.label + ': could not be changed (' + r.reason + '), nothing was written');
+      endSetting(); if (inputEl) inputEl.blur(); return false;
+    }
+    own.lastCmdAt = Date.now();
+    endSetting();
+    // Native may focus the custom box when "Custom" is picked: take the keyboard back once, and guard the keys.
+    labelGuardUntil = Date.now() + LABEL_GUARD_MS;
+    setTimeout(refocusBarOnce, 0);
+    report(entry, plan, shown, r);
+    // Native rewrites these controls from its stored facts now and then: look again a moment later.
+    setTimeout(function(){ recheckSetting(entry, plan, shown); }, 400);
+    if (inputEl) inputEl.blur();
+    return true;
+  }
+  function readBack(entry) {
+    const st = host.readSettings();
+    return { selectValue: (st.controls[entry.control] || {}).value, customValue: (st.controls.custom || {}).value, st: st };
+  }
+  function report(entry, plan, shown, r) {
+    const back = readbackVerdict(plan, r);
+    status(back.ok ? entry.label + ' set to ' + shown + ' (next pipe)'
+      : entry.label + ': asked for ' + shown + ' but ' + back.message + ' (now ' + settingNow(entry, readBack(entry).st) + ')');
+  }
+  function recheckSetting(entry, plan, shown) {
+    const b = readBack(entry);
+    const back = readbackVerdict(plan, b);
+    if (!back.ok) status(entry.label + ': the app changed it back (now ' + settingNow(entry, b.st) + ')');
+  }
+
   function finishFacts(e) {
     const snap = host.readPanel();
     const fin = host.readFinish(PIPE_FINISH_BUTTON_ID);
@@ -2198,6 +2506,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     // Once, never in a loop; only if native really did take focus into its own panel.
     if (!inputEl || document.activeElement === inputEl) return;
     if (host.readPanel().open && (host.focusInPanel() || host.isPortControl(document.activeElement))) inputEl.focus();
+    else if (host.isSettingControl(document.activeElement)) inputEl.blur();
   }
   // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
   function promptTick() {
@@ -2209,6 +2518,10 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     });
     updatePortNote(snap);
     sizeTick(snap);
+    if (settingUi.active) {
+      const sv = settingVerdict(settingFacts(settingUi.entry));
+      if (!sv.ok) { status(sv.message); endSetting(); }
+    }
     // Safety net: a hint we don't recognise means native changed this step. One line, nothing else.
     const watch = hintWatch({ open: snap.open, hint: snap.hint, prefixes: PIPE_HINT_PREFIXES, lastWarned: unknownHintWarned });
     unknownHintWarned = watch.hint;
@@ -2221,7 +2534,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
   }
   function reopenPrompt() { prompt.dismissed = false; startPrompt(); }
 
-  function clearBar() { if (inputEl) inputEl.value = ''; hideMenu(); }
+  function clearBar() { if (settingUi.active) return; if (inputEl) inputEl.value = ''; hideMenu(); }
   function runAndClear(entry) { if (runEntry(entry)) clearBar(); else hideMenu(); }
 
   /* ---------- the bar ---------- */
@@ -2250,7 +2563,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     inputEl.addEventListener('input', function(){ openMenu(inputEl.value); });
     inputEl.addEventListener('keydown', onInputKeydown);
     inputEl.addEventListener('blur', function(){
-      setTimeout(function(){ if (document.activeElement !== inputEl) hideMenu(); }, 150);
+      setTimeout(function(){ if (document.activeElement !== inputEl) { if (settingUi.active) endSetting('cancelled'); hideMenu(); } }, 150);
     });
   }
 
@@ -2271,8 +2584,22 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       // .value fires no input event, so the list stays put and keeps cycling over the same rows.
       if (menuHighlight >= 0 && menuItems[menuHighlight]) {
         const row = menuItems[menuHighlight];
-        inputEl.value = row.size ? '' : row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
+        inputEl.value = row.size ? '' : row.setting ? String(row.setting.index + 1) : row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
       }
+      return;
+    }
+    if (settingUi.active && (e.key === 'Enter' || e.key === ' ')) {
+      // Consumed before anything is written: the same real keypress must not also reach native.
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      enterSetting();
+      return;
+    }
+    if (e.key === 'Escape' && settingUi.active) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      endSetting('cancelled');
+      if (inputEl) inputEl.blur();
       return;
     }
     if (sizesUi.active && (e.key === 'Enter' || e.key === ' ')) {
@@ -2314,6 +2641,8 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       // An exact name/label/alias always wins; otherwise run the highlighted completion.
       const plan = planQuery(currentTable(), typed, stateFor);
       if (typed && plan.action !== 'status') { if (runEntry(plan.entry)) clearBar(); return; }
+      // An exact name that is not usable right now says why; it never runs some other highlighted row instead.
+      if (typed && plan.entry) { status(plan.message); return; }
       if (menuHighlight >= 0 && menuItems[menuHighlight]) { runAndClear(menuItems[menuHighlight].entry); return; }
       if (typed) status(plan.message);
       return;
@@ -2365,7 +2694,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     window.addEventListener(type, function(e){
       if (Date.now() > labelGuardUntil) return;
       if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
-      if (!host.isLabelTrigger(e.target) && !host.isPortControl(e.target)) return;
+      if (!host.isLabelTrigger(e.target) && !host.isPortControl(e.target) && !host.isSettingControl(e.target)) return;
       e.preventDefault(); e.stopImmediatePropagation();
     }, true);
   });

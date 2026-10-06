@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
   PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_TRADE, DUCT_TRADE,
-  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS, PIPE_FINISH_BUTTON_ID, PIPE_SIZE_IDS, PIPE_ADJUST, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_PORT_ROLE_PATTERN, PIPE_FINISH_HINT_PREFIX,
+  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS, PIPE_FINISH_BUTTON_ID, PIPE_SIZE_IDS, PIPE_ADJUST, PIPE_SETTING_IDS, PIPE_SOURCE_UNRESOLVED, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_PORT_ROLE_PATTERN, PIPE_FINISH_HINT_PREFIX,
 } from '../src/pipe/pipe-tables.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -176,4 +176,20 @@ test('Step 3c dependencies are listed: the Adjust ports label, when native hides
   assert.ok(ids.pipeBboxConnect.strings.some((x) => x.includes('toggleAdjustPorts(enabled)')));
   assert.ok(ids.pipeBboxConnect.strings.some((x) => x.includes("adjustPorts: true, ports: [], phase: 'ports'")), 'ticking restarts the ports phase');
   assert.ok(ids.families.fitting.includes('pipe-cross'), 'the cross is a known family (its roles come from the live catalog)');
+});
+
+test('Step 5 dependencies are listed: the five controls, what native does with a selection, and the values we use', () => {
+  for (const id of Object.values(PIPE_SETTING_IDS)) assert.ok(ids.html.ids.includes(id), id + ' is a known page id');
+  const ui = ids.pipeSessionUi.strings.join('\n');
+  // With a pipe selected these handlers send a SAVED resize: the reason the bar writes only with nothing selected.
+  assert.ok(ui.includes("controls.diameter.addEventListener('change'"), 'the diameter select change handler');
+  assert.ok(ui.includes("controls['diameter-source'].addEventListener('change'"), 'the source change handler');
+  assert.ok(ui.includes("if (!pipeResizeCommand(entity?.fields)) return;"), 'a resize only when a resizable entity is selected');
+  assert.ok(ui.includes("controls['diameter-custom'].addEventListener('blur'"), 'the custom box commits on blur');
+  assert.ok(ui.includes("if (e.key === 'Enter' && pipeResizeCommand(selectedEntity()?.fields)) void updateResizeFacts();"), '... and on Enter');
+  assert.ok(ui.includes("controls['diameter-custom'].focus?.();"), 'picking Custom focuses the box (when something is selected)');
+  assert.ok(ui.includes(`'${PIPE_SOURCE_UNRESOLVED}']);`) && ui.includes("fill(controls['diameter-source']"), 'the "unresolved" source value');
+  assert.ok(ui.includes("fill(controls['material-source']"), 'material source is a plain select');
+  assert.ok(ui.includes(": (isInsulation && !isThickness) ? updateInsulationFacts : readFacts,"), 'material and sources go through the local read only');
+  for (const id of Object.values(PIPE_SETTING_IDS)) assert.ok(!PIPE_FORBIDDEN_BUTTON_IDS.includes(id), id + ' is not a protected button');
 });

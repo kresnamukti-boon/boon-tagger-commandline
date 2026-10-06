@@ -152,6 +152,19 @@ the same way as above, on a **piping** page.
     starts it and shows the order; nothing is saved by ticking the box.
   - Assigning ports reseeds the sizes, so after the last click the size rows ask again (an old confirmation is
     forgotten, even if you ticked the box with the mouse).
+- **Pipe settings (diameter, diameter source, material, material source).** Four typed commands set what the NEXT
+  pipe will use, the same four fields as the app's "Pipe properties" block:
+  - **`diameter`** (`dia`): type a size (`2`, `2-1/2`, `1.75`, same rules as port sizes, 3/8" to 48"). A standard size
+    picks the app's option; any other size picks "Custom" and fills the box. Use `2-1/2`, not `2 1/2`.
+  - **`dsource`**, **`material`** (`mat`), **`msource`**: the app's own options are listed (read live); type to
+    filter, type a row number, or arrow to a row. Enter or Space applies, Esc cancels.
+  - After writing, the bar reads the value back and says what the app now shows ("Diameter set to 2-1/2″ (next pipe)"),
+    and looks again a moment later in case the app changed it back.
+  - **Only with nothing selected and no fitting being placed.** With a pipe selected the app's diameter and source
+    controls send a saved resize, so the bar refuses all four and says why (press Esc to deselect first). Resizing an
+    existing pipe from the bar is a later step. If it can't tell whether something is selected, it also refuses.
+    A command is listed only while its field is on the page and enabled (diameter is also refused while the source
+    is "unresolved", which locks the size).
 - **If native changes under us** (safety net). Two checks make the bar stop instead of guess:
   - if the fitting panel is open but its hint sentence is one we don't recognise, the bar shows one
     line, "Native changed: use the mouse for this step", and does nothing else for that step (no
