@@ -110,6 +110,21 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
       return { open: true, tool: activeTool(), hint, groups };
     },
 
+    // Is this element native's own label button (the one native focuses after a pick, and whose
+    // Enter / Space / ArrowDown opens the menu)?
+    isLabelTrigger(el) {
+      return !!el && String(el.className || '').split(/\s+/).indexOf(panelIds.triggerClass) !== -1;
+    },
+
+    // Is keyboard focus on something inside native's placement panel?
+    focusInPanel() {
+      const active = doc.activeElement;
+      const panel = doc.getElementById(panelIds.panel);
+      if (!active || !panel) return false;
+      for (let n = active; n; n = n.parentNode) if (n === panel) return true;
+      return false;
+    },
+
     // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.
     clickFamily(id) {
       const menu = doc.getElementById(panelIds.menu);

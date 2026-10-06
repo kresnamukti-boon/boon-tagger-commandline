@@ -310,6 +310,7 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
   never hardcoded. **Unverified live:** the real fixture family ids (read-only check pending).
 - Dropped on purpose: `ft/tt/st/td` (use `trapft`, `traptt`, `trapst`, `traptd`), `rtee`, `rwye`.
 - While a placement panel is open, `PIPE_ISOLATION_ALLOWED` is now enforced in code (`runEntry`).
+- **Focus after a pick (found live by the user, real keyboard):** native's menu-option click handler calls `subtype.focus()`, and the trigger's keydown opens the menu on Enter / Space / ArrowDown, so the same physical keypress could open native's menu and steal focus. Fixed on our side: the consumed key is cancelled and stopped before the click; for 700 ms a window-capture guard cancels Enter/Space/ArrowDown (keydown, keypress, keyup) aimed at the trigger; and focus returns to our bar once on the next tick. Upstream none of this is needed (it would call its own controller directly).
 - **Space = Enter** in the bar (and in the label prompt), like the duct bar. A literal space can no longer be typed, so multi-word labels are reached by id or alias.
 - Valves and equipment get no extra aliases yet (their menus still match by id and label).
 

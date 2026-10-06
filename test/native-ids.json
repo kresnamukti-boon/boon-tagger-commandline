@@ -75,7 +75,10 @@
       "Click the detected intersection for",
       "Finish inserts this fitting.",
       "Saving pipe and fitting",
-      "\" auto-matched from the crossed run."
+      "\" auto-matched from the crossed run.",
+      "subtype.className = 'graph-pipe-fitting-select-trigger'",
+      "if (['ArrowDown', 'Enter', ' '].includes(event.key)) {",
+      "subtype.focus();"
     ]
   },
   "tradePackValues": {

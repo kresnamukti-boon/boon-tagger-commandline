@@ -123,6 +123,7 @@ const PIPE_PANEL_IDS = {
   groupLabelClass: 'graph-pipe-fitting-select-group-label',
   optionSelector: 'button[data-family-id]',
   warningClass: 'graph-pipe-bbox-unresolved-entry-warning',
+  triggerClass: 'graph-pipe-fitting-select-trigger',
 };
 
 // How native's hint line starts in each phase. Matched with "starts with" (native appends extra
@@ -346,6 +347,21 @@ function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unava
         }
       }
       return { open: true, tool: activeTool(), hint, groups };
+    },
+
+    // Is this element native's own label button (the one native focuses after a pick, and whose
+    // Enter / Space / ArrowDown opens the menu)?
+    isLabelTrigger(el) {
+      return !!el && String(el.className || '').split(/\s+/).indexOf(panelIds.triggerClass) !== -1;
+    },
+
+    // Is keyboard focus on something inside native's placement panel?
+    focusInPanel() {
+      const active = doc.activeElement;
+      const panel = doc.getElementById(panelIds.panel);
+      if (!active || !panel) return false;
+      for (let n = active; n; n = n.parentNode) if (n === panel) return true;
+      return false;
     },
 
     // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.
@@ -1439,7 +1455,18 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
     if (!host.clickFamily(plan.id)) { status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
     status(plan.label + ' chosen');
     endPrompt();
-    if (inputEl) inputEl.blur();
+    // Native has just moved keyboard focus onto its own label button (subtype.focus()), and that
+    // button opens its menu on Enter / Space / ArrowDown. For a moment, swallow those keys if they
+    // land on it, and take focus back once so the key's own release or repeat lands harmlessly on our bar.
+    labelGuardUntil = Date.now() + LABEL_GUARD_MS;
+    setTimeout(refocusBarOnce, 0);
+  }
+  const LABEL_GUARD_MS = 700;
+  let labelGuardUntil = 0;
+  function refocusBarOnce() {
+    // Once, never in a loop; only if native really did take focus into its own panel.
+    if (!inputEl || document.activeElement === inputEl) return;
+    if (host.readPanel().open && host.focusInPanel()) inputEl.focus();
   }
   // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
   function promptTick() {
@@ -1508,7 +1535,9 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
     }
     if (prompt.active) {
       if (e.key === 'Enter' || e.key === ' ') {
+        // Consumed before anything is clicked: the same real keypress must not also reach native.
         e.preventDefault(); e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
         if (menuHighlight >= 0 && menuItems[menuHighlight]) pickPrompt(menuItems[menuHighlight].prompt);
         else status('nothing matches');
         return;
@@ -1524,6 +1553,7 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
     // consumed, so a literal space is never typed: multi-word labels are reached by id or alias.
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       const typed = inputEl.value.trim();
       // An exact name/label/alias always wins; otherwise run the highlighted completion.
       const plan = planQuery(currentTable(), typed, stateFor);
@@ -1536,7 +1566,8 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
       // Only swallow Escape while it has something of ours to close; otherwise native's own Escape
       // (cancel the current placement) must still get it.
       if (inputEl.value || (menuEl && menuEl.style.display !== 'none')) {
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
         // A dismissed prompt stays dismissed until native leaves the label phase (Space brings it back).
         if (prompt.active) { prompt.dismissed = true; endPrompt(); }
         clearBar();
@@ -1562,6 +1593,17 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
     panel.style.bottom = Math.max(RW._pipeBarOffset, (window.innerHeight - rect.bottom) + RW._pipeBarOffset) + 'px';
     if (menuEl && menuEl.style.display !== 'none') positionMenu();
   };
+
+  // Backstop for the same problem: while the guard is on, Enter / Space / ArrowDown (down, press or up)
+  // aimed at native's label button are cancelled before native sees them.
+  ['keydown', 'keypress', 'keyup'].forEach(function(type){
+    window.addEventListener(type, function(e){
+      if (Date.now() > labelGuardUntil) return;
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
+      if (!host.isLabelTrigger(e.target)) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+    }, true);
+  });
 
   /* ---------- global capture: type anywhere to start a command ---------- */
   document.addEventListener('keydown', function(e){

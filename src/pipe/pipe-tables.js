@@ -104,6 +104,7 @@ export const PIPE_PANEL_IDS = {
   groupLabelClass: 'graph-pipe-fitting-select-group-label',
   optionSelector: 'button[data-family-id]',
   warningClass: 'graph-pipe-bbox-unresolved-entry-warning',
+  triggerClass: 'graph-pipe-fitting-select-trigger',
 };
 
 // How native's hint line starts in each phase. Matched with "starts with" (native appends extra

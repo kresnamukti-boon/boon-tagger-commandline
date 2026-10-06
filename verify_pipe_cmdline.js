@@ -153,13 +153,13 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   });
 
   // key events: window capture -> document capture -> target's own listeners (like a real dispatch)
-  function press(target, key, mods = {}) {
-    const evt = Object.assign({ type: 'keydown', key, target, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }, mods);
+  function press(target, key, mods = {}, type = 'keydown') {
+    const evt = Object.assign({ type, key, target, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }, mods);
     evt.defaultPrevented = false; evt.propagationStopped = false; evt.immediateStopped = false;
     evt.preventDefault = () => { evt.defaultPrevented = true; };
     evt.stopPropagation = () => { evt.propagationStopped = true; };
     evt.stopImmediatePropagation = () => { evt.immediateStopped = true; evt.propagationStopped = true; };
-    for (const group of [listeners.window.keydown || [], listeners.document.keydown || []]) {
+    for (const group of [listeners.window[type] || [], listeners.document[type] || []]) {
       for (const l of group.slice()) { if (l.capture && !evt.immediateStopped) l.fn(evt); }
       if (evt.propagationStopped) return evt;
     }
@@ -176,6 +176,11 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
     const hintEl = el('p'); hintEl.textContent = hint; pan.appendChild(hintEl);
     const warn = el('p'); warn.className = 'graph-pipe-bbox-unresolved-entry-warning'; warn.hidden = true; pan.appendChild(warn);
     const field = el('div'); const menu = el('div'); menu.id = 'graph-pipe-fitting-select-menu'; menu.hidden = true;
+    const trigger = el('button'); trigger.className = 'graph-pipe-fitting-select-trigger'; trigger.textContent = 'Choose specific label';
+    // native: Enter / Space / ArrowDown on the trigger opens the menu
+    trigger.addEventListener('keydown', (e) => { if (['ArrowDown', 'Enter', ' '].includes(e.key)) { e.preventDefault(); if (menu.hidden) { menu.hidden = false; state.menuOpened = (state.menuOpened || 0) + 1; } } });
+    trigger.addEventListener('keyup', (e) => { if (e.key === ' ') { if (menu.hidden) { menu.hidden = false; state.menuOpened = (state.menuOpened || 0) + 1; } } }); // Space activates a button on release
+    field.appendChild(trigger);
     for (const g of groups) {
       const section = el('section'); const heading = el('div'); heading.className = 'graph-pipe-fitting-select-group-label';
       heading.textContent = g.ports + (g.ports === 1 ? ' port' : ' ports') + (g.usable === false ? ' \u00b7 unavailable' : '');
@@ -184,7 +189,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
         const b = el('button'); b.setAttribute('data-family-id', id); b.disabled = usable === false;
         const l = el('span'); l.textContent = label; const c = el('span'); c.textContent = String(g.ports);
         b.appendChild(l); b.appendChild(c);
-        b.addEventListener('click', () => { hintEl.textContent = 'Finish inserts this fitting. The connected pipe resumes from its outlet.'; state.chosen = id; });
+        b.addEventListener('click', () => { hintEl.textContent = 'Finish inserts this fitting. The connected pipe resumes from its outlet.'; state.chosen = id; trigger.focus(); }); // native: chooseFamily, then subtype.focus()
         section.appendChild(b);
       }
       menu.appendChild(section);
@@ -673,6 +678,25 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     eq(page.RW._pipePrompt.category, 3, 'in the label prompt, Space picks the category like Enter');
     typeText(page, 'wye'); page.press(input(page), ' ');
     eq(page.state.chosen, 'pipe-wye', 'and Space picks the fitting like Enter');
+  }
+
+  /* ----- native moves focus onto its label button after a pick: the same keypress must not open its menu ----- */
+  for (const pickKey of ['Enter', ' ']) {
+    const page = makePage(); loadShell(page); page.openPanel({ groups: FITTING_GROUPS }); page.tick();
+    typeText(page, 'wyer');
+    const down = page.press(input(page), pickKey);
+    ok(down.defaultPrevented && down.propagationStopped, 'the key the bar used was cancelled and stopped (' + JSON.stringify(pickKey) + ')');
+    eq(page.state.chosen, 'pipe-wye-reducer', 'picked via ' + JSON.stringify(pickKey));
+    const trigger = page.doc.activeElement;
+    ok(trigger && /graph-pipe-fitting-select-trigger/.test(trigger.className), 'native took focus onto its label button during the click');
+    // the same physical key, still going: keypress/keyup, and an auto-repeat keydown, all aimed at the button
+    page.press(trigger, pickKey, {}, 'keydown');
+    page.press(trigger, pickKey, {}, 'keypress');
+    page.press(trigger, pickKey, {}, 'keyup');
+    page.press(trigger, 'ArrowDown', {}, 'keydown');
+    ok(!page.state.menuOpened, 'native\'s label menu stayed closed (' + JSON.stringify(pickKey) + ')');
+    await new Promise((r) => setTimeout(r, 30));
+    eq(page.doc.activeElement && page.doc.activeElement.id, 'rw-pipe-input', 'focus went back to our bar, once');
   }
 
   console.log(`${pass} passed, ${fail} failed`);

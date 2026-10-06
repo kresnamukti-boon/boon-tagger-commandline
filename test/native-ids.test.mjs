@@ -114,7 +114,7 @@ test('every tool native supports has a built-in key, and every alias we curate b
 
 test('the placement panel ids, classes and hint wording we rely on are all listed in native-ids.json', () => {
   const listed = ids.pipeSessionUi.strings.join('\n');
-  for (const cls of [PIPE_PANEL_IDS.menu, PIPE_PANEL_IDS.groupLabelClass, PIPE_PANEL_IDS.warningClass]) {
+  for (const cls of [PIPE_PANEL_IDS.menu, PIPE_PANEL_IDS.groupLabelClass, PIPE_PANEL_IDS.warningClass, PIPE_PANEL_IDS.triggerClass]) {
     assert.ok(listed.includes(cls), cls);
   }
   assert.ok(listed.includes('familyId'), 'data-family-id');
