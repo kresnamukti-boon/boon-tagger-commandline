@@ -191,10 +191,17 @@ const PIPE_FITTING_ALIASES = {
 // hb). The family id is derived from what the open menu says, after stripping one of these
 // prefixes; nothing about which fixtures exist is hardcoded here.
 const PIPE_FIXTURE_ID_PREFIXES = ['pipe-fixture-', 'fixture-', 'pipe-'];
+// Readable names shown in the bar for the fixture menu (display only: matching still uses native's
+// own label, the id and the aliases). Keyed by the short id (the id without its prefix). A fixture
+// not listed here is shown with native's own text.
+const PIPE_FIXTURE_DISPLAY_NAMES = {
+  wc: 'Water Closet', lav: 'Lavatory', sh: 'Shower', ur: 'Urinal', ks: 'Kitchen Sink',
+  ms: 'Mop Sink', hb: 'Hose Bibb', fd: 'Floor Drain', rd: 'Roof Drain',
+};
 const PIPE_FIXTURE_TOOL = 'fixture';
 const PIPE_FITTING_TOOL = 'fitting';
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -842,13 +849,21 @@ function aliasesFor({ id, tool, curated, fixtureTool, fixturePrefixes }) {
   return (curated?.[id] ?? []).map(lower);
 }
 
+// Readable name for one family in the fixture menu, or null (then native's own text is shown).
+function displayNameFor({ id, tool, fixtureTool, fixturePrefixes, names }) {
+  if (tool !== fixtureTool) return null;
+  const short = aliasesFor({ id, tool, curated: {}, fixtureTool, fixturePrefixes })[0];
+  return (short && names && Object.prototype.hasOwnProperty.call(names, short)) ? names[short] : null;
+}
+
 // Flat list of every fitting in the open menu as table entries (name = native's family id).
-function menuEntries({ groups, tool, curated, fixtureTool, fixturePrefixes }) {
+function menuEntries({ groups, tool, curated, fixtureTool, fixturePrefixes, fixtureNames }) {
   const entries = [];
   for (const group of groups ?? []) {
     for (const option of group.options ?? []) {
       entries.push({
         id: option.id, name: lower(option.id), label: String(option.label ?? option.id),
+        display: displayNameFor({ id: option.id, tool, fixtureTool, fixturePrefixes, names: fixtureNames }),
         aliases: aliasesFor({ id: option.id, tool, curated, fixtureTool, fixturePrefixes }),
         ports: group.ports, usable: option.usable === true && group.usable !== false,
       });
@@ -925,7 +940,7 @@ function planPick(item) {
       : { action: 'status', message: item.ports + '-port fittings: none available for this box' };
   }
   if (!item.entry.usable) return { action: 'status', message: item.entry.label + ': not available for this box' };
-  return { action: 'choose', id: item.entry.id, label: item.entry.label };
+  return { action: 'choose', id: item.entry.id, label: item.entry.display ?? item.entry.label };
 }
 
 // Isolation while a placement panel is open: only the ways out and the view/undo actions run.
@@ -936,7 +951,7 @@ function isolationVerdict({ panelOpen, name, allowed }) {
   return { ok: false, message: lower(name) + ': finish or cancel the fitting first (Esc cancels it)' };
 }
 
-return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict};
+return {panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict};
 })();
 
 // ===== src/core/search-core.js =====
@@ -1326,7 +1341,7 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
     PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED,
     PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK,
-    PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL,
+    PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict,
@@ -1538,12 +1553,12 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     }
     const e = item.entry;
     const names = [e.id].concat(e.aliases.length ? ['(' + e.aliases.join(',') + ')'] : []);
-    return e.label + '  ' + names.join(' ') + (e.usable ? '' : ' — unavailable');
+    return (e.display || e.label) + '  ' + names.join(' ') + (e.usable ? '' : ' — unavailable');
   }
   function promptEntries(snap) {
     return menuEntries({
       groups: snap.groups, tool: snap.tool, curated: PIPE_FITTING_ALIASES,
-      fixtureTool: PIPE_FIXTURE_TOOL, fixturePrefixes: PIPE_FIXTURE_ID_PREFIXES,
+      fixtureTool: PIPE_FIXTURE_TOOL, fixturePrefixes: PIPE_FIXTURE_ID_PREFIXES, fixtureNames: PIPE_FIXTURE_DISPLAY_NAMES,
     });
   }
   function refreshPrompt() {

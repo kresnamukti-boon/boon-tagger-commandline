@@ -172,5 +172,12 @@ export const PIPE_FITTING_ALIASES = {
 // hb). The family id is derived from what the open menu says, after stripping one of these
 // prefixes; nothing about which fixtures exist is hardcoded here.
 export const PIPE_FIXTURE_ID_PREFIXES = ['pipe-fixture-', 'fixture-', 'pipe-'];
+// Readable names shown in the bar for the fixture menu (display only: matching still uses native's
+// own label, the id and the aliases). Keyed by the short id (the id without its prefix). A fixture
+// not listed here is shown with native's own text.
+export const PIPE_FIXTURE_DISPLAY_NAMES = {
+  wc: 'Water Closet', lav: 'Lavatory', sh: 'Shower', ur: 'Urinal', ks: 'Kitchen Sink',
+  ms: 'Mop Sink', hb: 'Hose Bibb', fd: 'Floor Drain', rd: 'Roof Drain',
+};
 export const PIPE_FIXTURE_TOOL = 'fixture';
 export const PIPE_FITTING_TOOL = 'fitting';

@@ -113,6 +113,10 @@ the same way as above, on a **piping** page.
     `cross`, `90`, `el90`, `45`, `lr90`, `90r`, `reducer`, `cap`, `trapft`, ...). Names only match the
     menu that is open right now (in the fixture menu `fd` is the fixture, in the fitting menu it is
     the floor drain). Enter picks the top row, which is always the best match.
+  - In the fixture menu the bar shows readable names (Water Closet, Lavatory, Shower, Urinal, Kitchen
+    Sink, Mop Sink, Hose Bibb, Floor Drain, Roof Drain) next to the id and short name. Display only:
+    what you type still matches the id, the short name (`wc`, `lav`, ...) and native's own label.
+    A fixture not in that list is shown with the app's own text.
   - Backspace on an empty bar steps back to the port counts. **Esc** closes the prompt; a second Esc
     reaches the app and cancels the placement. **Space** on an empty bar brings the prompt back.
   - The prompt only clicks the app's own label button. It never presses Finish.

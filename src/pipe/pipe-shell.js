@@ -21,7 +21,7 @@
     PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
     PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED,
     PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK,
-    PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL,
+    PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict,
@@ -233,12 +233,12 @@
     }
     const e = item.entry;
     const names = [e.id].concat(e.aliases.length ? ['(' + e.aliases.join(',') + ')'] : []);
-    return e.label + '  ' + names.join(' ') + (e.usable ? '' : ' — unavailable');
+    return (e.display || e.label) + '  ' + names.join(' ') + (e.usable ? '' : ' — unavailable');
   }
   function promptEntries(snap) {
     return menuEntries({
       groups: snap.groups, tool: snap.tool, curated: PIPE_FITTING_ALIASES,
-      fixtureTool: PIPE_FIXTURE_TOOL, fixturePrefixes: PIPE_FIXTURE_ID_PREFIXES,
+      fixtureTool: PIPE_FIXTURE_TOOL, fixturePrefixes: PIPE_FIXTURE_ID_PREFIXES, fixtureNames: PIPE_FIXTURE_DISPLAY_NAMES,
     });
   }
   function refreshPrompt() {

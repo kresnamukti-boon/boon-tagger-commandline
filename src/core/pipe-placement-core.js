@@ -39,13 +39,21 @@ export function aliasesFor({ id, tool, curated, fixtureTool, fixturePrefixes }) 
   return (curated?.[id] ?? []).map(lower);
 }
 
+// Readable name for one family in the fixture menu, or null (then native's own text is shown).
+export function displayNameFor({ id, tool, fixtureTool, fixturePrefixes, names }) {
+  if (tool !== fixtureTool) return null;
+  const short = aliasesFor({ id, tool, curated: {}, fixtureTool, fixturePrefixes })[0];
+  return (short && names && Object.prototype.hasOwnProperty.call(names, short)) ? names[short] : null;
+}
+
 // Flat list of every fitting in the open menu as table entries (name = native's family id).
-export function menuEntries({ groups, tool, curated, fixtureTool, fixturePrefixes }) {
+export function menuEntries({ groups, tool, curated, fixtureTool, fixturePrefixes, fixtureNames }) {
   const entries = [];
   for (const group of groups ?? []) {
     for (const option of group.options ?? []) {
       entries.push({
         id: option.id, name: lower(option.id), label: String(option.label ?? option.id),
+        display: displayNameFor({ id: option.id, tool, fixtureTool, fixturePrefixes, names: fixtureNames }),
         aliases: aliasesFor({ id: option.id, tool, curated, fixtureTool, fixturePrefixes }),
         ports: group.ports, usable: option.usable === true && group.usable !== false,
       });
@@ -122,7 +130,7 @@ export function planPick(item) {
       : { action: 'status', message: item.ports + '-port fittings: none available for this box' };
   }
   if (!item.entry.usable) return { action: 'status', message: item.entry.label + ': not available for this box' };
-  return { action: 'choose', id: item.entry.id, label: item.entry.label };
+  return { action: 'choose', id: item.entry.id, label: item.entry.display ?? item.entry.label };
 }
 
 // Isolation while a placement panel is open: only the ways out and the view/undo actions run.

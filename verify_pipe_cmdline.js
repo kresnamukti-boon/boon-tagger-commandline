@@ -602,6 +602,21 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     eq(page.state.chosen, 'pipe-fd', 'fixture menu: "fd" is the fixture');
   }
   {
+    // readable names are display only; an unknown fixture falls back to native's own text
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fixture', groups: [{ ports: 1, ids: [['pipe-wc', 'Wc'], ['pipe-ks', 'Ks'], ['pipe-rd', 'Rd'], ['pipe-zz', 'Zz Thing']] }] }); page.tick();
+    eq(menuRows(page).slice(1), ['Water Closet  pipe-wc (wc)', 'Kitchen Sink  pipe-ks (ks)', 'Roof Drain  pipe-rd (rd)', 'Zz Thing  pipe-zz (zz)'], 'fixture menu: readable names shown, unknown id shows native\'s text');
+    typeText(page, 'wc'); page.press(input(page), 'Enter');
+    eq(page.state.chosen, 'pipe-wc', 'matching is unchanged: the alias still picks it');
+    ok(/Water Closet chosen/.test(lastStatus(page)), 'and the status uses the readable name');
+  }
+  {
+    // the fitting menu never gets fixture names, even for an id that looks the same
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fitting', groups: [{ ports: 1, ids: [['pipe-fd', 'Fd']] }] }); page.tick();
+    ok(/^Fd {2}pipe-fd/.test(menuRows(page)[1]), 'fitting menu: native text only');
+  }
+  {
     // the same word in the fitting menu is the fitting, not the fixture
     const page = makePage(); loadShell(page);
     page.openPanel({ tool: 'fitting', groups: [{ ports: 1, ids: [['pipe-floor-drain', 'Floor Drain'], ['pipe-cap', 'Cap']] }] }); page.tick();

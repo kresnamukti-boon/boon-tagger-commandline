@@ -2,11 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict,
+  panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict,
 } from '../src/core/pipe-placement-core.js';
 import {
   PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES,
-  PIPE_FIXTURE_TOOL, PIPE_ISOLATION_ALLOWED, PIPE_GRAPH_ACTIONS,
+  PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_ISOLATION_ALLOWED, PIPE_GRAPH_ACTIONS,
 } from '../src/pipe/pipe-tables.js';
 
 // The fitting menu as read live on 2026-10-06 (ports, then ids).
@@ -172,4 +172,17 @@ test('labelStep: usable fittings come first even when native lists an unavailabl
     tool: 'fitting', curated: PIPE_FITTING_ALIASES, fixtureTool: PIPE_FIXTURE_TOOL, fixturePrefixes: PIPE_FIXTURE_ID_PREFIXES,
   });
   assert.deepEqual(labelStep({ entries: e }).items.map((i) => i.entry.id), ['pipe-coupling', 'pipe-union']);
+});
+
+test('fixture display names: the nine approved names, fixture menu only, unknown ids fall back', () => {
+  assert.deepEqual(PIPE_FIXTURE_DISPLAY_NAMES, {
+    wc: 'Water Closet', lav: 'Lavatory', sh: 'Shower', ur: 'Urinal', ks: 'Kitchen Sink', ms: 'Mop Sink', hb: 'Hose Bibb', fd: 'Floor Drain', rd: 'Roof Drain',
+  });
+  const base = { fixtureTool: PIPE_FIXTURE_TOOL, fixturePrefixes: PIPE_FIXTURE_ID_PREFIXES, names: PIPE_FIXTURE_DISPLAY_NAMES };
+  assert.equal(displayNameFor({ ...base, id: 'pipe-wc', tool: 'fixture' }), 'Water Closet');
+  assert.equal(displayNameFor({ ...base, id: 'pipe-rd', tool: 'fixture' }), 'Roof Drain');
+  assert.equal(displayNameFor({ ...base, id: 'pipe-zz', tool: 'fixture' }), null);
+  assert.equal(displayNameFor({ ...base, id: 'pipe-toString', tool: 'fixture' }), null, 'no prototype leakage');
+  assert.equal(displayNameFor({ ...base, id: 'pipe-fd', tool: 'fitting' }), null, 'never in the fitting menu');
+  assert.equal(displayNameFor({ ...base, id: 'pipe-fd', tool: 'fixture', names: undefined }), null);
 });
