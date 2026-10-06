@@ -34,7 +34,8 @@ const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s
 /* ---------- always run: native-ids.json covers everything our tables depend on ---------- */
 
 test('native-ids.json records its source commit and the live check date', () => {
-  assert.equal(ids.source, 'constructions-tagger bb2935ac');
+  assert.match(ids.source, /^constructions-tagger /);
+  assert.match(ids.deploymentVersion, /^[0-9a-f]{8}$/, 'the deployment the files were last checked against (from the page\'s own bootstrap)');
   assert.match(ids.checkedLive, /^\d{4}-\d{2}-\d{2}$/);
 });
 

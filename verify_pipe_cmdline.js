@@ -16,24 +16,13 @@ const DIST = path.join(__dirname, 'dist', 'rw_pipe_cmdline.js');
 const PIPE_LOADER = path.join(__dirname, 'console_loader_pipe.js');
 const DUCT_LOADER = path.join(__dirname, 'console_loader.js');
 
+// Freshness is decided by CONTENT (rebuild in memory and compare), not by file times: a fresh git clone gives
+// every file the same mtime, so the old mtime check called a byte-identical build "stale" (scripts/dist-fresh.js).
 (function checkFreshness() {
-  for (const p of [DIST, PIPE_LOADER]) {
-    if (!fs.existsSync(p)) { console.error(`${path.basename(p)} is missing: run \`bash build_pipe_loader.sh\` first.`); process.exit(1); }
-  }
-  const builtAt = Math.min(fs.statSync(DIST).mtimeMs, fs.statSync(PIPE_LOADER).mtimeMs);
-  const sources = [
-    ...fs.readdirSync(path.join(__dirname, 'src', 'pipe')).map((n) => path.join('src', 'pipe', n)),
-    ...fs.readdirSync(path.join(__dirname, 'src', 'core')).filter((n) => n.startsWith('pipe-')).map((n) => path.join('src', 'core', n)),
-    path.join('src', 'core', 'command-line-core.js'), path.join('src', 'core', 'table-core.js'),
-    path.join('src', 'features', 'actions.js'),
-    'rw_host.js', 'rw_panelux.js', 'rw_core.js',
-    path.join('scripts', 'build-pipe-dist.js'), path.join('scripts', 'build-pipe-loader.js'),
-  ];
-  for (const rel of sources) {
-    if (fs.statSync(path.join(__dirname, rel)).mtimeMs > builtAt) {
-      console.error(`piping build is stale (${rel} was edited more recently): run \`bash build_pipe_loader.sh\` before re-testing.`);
-      process.exit(1);
-    }
+  const result = require('./scripts/dist-fresh.js').pipeFresh();
+  if (!result.fresh) {
+    console.error(`piping build is stale: ${result.reason}`);
+    process.exit(1);
   }
 })();
 

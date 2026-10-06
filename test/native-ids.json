@@ -1,5 +1,5 @@
 {
-  "source": "constructions-tagger bb2935ac",
+  "source": "constructions-tagger deploy 6aadf9a4 (earlier recorded against commit bb2935ac, deploy 76785ba3)",
   "checkedLive": "2026-10-06",
   "note": "Every native id, class, attribute and string the piping command line depends on. test/native-ids.test.mjs checks each against saved copies of native's own files in test/fixtures/native/ (kept out of git; see FETCHED.txt there). Where the saved copy and the live page disagree, the live page wins.",
   "fixtures": {
@@ -8,11 +8,11 @@
     "pipe-bbox-connect.js": "static/project_graph/js/pipe-bbox-connect.js (not used until the placement steps)",
     "pipe-diameter.js": "static/project_graph/js/pipe-diameter.js (not used until the port-size step)",
     "pipe-command-line.js": "static/project_graph/js/pipe-command-line.js (native's own piping table builder; reference only)",
-    "graph-session-entry.js": "static/project_graph/js/graph-session-entry.<hash>.js (builds the tool rail markup)"
+    "graph-session-entry.js": "static/project_graph/js/graph-session-entry.<hash>.js (builds the tool rail markup); hash at the last refetch: 34d090dba1f3"
   },
   "sha256First16": {
     "pipe-session-ui.js": "4faa69ba06dc5e20",
-    "pipe-bbox-connect.js": "51bab41417171308",
+    "pipe-bbox-connect.js": "f80bc8900a7e5ed4",
     "pipe-diameter.js": "8087fb4bad469686",
     "pipe-command-line.js": "614c7dfb8d1ec2c5"
   },
@@ -179,5 +179,6 @@
       "toggleAdjustPorts(enabled) {",
       "this.update({ ...this.state, adjustPorts: true, ports: [], phase: 'ports' });"
     ]
-  }
+  },
+  "deploymentVersion": "6aadf9a4"
 }

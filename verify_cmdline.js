@@ -18,37 +18,15 @@ const path = require('path');
 // discipline as before (exercise the real shipped output, not a
 // reimplementation). A stale dist/ built before the most recent src/ edit
 // has silently passed every test against yesterday's behavior before (this
-// project's own "live-testing gotchas" — see CLAUDE.md), so this checks
-// mtimes up front and refuses to run against a stale build rather than
-// risk it happening here too.
+// project's own "live-testing gotchas" — see CLAUDE.md), so this rebuilds
+// dist/ in memory and refuses to run when the file on disk differs. Decided
+// by CONTENT, not file times: a fresh git clone gives every file the same
+// "now" mtime, which made the old mtime check report "stale" for a build
+// that was byte-identical to a rebuild (scripts/dist-fresh.js).
 (function checkDistFreshness(){
-  const distPath = path.join(__dirname, 'dist', 'rw_cmdline.js');
-  if (!fs.existsSync(distPath)) {
-    console.error('dist/rw_cmdline.js is missing — run `bash build_loader.sh` first.');
-    process.exit(1);
-  }
-  const distMtime = fs.statSync(distPath).mtimeMs;
-  const srcRoots = ['src', 'build_loader.sh', path.join('scripts', 'build-dist.js')];
-  let newest = null;
-  (function walk(p){
-    const stat = fs.statSync(p);
-    if (stat.isDirectory()) {
-      // src/pipe/ and src/**/pipe-*.js feed the separate piping build, not this dist.
-      for (const name of fs.readdirSync(p)) if (!name.startsWith('pipe')) walk(path.join(p, name));
-      return;
-    }
-    if (!newest || stat.mtimeMs > newest.mtimeMs) newest = { path: p, mtimeMs: stat.mtimeMs };
-  })(path.join(__dirname, srcRoots[0]));
-  for (const rel of srcRoots.slice(1)) {
-    const abs = path.join(__dirname, rel);
-    const stat = fs.statSync(abs);
-    if (!newest || stat.mtimeMs > newest.mtimeMs) newest = { path: abs, mtimeMs: stat.mtimeMs };
-  }
-  if (newest && newest.mtimeMs > distMtime) {
-    console.error(
-      `dist/rw_cmdline.js is stale (${path.relative(__dirname, newest.path)} was edited more ` +
-      `recently) — run \`bash build_loader.sh\` before re-testing.`
-    );
+  const result = require('./scripts/dist-fresh.js').ductFresh();
+  if (!result.fresh) {
+    console.error(result.reason);
     process.exit(1);
   }
 })();
