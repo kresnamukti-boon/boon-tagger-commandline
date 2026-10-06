@@ -385,6 +385,26 @@ Not verified live: the cross (no four-way crossing on the test page), vertical-v
   an unreadable catalog warns and does not block. Upstream: none of the key/focus plumbing; native can read its own sizes
   and rules directly, and should keep the "never touch an existing selected fitting" rule if a command line can set sizes.
 
+### Step 5 (setting commands)
+
+- `src/core/pipe-setting-core.js` (`settingVerdict`, `optionMatch`, `diameterPlan`, `readbackVerdict`, `optionRowText`),
+  `PIPE_SETTING_IDS` / `PIPE_SETTING_ENTRIES` / `PIPE_SOURCE_UNRESOLVED` in `src/pipe/pipe-tables.js`, host `readSettings` /
+  `writeSetting` (the only writer; re-checks its own guard) / `isSettingControl`. Commands: `diameter` (`dia`), `dsource`,
+  `material` (`mat`), `msource`. Options are read live from each select; nothing hardcoded.
+- **Hazard:** native's `#graph-pipe-diameter` and `#graph-pipe-diameter-source` change handlers call `updateResizeFacts` /
+  `updatePortResizeFacts` when a resizable entity is selected (a saved command; the custom box commits on blur/Enter).
+  Material and its source go through `readFacts` only (no command found), but all four follow one rule: write only with
+  nothing selected (`__graphDebug.selectedEntityId`, fail closed) and no placement panel open, checked in the shell and again
+  inside `host.writeSetting`. A non-standard size picks "Custom" and fills the box with `input` + `change` events, never
+  blur or Enter (native's commit path). Decisions (user): refuse during a placement; refuse material too with a selection;
+  non-standard sizes go to Custom automatically.
+- Readback right after writing, and again after 400 ms, because native's `sync()` rewrites controls from its stored facts
+  (the source select is guarded by `activeElement`, material is not). A write that gets reverted is reported.
+- Side fix in `planQuery` (pipe only): a refused plan now names its entry, and the shell shows its reason instead of running
+  some other highlighted row. Before, typing the exact name of an unusable entry could run a different prefix match.
+- Resizing an EXISTING pipe (selected) is deliberately a later step. Upstream: native can set its own next-draw facts
+  directly; keep the "never change a selected item by accident" rule if a command line can write these.
+
 ### Action log
 
 `src/core/pipe-log-core.js` (`appendLog`, `makeLogEntry`, `parseRevision`, `formatLog`) + `logAction` in the shell:

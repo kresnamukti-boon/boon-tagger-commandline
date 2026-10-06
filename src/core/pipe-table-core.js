@@ -126,7 +126,8 @@ export function planEntry(entry, state) {
 export function planQuery(table, query, stateFor) {
   const entry = resolveCommand(table, query);
   if (!entry) return { action: 'status', message: `unknown command: ${String(query ?? '').trim()}` };
-  return planEntry(entry, stateFor(entry));
+  // A refused plan still names the entry, so the caller can say why instead of running something else.
+  return { ...planEntry(entry, stateFor(entry)), entry };
 }
 
 // Which entries the dropdown lists: every tool (a disabled one stays visible so its reason can be
@@ -136,7 +137,7 @@ export function listEntries(table, stateFor) {
   const rows = [];
   for (const entry of table) {
     const state = stateFor(entry);
-    if ((entry.kind === 'action' || entry.kind === 'adjust') && !state.usable) continue;
+    if ((entry.kind === 'action' || entry.kind === 'adjust' || entry.kind === 'setting') && !state.usable) continue;
     rows.push({ entry, state });
   }
   return rows;

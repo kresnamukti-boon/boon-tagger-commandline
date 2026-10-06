@@ -148,6 +148,24 @@ export const PIPE_ADJUST = { labelText: 'Adjust ports' };
 export const PIPE_ADJUST_ENTRY = {
   id: 'adjust', name: 'adjust', label: 'Adjust ports', aliases: ['ports', 'adj'], kind: 'adjust',
 };
+// Step 5: native's next-draw "Pipe properties" controls. Typed commands for them; written only when nothing is
+// selected and no fitting is being placed (with a selection native's diameter handlers send a SAVED resize).
+export const PIPE_SETTING_IDS = {
+  diameter: 'graph-pipe-diameter',
+  custom: 'graph-pipe-diameter-custom',
+  dsource: 'graph-pipe-diameter-source',
+  material: 'graph-pipe-material',
+  msource: 'graph-pipe-material-source',
+};
+// `control` names the PIPE_SETTING_IDS key the entry writes; `valueKind` is how a value is entered.
+export const PIPE_SETTING_ENTRIES = [
+  { id: 'diameter', name: 'diameter', label: 'Diameter', aliases: ['dia'], kind: 'setting', control: 'diameter', valueKind: 'size' },
+  { id: 'dsource', name: 'dsource', label: 'Diameter source', aliases: [], kind: 'setting', control: 'dsource', valueKind: 'pick' },
+  { id: 'material', name: 'material', label: 'Material', aliases: ['mat'], kind: 'setting', control: 'material', valueKind: 'pick' },
+  { id: 'msource', name: 'msource', label: 'Material source', aliases: [], kind: 'setting', control: 'msource', valueKind: 'pick' },
+];
+// The diameter source value that makes native lock both diameter controls.
+export const PIPE_SOURCE_UNRESOLVED = 'unresolved';
 export const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 export const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';

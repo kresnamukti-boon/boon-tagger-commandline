@@ -26,6 +26,7 @@
     PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
     PIPE_FINISH_TOOLS, PIPE_FINISH_KEYS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
     PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY,
+    PIPE_SETTING_IDS, PIPE_SETTING_ENTRIES, PIPE_SOURCE_UNRESOLVED,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
@@ -37,6 +38,7 @@
     SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows,
   } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
+  const { settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowText } = __m_pipe_setting_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
   } = __m_pipe_table_core;
@@ -44,7 +46,7 @@
   const { createPipeHost } = __m_pipe_host;
 
   const host = createPipeHost({
-    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, adjustLabelText: PIPE_ADJUST.labelText, unavailableMark: PIPE_UNAVAILABLE_MARK,
+    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, settingIds: PIPE_SETTING_IDS, unresolvedValue: PIPE_SOURCE_UNRESOLVED, adjustLabelText: PIPE_ADJUST.labelText, unavailableMark: PIPE_UNAVAILABLE_MARK,
   });
 
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
@@ -71,7 +73,7 @@
       curatedAliases: PIPE_TOOL_ALIASES, actions: PIPE_GRAPH_ACTIONS,
     });
   }
-  function currentTable() { return buildTable(derive().tools, PIPE_GRAPH_ACTIONS).concat([PIPE_ADJUST_ENTRY]); }
+  function currentTable() { return buildTable(derive().tools, PIPE_GRAPH_ACTIONS).concat([PIPE_ADJUST_ENTRY], PIPE_SETTING_ENTRIES); }
   // Can the bar tick/untick native's Adjust ports box right now? (see adjustVerdict)
   function adjustFacts() {
     const snap = host.readPanel();
@@ -81,7 +83,22 @@
       found: a.found, visible: a.visible, disabled: a.disabled,
     };
   }
+  // Can the bar write this setting right now? (see settingVerdict; the host checks it again when writing)
+  function settingFacts(entry) {
+    const st = host.readSettings();
+    const c = st.controls[entry.control] || { found: false };
+    const src = st.controls.dsource || { found: false };
+    return {
+      label: entry.label, found: c.found, visible: c.visible, disabled: c.disabled,
+      panelOpen: st.panelOpen, selectionReadable: st.selectionReadable, selectedEntityId: st.selectedEntityId,
+      sourceUnresolved: entry.control === 'diameter' && src.found && src.value === PIPE_SOURCE_UNRESOLVED,
+    };
+  }
   function stateFor(entry) {
+    if (entry.kind === 'setting') {
+      const v = settingVerdict(settingFacts(entry));
+      return { usable: v.ok, forbidden: false, reason: v.ok ? null : v.message.replace(/^[^:]+: /, '') };
+    }
     if (entry.kind === 'adjust') {
       const v = adjustVerdict(adjustFacts());
       return { usable: v.ok, forbidden: false, reason: v.ok ? null : v.message.replace(/^adjust ports: /, '') };
@@ -128,6 +145,7 @@
     const iso = isolationVerdict({ panelOpen: host.readPanel().open, name: entry.name, allowed: PIPE_ISOLATION_ALLOWED });
     if (!iso.ok) { status(iso.message); return false; }
     if (entry.kind === 'adjust') return runAdjust();
+    if (entry.kind === 'setting') return startSetting(entry);
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
@@ -161,7 +179,7 @@
   // The label prompt for native's Place Fitting panel (Step 2).
   const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
-  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', adjust: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
+  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', adjust: '#8ecae6', setting: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
 
   function ensureMenu() {
     if (menuEl) return;
@@ -208,6 +226,12 @@
       head.textContent = sizesUi.header;
       menuEl.appendChild(head);
     }
+    if (settingUi.active && settingUi.header) {
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
+      head.textContent = settingUi.header;
+      menuEl.appendChild(head);
+    }
     if (prompt.active && prompt.header) {
       const head = document.createElement('div');
       head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
@@ -220,6 +244,8 @@
       let usable, color, label;
       if (row.size) {
         usable = true; color = COLORS.tool; label = row.size.text;
+      } else if (row.setting) {
+        usable = true; color = COLORS.tool; label = optionRowText(row.setting.option, row.setting.index) + (row.setting.current ? '  (now)' : '');
       } else if (row.system) {
         usable = true; color = COLORS.system; label = row.system.name;
       } else if (row.prompt) {
@@ -238,7 +264,7 @@
       el.textContent = label;
       if (i === menuHighlight) highlighted = el;
       el.addEventListener('mousedown', function(ev){ ev.preventDefault(); }); // keep focus through the click
-      el.addEventListener('click', function(){ if (row.size) pickSizeChoice(row.size); else if (row.system) pickSystem(row.system); else if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
+      el.addEventListener('click', function(){ if (row.size) pickSizeChoice(row.size); else if (row.setting) applyPickedSetting(row.setting.option); else if (row.system) pickSystem(row.system); else if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
       menuEl.appendChild(el);
     });
     positionMenu();
@@ -255,6 +281,7 @@
   function openMenu(query) {
     if (prompt.active) { refreshPrompt(); return; }
     if (sizesUi.active) { return; } // the sizes step owns the menu; typing is the value being entered
+    if (settingUi.active) { refreshSettingRows(); return; } // the setting prompt owns the menu
     const sq = systemQuery(query);
     if (sq !== null) { openSystemMenu(sq); return; }
     menuItems = rowsFor(query);
@@ -574,6 +601,130 @@
     }
   }
 
+  /* ---------- Step 5: setting commands (diameter, dsource, material, msource) ---------- */
+  // Each opens a small prompt in the bar (a size to type, or the select's own options to pick) and writes
+  // native's next-draw control only when nothing is selected and no fitting is being placed (with a pipe
+  // selected, native's diameter handlers send a saved resize). The host checks again before writing.
+  const settingUi = { active: false, stage: null, entry: null, options: [], header: '' };
+  function settingNow(entry, st) {
+    const c = st.controls[entry.control] || {};
+    if (entry.control === 'diameter') {
+      const size = effectiveSize({ selectValue: c.value, customValue: (st.controls.custom || {}).value });
+      return size ? formatSize(size) + '"' : 'unresolved';
+    }
+    const hit = (c.options || []).filter(function(o){ return o.value === c.value; })[0];
+    return hit ? (hit.text || hit.value || 'blank') : (c.value || 'blank');
+  }
+  function renderSettingHeader() {
+    const st = host.readSettings();
+    const entry = settingUi.entry;
+    settingUi.header = entry.label + ' (now ' + settingNow(entry, st) + ', applies to the next pipe): '
+      + (settingUi.stage === 'value' ? 'type a size, Enter applies, Esc cancels. Use 2-1/2, not 2 1/2' : 'pick one (type to filter, or a number), Esc cancels');
+  }
+  function refreshSettingRows() {
+    const st = host.readSettings();
+    const c = st.controls[settingUi.entry.control] || { options: [] };
+    settingUi.options = c.options || [];
+    renderSettingHeader();
+    ensureMenu();
+    if (settingUi.stage === 'value') {
+      menuItems = []; menuHighlight = -1;
+      menuEl.innerHTML = '';
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+      head.textContent = settingUi.header;
+      menuEl.appendChild(head);
+      positionMenu();
+      menuEl.style.display = 'block';
+      return;
+    }
+    const q = (inputEl ? inputEl.value : '').trim().toLowerCase();
+    const rows = settingUi.options.map(function(o, i){ return { setting: { option: o, index: i, current: o.value === c.value } }; });
+    menuItems = q ? rows.filter(function(r){
+      const o = r.setting.option;
+      return (/^\d+$/.test(q) && r.setting.index + 1 === Number(q)) || o.text.toLowerCase().indexOf(q) !== -1 || o.value.toLowerCase().indexOf(q) !== -1;
+    }) : rows;
+    const cur = menuItems.findIndex(function(r){ return r.setting.current; });
+    menuHighlight = menuItems.length ? (q || cur < 0 ? 0 : cur) : -1;
+    renderMenu();
+  }
+  function startSetting(entry) {
+    const v = settingVerdict(settingFacts(entry));
+    if (!v.ok) { status(v.message); return false; }
+    mountBar();
+    if (!inputEl) return false;
+    settingUi.active = true; settingUi.entry = entry; settingUi.stage = entry.valueKind === 'size' ? 'value' : 'pick';
+    inputEl.value = '';
+    inputEl.focus();
+    refreshSettingRows();
+    return true;
+  }
+  function endSetting(how) {
+    if (!settingUi.active) return;
+    const label = settingUi.entry ? settingUi.entry.label : 'setting';
+    settingUi.active = false; settingUi.stage = null; settingUi.entry = null; settingUi.options = []; settingUi.header = '';
+    if (inputEl) inputEl.value = '';
+    hideMenu();
+    if (how === 'cancelled') status(label + ': unchanged');
+  }
+  function enterSetting() {
+    const entry = settingUi.entry;
+    const typed = inputEl.value.trim();
+    if (settingUi.stage === 'value') {
+      if (!typed) { endSetting('cancelled'); if (inputEl) inputEl.blur(); return; }
+      const st = host.readSettings();
+      const plan = diameterPlan(typed, ((st.controls.diameter || {}).options || []).map(function(o){ return o.value; }));
+      if (!plan.ok) { status(entry.label + ': ' + plan.message); return; }
+      applySetting(entry, plan, formatSize(plan.value) + '"');
+      return;
+    }
+    if (typed) {
+      const m = optionMatch(settingUi.options, typed);
+      if (!m.ok) { status(entry.label + ': ' + m.message); return; }
+      applyPickedSetting(m.option);
+    } else if (menuHighlight >= 0 && menuItems[menuHighlight] && menuItems[menuHighlight].setting) {
+      applyPickedSetting(menuItems[menuHighlight].setting.option);
+    } else status(entry.label + ': nothing matches');
+  }
+  function applyPickedSetting(option) {
+    if (!settingUi.active) return;
+    applySetting(settingUi.entry, { mode: 'select', selectValue: option.value }, option.text || option.value || 'blank');
+  }
+  function applySetting(entry, plan, shown) {
+    const v = settingVerdict(settingFacts(entry));
+    if (!v.ok) { status(v.message); endSetting(); if (inputEl) inputEl.blur(); return false; }
+    logAction('setting', 'set ' + entry.name + ' to ' + shown);
+    const r = host.writeSetting(entry.control, plan);
+    if (!r.ok) {
+      unlogLast(); status(entry.label + ': could not be changed (' + r.reason + '), nothing was written');
+      endSetting(); if (inputEl) inputEl.blur(); return false;
+    }
+    own.lastCmdAt = Date.now();
+    endSetting();
+    // Native may focus the custom box when "Custom" is picked: take the keyboard back once, and guard the keys.
+    labelGuardUntil = Date.now() + LABEL_GUARD_MS;
+    setTimeout(refocusBarOnce, 0);
+    report(entry, plan, shown, r);
+    // Native rewrites these controls from its stored facts now and then: look again a moment later.
+    setTimeout(function(){ recheckSetting(entry, plan, shown); }, 400);
+    if (inputEl) inputEl.blur();
+    return true;
+  }
+  function readBack(entry) {
+    const st = host.readSettings();
+    return { selectValue: (st.controls[entry.control] || {}).value, customValue: (st.controls.custom || {}).value, st: st };
+  }
+  function report(entry, plan, shown, r) {
+    const back = readbackVerdict(plan, r);
+    status(back.ok ? entry.label + ' set to ' + shown + ' (next pipe)'
+      : entry.label + ': asked for ' + shown + ' but ' + back.message + ' (now ' + settingNow(entry, readBack(entry).st) + ')');
+  }
+  function recheckSetting(entry, plan, shown) {
+    const b = readBack(entry);
+    const back = readbackVerdict(plan, b);
+    if (!back.ok) status(entry.label + ': the app changed it back (now ' + settingNow(entry, b.st) + ')');
+  }
+
   function finishFacts(e) {
     const snap = host.readPanel();
     const fin = host.readFinish(PIPE_FINISH_BUTTON_ID);
@@ -613,6 +764,7 @@
     // Once, never in a loop; only if native really did take focus into its own panel.
     if (!inputEl || document.activeElement === inputEl) return;
     if (host.readPanel().open && (host.focusInPanel() || host.isPortControl(document.activeElement))) inputEl.focus();
+    else if (host.isSettingControl(document.activeElement)) inputEl.blur();
   }
   // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
   function promptTick() {
@@ -624,6 +776,10 @@
     });
     updatePortNote(snap);
     sizeTick(snap);
+    if (settingUi.active) {
+      const sv = settingVerdict(settingFacts(settingUi.entry));
+      if (!sv.ok) { status(sv.message); endSetting(); }
+    }
     // Safety net: a hint we don't recognise means native changed this step. One line, nothing else.
     const watch = hintWatch({ open: snap.open, hint: snap.hint, prefixes: PIPE_HINT_PREFIXES, lastWarned: unknownHintWarned });
     unknownHintWarned = watch.hint;
@@ -636,7 +792,7 @@
   }
   function reopenPrompt() { prompt.dismissed = false; startPrompt(); }
 
-  function clearBar() { if (inputEl) inputEl.value = ''; hideMenu(); }
+  function clearBar() { if (settingUi.active) return; if (inputEl) inputEl.value = ''; hideMenu(); }
   function runAndClear(entry) { if (runEntry(entry)) clearBar(); else hideMenu(); }
 
   /* ---------- the bar ---------- */
@@ -665,7 +821,7 @@
     inputEl.addEventListener('input', function(){ openMenu(inputEl.value); });
     inputEl.addEventListener('keydown', onInputKeydown);
     inputEl.addEventListener('blur', function(){
-      setTimeout(function(){ if (document.activeElement !== inputEl) hideMenu(); }, 150);
+      setTimeout(function(){ if (document.activeElement !== inputEl) { if (settingUi.active) endSetting('cancelled'); hideMenu(); } }, 150);
     });
   }
 
@@ -686,8 +842,22 @@
       // .value fires no input event, so the list stays put and keeps cycling over the same rows.
       if (menuHighlight >= 0 && menuItems[menuHighlight]) {
         const row = menuItems[menuHighlight];
-        inputEl.value = row.size ? '' : row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
+        inputEl.value = row.size ? '' : row.setting ? String(row.setting.index + 1) : row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
       }
+      return;
+    }
+    if (settingUi.active && (e.key === 'Enter' || e.key === ' ')) {
+      // Consumed before anything is written: the same real keypress must not also reach native.
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      enterSetting();
+      return;
+    }
+    if (e.key === 'Escape' && settingUi.active) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      endSetting('cancelled');
+      if (inputEl) inputEl.blur();
       return;
     }
     if (sizesUi.active && (e.key === 'Enter' || e.key === ' ')) {
@@ -729,6 +899,8 @@
       // An exact name/label/alias always wins; otherwise run the highlighted completion.
       const plan = planQuery(currentTable(), typed, stateFor);
       if (typed && plan.action !== 'status') { if (runEntry(plan.entry)) clearBar(); return; }
+      // An exact name that is not usable right now says why; it never runs some other highlighted row instead.
+      if (typed && plan.entry) { status(plan.message); return; }
       if (menuHighlight >= 0 && menuItems[menuHighlight]) { runAndClear(menuItems[menuHighlight].entry); return; }
       if (typed) status(plan.message);
       return;
@@ -780,7 +952,7 @@
     window.addEventListener(type, function(e){
       if (Date.now() > labelGuardUntil) return;
       if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
-      if (!host.isLabelTrigger(e.target) && !host.isPortControl(e.target)) return;
+      if (!host.isLabelTrigger(e.target) && !host.isPortControl(e.target) && !host.isSettingControl(e.target)) return;
       e.preventDefault(); e.stopImmediatePropagation();
     }, true);
   });

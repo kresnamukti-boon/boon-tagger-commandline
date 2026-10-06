@@ -46,6 +46,12 @@
       "graph-system-select",
       "graph-toast-stack",
       "graph-pipe-port-diameters",
+      "graph-piping-facts",
+      "graph-pipe-diameter",
+      "graph-pipe-diameter-custom",
+      "graph-pipe-diameter-source",
+      "graph-pipe-material",
+      "graph-pipe-material-source",
       "graph-session-bootstrap"
     ],
     "strings": [
@@ -107,7 +113,18 @@
       "adjustPortsLabel.append(adjustPorts, document.createTextNode(' Adjust ports'));",
       "adjustPortsLabel.hidden = !operation.detectedPorts?.length || !operation.familyId;",
       "adjustPorts.addEventListener('change', () => { try { bboxController()?.toggleAdjustPorts(adjustPorts.checked); }",
-      "adjustPorts.checked = operation.adjustPorts === true;"
+      "adjustPorts.checked = operation.adjustPorts === true;",
+      "fill(controls['diameter-source'], ['label', 'legend', 'schedule', 'inference', 'unresolved']);",
+      "fill(controls['material-source'], ['label', 'legend', 'schedule', 'inference']);",
+      "if (isTextCommitControl) continue; // wired explicitly, below",
+      ": (isInsulation && !isThickness) ? updateInsulationFacts : readFacts,",
+      "controls.diameter.addEventListener('change', () => {",
+      "if (!pipeResizeCommand(entity?.fields)) return;",
+      "controls['diameter-custom'].focus?.();",
+      "controls['diameter-custom'].addEventListener('blur', () => {",
+      "if (e.key === 'Enter' && pipeResizeCommand(selectedEntity()?.fields)) void updateResizeFacts();",
+      "controls['diameter-source'].addEventListener('change', () => {",
+      "void ((portGroups && portGroups.length > 1) ? updatePortResizeFacts() : updateResizeFacts());"
     ]
   },
   "tradePackValues": {
