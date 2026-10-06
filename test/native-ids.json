@@ -41,11 +41,14 @@
       "graph-rename-system",
       "graph-assign-network",
       "graph-finish-route",
-      "graph-cancel-route"
+      "graph-cancel-route",
+      "graph-pipe-bbox-op-panel",
+      "graph-system-select"
     ],
     "strings": [
       "data-trade=\"piping\"",
-      "data-capture-control-id=\"submit-graph\""
+      "data-capture-control-id=\"submit-graph\"",
+      "data-capture-control-id=\"inspector-system\""
     ]
   },
   "entryBundle": {
@@ -57,17 +60,92 @@
       "aria-disabled",
       "__graphDebug",
       "activeTool",
-      "tradePack === \"piping\""
+      "tradePack === \"piping\"",
+      "get selectedEntityId()",
+      "if (selId) { void assignPipeService(selId, elements.systemSelect.value); return; }",
+      "elements.systemSelect.addEventListener(\"change\""
     ]
   },
   "pipeSessionUi": {
     "strings": [
       "export const PIPE_TOOL_KEYS",
-      "const SUPPORTED_TOOLS"
+      "const SUPPORTED_TOOLS",
+      "subtypeMenu.id = 'graph-pipe-fitting-select-menu'",
+      "heading.className = 'graph-pipe-fitting-select-group-label'",
+      "bboxUnresolvedEntryWarning.className = 'graph-pipe-bbox-unresolved-entry-warning'",
+      "option.dataset.familyId = family.id",
+      "' · unavailable'",
+      "Click two opposite corners",
+      "Choose the fitting subtype.",
+      "Click the detected intersection for",
+      "Finish inserts this fitting.",
+      "Saving pipe and fitting",
+      "\" auto-matched from the crossed run.",
+      "subtype.className = 'graph-pipe-fitting-select-trigger'",
+      "if (['ArrowDown', 'Enter', ' '].includes(event.key)) {",
+      "subtype.focus();",
+      "Pick a different diameter",
+      "Enter the new diameter above, then Finish.",
+      "→ to "
     ]
   },
   "tradePackValues": {
     "piping": "confirmed live (data-trade=\"piping\")",
     "ductwork": "given by native's TradePack (\"ductwork\" | \"piping\"); NOT yet seen on a live duct page - confirm once before merging"
-  }
+  },
+  "families": {
+    "fitting": [
+      "pipe-tee-eq",
+      "pipe-tee-reducing",
+      "pipe-wye",
+      "pipe-sanitary-tee",
+      "pipe-wye-reducer",
+      "pipe-cross",
+      "pipe-elbow-90-vertical",
+      "pipe-cap",
+      "pipe-plug",
+      "pipe-cleanout",
+      "pipe-floor-drain",
+      "pipe-hose-bibb",
+      "pipe-hydrant",
+      "pipe-nozzle",
+      "pipe-elbow-45",
+      "pipe-elbow-90",
+      "pipe-elbow-lr-45",
+      "pipe-elbow-lr-90",
+      "pipe-elbow-sr-45",
+      "pipe-elbow-sr-90",
+      "pipe-elbow-90-reducing",
+      "pipe-tee-eq-vertical",
+      "pipe-tee-reducing-vertical",
+      "pipe-wye-vertical",
+      "pipe-wye-reducer-vertical",
+      "pipe-reducer-concentric",
+      "pipe-reducer-eccentric",
+      "pipe-union",
+      "pipe-coupling",
+      "pipe-strainer-y",
+      "pipe-strainer-t",
+      "pipe-trap-p",
+      "pipe-trap-s",
+      "pipe-trap-steam-ft",
+      "pipe-trap-steam-tt",
+      "pipe-trap-steam-st",
+      "pipe-trap-steam-td",
+      "pipe-expansion-joint-bellows",
+      "pipe-expansion-joint-slip"
+    ],
+    "fixture": [
+      "pipe-wc",
+      "pipe-lav",
+      "pipe-sh",
+      "pipe-ur",
+      "pipe-ks",
+      "pipe-ms",
+      "pipe-hb",
+      "pipe-fd",
+      "pipe-rd"
+    ]
+  },
+  "familiesNote": "Observed on the test page's open menus (fitting tool, fixture tool), 2026-10-06. Families come from the server contract, not from the JS files; scripts/check-native-drift.js --menu compares a fresh dump to this list."
 }

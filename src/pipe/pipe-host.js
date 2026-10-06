@@ -4,7 +4,7 @@
 // page and against the Node test harness.
 import { isElementVisible } from '../features/actions.js';
 
-export function createPipeHost({ doc, win, ids }) {
+export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -26,6 +26,11 @@ export function createPipeHost({ doc, win, ids }) {
       return railButtons().find((el) => String(el.getAttribute('data-tool') || '').trim().toLowerCase() === entry.name) || null;
     }
     return entry.btn ? doc.getElementById(entry.btn) : null;
+  }
+
+  function activeTool() {
+    const debug = win.__graphDebug;
+    return debug && typeof debug.activeTool === 'string' ? debug.activeTool : null;
   }
 
   return {
@@ -76,9 +81,89 @@ export function createPipeHost({ doc, win, ids }) {
       return true;
     },
 
-    readActiveTool() {
+    readActiveTool: activeTool,
+
+    // Plain snapshot of native's "Place Fitting" panel (see pipe-placement-core.js for the shape).
+    // The menu is rebuilt by native even while it is hidden, so it is read straight from the DOM.
+    readPanel() {
+      const panel = doc.getElementById(panelIds.panel);
+      if (!panel || panel.hidden) return { open: false, tool: null, hint: '', groups: [] };
+      let hint = '';
+      for (const child of panel.children || []) {
+        if (child.tagName === 'P' && String(child.className || '').indexOf(panelIds.warningClass) === -1) { hint = text(child); break; }
+      }
+      const menu = doc.getElementById(panelIds.menu);
+      const groups = [];
+      if (menu) {
+        for (const section of menu.children || []) {
+          const heading = Array.from(section.children || []).find((c) => String(c.className || '').indexOf(panelIds.groupLabelClass) !== -1);
+          const headingText = text(heading);
+          const ports = parseInt(headingText, 10);
+          const options = Array.from(section.querySelectorAll(panelIds.optionSelector)).map((btn) => ({
+            id: btn.getAttribute('data-family-id') || '',
+            label: text(btn.children && btn.children[0]),
+            usable: !btn.disabled,
+          }));
+          groups.push({ ports: isNaN(ports) ? 0 : ports, usable: headingText.indexOf(unavailableMark) === -1, options });
+        }
+      }
+      return { open: true, tool: activeTool(), hint, groups };
+    },
+
+    // Is this element native's own label button (the one native focuses after a pick, and whose
+    // Enter / Space / ArrowDown opens the menu)?
+    isLabelTrigger(el) {
+      return !!el && String(el.className || '').split(/\s+/).indexOf(panelIds.triggerClass) !== -1;
+    },
+
+    // Is keyboard focus on something inside native's placement panel?
+    focusInPanel() {
+      const active = doc.activeElement;
+      const panel = doc.getElementById(panelIds.panel);
+      if (!active || !panel) return false;
+      for (let n = active; n; n = n.parentNode) if (n === panel) return true;
+      return false;
+    },
+
+    // Which of these element ids are not on the page right now?
+    missingIds(list) {
+      return list.filter((id) => !doc.getElementById(id));
+    },
+
+    // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.
+    clickFamily(id) {
+      const menu = doc.getElementById(panelIds.menu);
+      if (!menu) return false;
+      const btn = Array.from(menu.querySelectorAll(panelIds.optionSelector)).find((b) => b.getAttribute('data-family-id') === id);
+      if (!btn || btn.disabled) return false;
+      btn.click();
+      return true;
+    },
+
+    // Plain snapshot of the system dropdown for `#` search (see pipe-system-core.js).
+    readSystems() {
+      const el = doc.getElementById(ids.systemSelect);
       const debug = win.__graphDebug;
-      return debug && typeof debug.activeTool === 'string' ? debug.activeTool : null;
+      const readable = !!debug && typeof debug === 'object' && 'selectedEntityId' in debug;
+      return {
+        found: !!el,
+        disabled: !!(el && el.disabled),
+        options: el ? Array.from(el.options || []).map((o) => ({ value: o.value, text: o.text })) : [],
+        selectionReadable: readable,
+        selectedEntityId: readable ? (debug.selectedEntityId || null) : null,
+        currentValue: el ? el.value : null,
+      };
+    },
+
+    // Choose a system the way a person does: set the value, then the change events. Returns the
+    // dropdown's own value afterwards so the caller can report what the page actually took.
+    writeSystem(id) {
+      const el = doc.getElementById(ids.systemSelect);
+      if (!el) return null;
+      el.value = id;
+      el.dispatchEvent(new win.Event('input', { bubbles: true }));
+      el.dispatchEvent(new win.Event('change', { bubbles: true }));
+      return el.value;
     },
 
     anyDialogOpen() {

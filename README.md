@@ -89,16 +89,56 @@ the same way as above, on a **piping** page.
     nothing to redo) is left out of the list. **`undo` and `redo` submit real commands** to the app's
     autosave journal, like any click on those buttons.
   - **Space** on an empty bar: closes the armed tool back to select; otherwise repeats the last tool;
-    the very first time, lists the tools. **Tab / Shift+Tab** cycle the completions, **Enter** runs,
+    the very first time, lists the tools. **Tab / Shift+Tab** cycle the completions, **Enter or Space** runs the top (highlighted) row, exactly the same as on the duct bar (so a multi-word name can't be typed with its space: use the id or a short name, e.g. `santee`),
     **Escape** closes the bar (and only passes through to the app when there is nothing of ours to
     close).
   - Like on duct, the bar captures printable keys first, so typing `g` starts a command instead of
     pressing the app's own `G` hotkey. A bare digit and `m` (the app's ruler key) are left to the app.
+  - **`#` + part of a system name** (e.g. `#sanitary`, then Enter or Space) chooses that system in the
+    page's own "System / network" dropdown, for the next route you draw. It only changes that
+    dropdown. **Safety rule:** if something is selected on the drawing, the app treats a change of
+    that dropdown as "reassign the selected pipe to this system" (a real, saved command), so the bar
+    refuses and tells you to deselect first. It also refuses when it can't tell whether something is
+    selected, while a fitting is being placed, and when the dropdown is disabled. It never presses
+    Create, Rename, Import or Assign network.
+- **If native changes under us** (safety net). Two checks make the bar stop instead of guess:
+  - if the fitting panel is open but its hint sentence is one we don't recognise, the bar shows one
+    line, "Native changed: use the mouse for this step", and does nothing else for that step (no
+    prompt, no clicks). It shows the line once per new sentence, and goes back to normal as soon as
+    the app says something we know. The transition tool's own sentences are known.
+  - if an element we depend on is missing when the loader runs (the list is `PIPE_REQUIRED_IDS`,
+    all in `test/native-ids.json`), the loader installs nothing, shows the same line in the panel and
+    names the missing ids in the console.
+- **Drift check** (read-only, writes nothing): `node scripts/check-native-drift.js` fetches the app's
+  public `pipe-*.js` files and compares them with what this repo recorded: which files changed (by
+  hash), tools added/removed/renamed or with a new key, element ids and strings that disappeared (with a
+  "similar now" guess), and hint sentences that are new or reworded. Add `--html <saved page>` to also
+  check the page's element ids, and `--menu <file>` to compare the fitting/fixture families
+  (`--menu-snippet` prints the console snippet that makes that file). `--from-dir <folder>` reads files
+  from disk instead of the network. Exit code 0 = no drift, 1 = drift, 2 = could not read.
 - **What it will never click**, enforced in code and not only by leaving them out of the list: Save,
   the recording controls, the top-bar **Submit**, "Submit anyway", Finish and Cancel, and the system
   create/rename/import/assign buttons.
-- **Not built yet:** picking a fitting label after the box, port prompts, and port sizes (next steps).
-  The panel is not draggable yet.
+- **Picking a fitting** (Step 2). Arm `fitting` (or `fixture`), draw the box as usual. When the app
+  reaches "Choose the fitting subtype." the bar opens a prompt by itself:
+  - it lists the port counts that have something you can place (1/2/3/4 ports; the ones with nothing
+    available are greyed). Press the number and Enter, or type a name. With only one usable port
+    count it goes straight to the fittings.
+  - typing a name works at any point: the id, the on-screen label, or a short name (`tee`, `wye`,
+    `cross`, `90`, `el90`, `45`, `lr90`, `90r`, `reducer`, `cap`, `trapft`, ...). Names only match the
+    menu that is open right now (in the fixture menu `fd` is the fixture, in the fitting menu it is
+    the floor drain). Enter picks the top row, which is always the best match.
+  - In the fixture menu the bar shows readable names (Water Closet, Lavatory, Shower, Urinal, Kitchen
+    Sink, Mop Sink, Hose Bibb, Floor Drain, Roof Drain) next to the id and short name. Display only:
+    what you type still matches the id, the short name (`wc`, `lav`, ...) and native's own label.
+    A fixture not in that list is shown with the app's own text.
+  - Backspace on an empty bar steps back to the port counts. **Esc** closes the prompt; a second Esc
+    reaches the app and cancels the placement. **Space** on an empty bar brings the prompt back.
+  - The prompt only clicks the app's own label button. It never presses Finish.
+  - While a fitting is being placed, only `select`, `undo`, `redo`, `zoomfit`, `zoomin`, `zoomout`
+    run; other commands are refused with a reason.
+- **Not built yet:** port prompts, port sizes, and Enter-to-finish (next steps). The panel is not
+  draggable yet.
 - **Checks:** `node verify_pipe_cmdline.js` (a fake page driving the real built files),
   `node --test "test/**/*.test.mjs"` (includes `test/native-ids.test.mjs`, which checks every native
   id/class/string we rely on against saved copies of native's files in `test/fixtures/native/`; that

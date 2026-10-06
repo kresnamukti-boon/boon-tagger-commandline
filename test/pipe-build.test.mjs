@@ -29,12 +29,12 @@ test('the duct bundle contains nothing from the piping build', () => {
 test('the piping bundle is exactly the piping modules plus their shared pure helpers', () => {
   const { modules } = pipe.buildPipeDist();
   assert.deepEqual(modules.map((m) => path.basename(m, '.js')).sort(),
-    ['actions', 'command-line-core', 'pipe-host', 'pipe-table-core', 'pipe-tables', 'table-core']);
+    ['actions', 'command-line-core', 'pipe-host', 'pipe-placement-core', 'pipe-system-core', 'pipe-table-core', 'pipe-tables', 'search-core', 'table-core']);
 });
 
-test('the piping bundle pulls in nothing duct-only (walk, settings, isolation, auto-select, search)', () => {
+test('the piping bundle pulls in nothing duct-only (walk, settings, isolation, auto-select)', () => {
   const { source } = pipe.buildPipeDist();
-  for (const name of ['modal_walk_core', 'settings_core', 'isolation_core', 'autoselect_core', 'search_core']) {
+  for (const name of ['modal_walk_core', 'settings_core', 'isolation_core', 'autoselect_core']) {
     assert.ok(!source.includes('__m_' + name), name);
   }
   assert.ok(!source.includes('rw-cmd-input'), 'does not contain the duct bar');

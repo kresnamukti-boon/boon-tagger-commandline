@@ -280,11 +280,12 @@ every id/class/string we rely on and `test/native-ids.test.mjs` checks them.
 | `src/pipe/pipe-tables.js` (`PIPE_GRAPH_ACTIONS`, `PIPE_FORBIDDEN_BUTTON_IDS`, `PIPE_ISOLATION_ALLOWED`, `PIPE_TOOL_ALIASES`) | next to `buildPipeCommandTable` in `pipe-command-line.js`, shaped like `duct-command-line.js`'s `DUCT_*` exports | yes: pure data, same entry shape `{ id, name, label, aliases, btn }` |
 | `src/core/pipe-table-core.js`: `entryState`, `planEntry`, `planQuery`, `listEntries` | the dispatch verdict half of `command-line-core.js` / `command-line-ui.js` | yes, as a superset (disabled-with-reason rows, forbidden controls refused twice) |
 | `src/core/pipe-table-core.js`: `deriveTools`, `reconcileArmed`, `loaderGuard` | none | **no.** `deriveTools` reads the live rail only because a pasted script can't see native's contract (native already has `visiblePipeTools(contract, mode)`); `reconcileArmed` and `loaderGuard` exist because we are an outside script |
+| `src/core/pipe-placement-core.js` (Step 2): `labelStep`, `menuEntries`, `aliasesFor`, `planPick`, `isolationVerdict` | the Place Fitting panel's label menu in `pipe-session-ui.js` | `labelStep`/`planPick`/`isolationVerdict`: yes, pure. `panelPhase`/`autoMatchedDiameter`: **no**, native reads `bboxController().state.phase` directly instead of its own hint text |
+| `src/pipe/pipe-tables.js` (`PIPE_FITTING_ALIASES`, `PIPE_HINT_PREFIXES`, ...) | beside the family catalog (server contract) | aliases yes; hint prefixes no (we only need them because we are outside) |
 | `src/pipe/pipe-host.js` | none | **no.** Native has its own DOM wiring (`command-line-ui.js`) |
 | `src/pipe/pipe-shell.js` | none | **no** |
 
-(Placement-step files, when they exist, get a row each: pure phase/port-size logic in
-`src/core/pipe-placement-core.js` is the portable part.)
+Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; that is the portable part.
 
 ### What must not be ported
 
@@ -297,14 +298,50 @@ every id/class/string we rely on and `test/native-ids.test.mjs` checks them.
 - Reading the key badge off the rendered rail button: native has `PIPE_TOOL_KEYS`.
 - The loader guard and the "native's bar must be OFF" rule: inside native they don't exist.
 
-### Open decisions (as of Step 1)
+### Step 2 notes (label pick)
+
+- Native shows ONE panel ("Place Fitting") for every bounding-box tool (fitting, fixture, valve,
+  equipment, terminal, transition, cut). Our prompt opens by itself when native's hint says "Choose
+  the fitting subtype." (phase `label`) and picks by clicking native's own `button[data-family-id]`.
+  It never clicks Finish.
+- Aliases are matched only against the menu that is open right now. Fitting menu: the curated
+  `PIPE_FITTING_ALIASES` (keyed by native family id). Fixture menu: the family id with `pipe-` /
+  `fixture-` removed (the user's `wc, lav, sh, ur, ks, ms, rd, fd, hb`); which fixtures exist is
+  never hardcoded. **Unverified live:** the real fixture family ids (read-only check pending).
+- Dropped on purpose: `ft/tt/st/td` (use `trapft`, `traptt`, `trapst`, `traptd`), `rtee`, `rwye`.
+- While a placement panel is open, `PIPE_ISOLATION_ALLOWED` is now enforced in code (`runEntry`).
+- **Focus after a pick (found live by the user, real keyboard):** native's menu-option click handler calls `subtype.focus()`, and the trigger's keydown opens the menu on Enter / Space / ArrowDown, so the same physical keypress could open native's menu and steal focus. Fixed on our side: the consumed key is cancelled and stopped before the click; for 700 ms a window-capture guard cancels Enter/Space/ArrowDown (keydown, keypress, keyup) aimed at the trigger; and focus returns to our bar once on the next tick. **Handover:** the 700 ms keypress guard on native's label trigger is a workaround for the injected bar only. In native, skip `subtype.focus()` after `chooseFamily` when the pick came from the command line, and drop the guard (and our refocus) entirely.
+- **Space = Enter** in the bar (and in the label prompt), like the duct bar. A literal space can no longer be typed, so multi-word labels are reached by id or alias.
+- **System/network:** the `service` ("Assign system") tool is a normal tool in the list (alias `assign`); arming it saves nothing. The system create/rename/import/assign **buttons** stay forbidden. `#<name>` system search is built (`src/core/pipe-system-core.js`): it writes `#graph-system-select` (value + input/change). Native's change handler REASSIGNS the selected pipe when one is selected (`assignPipeService`, a real command), so the write is refused unless `__graphDebug.selectedEntityId` is readable and empty. **Handover:** `#` writes `#graph-system-select`. With a pipe selected, native's change handler calls `assignPipeService` (a saved command), so the bar refuses (`systemPickVerdict`). Native's port should keep that rule: only write the dropdown when nothing is selected; the rest of that function is only needed because we are outside.
+- Valves and equipment get no extra aliases yet (their menus still match by id and label).
+
+### Safety nets and the drift check
+
+- `hintWatch` / `missingIds` (`src/core/pipe-placement-core.js`) + `PIPE_NATIVE_CHANGED_MESSAGE`,
+  `PIPE_REQUIRED_IDS` (`src/pipe/pipe-tables.js`): unknown placement hint -> one status line, nothing else;
+  required id missing at load -> install nothing. None of this is needed upstream (native reads its own
+  controller state, not its hint text).
+- `scripts/check-native-drift.js` is read-only (a test greps its source for any write/POST). It compares
+  against `test/native-ids.json` (hashes, ids, strings, `families`) and `PIPE_FALLBACK_KEYS` /
+  `PIPE_HINT_PREFIXES`. Families come from the server contract, so they need a menu dump (`--menu`).
+- First live run (2026-10-06): `pipe-bbox-connect.js` differs from the saved copy (recorded 51bab414..,
+  live f80bc890..): a new `placeAtRouteEnd` (MEC-407, per-point menu of a 2D route) and a reworked
+  `finish()` connector lookup. Nothing we use (hints, label menu, ids) changed. The recorded hash was
+  left as it is on purpose; refetch the fixtures and update `native-ids.json` when it is reviewed.
+
+### Open decisions (as of Step 2)
+
+- **Enter after a pick doesn't place anything yet (observed by the user, expected for Step 2).** Native only
+  runs Finish on Enter when `document.activeElement === #pointer-layer` (the window keydown handler in
+  `graph-session-entry.js`, "Enter ... finishActiveRoute()"), and our bar keeps focus after a pick, so the key
+  does nothing until the canvas is clicked. Step 3 plans Enter-in-the-bar -> Finish for the ready phase only.
 
 - **Aliases.** `PIPE_TOOL_ALIASES` was proposed, not approved (to be reviewed with the engineer).
   `fit` stays `zoomfit`'s.
 - **Finish / Cancel** (`graph-finish-route`, `graph-cancel-route`) are in `PIPE_FORBIDDEN_BUTTON_IDS`
   for now. The placement step has to decide how Enter-at-ready reaches Finish deliberately.
-- **Isolation.** `PIPE_ISOLATION_ALLOWED` is shipped as data but not enforced: Step 1 has no panel
-  state to isolate. It applies once the placement panel is open.
+- **Isolation.** `PIPE_ISOLATION_ALLOWED` is enforced while the placement panel is open (Step 2).
+  Finish/Cancel stay forbidden until Step 3 decides how Enter-at-ready reaches Finish.
 - **No hardcoded tool table.** Unlike duct, there is no fallback table when the rail can't be read;
   the loader refuses ("no tool rail found"). `PIPE_FALLBACK_KEYS` only supplies a key for a rail
   button with no readable badge. Note native's badge falls back to the tool id's first letter when
