@@ -116,6 +116,11 @@ the same way as above, on a **piping** page.
     because nothing inside the toast stack is ever clicked), plus everything in the "never click" list below.
   - If you click the canvas yourself, the app's own Enter handling takes over (it only acts when the
     canvas has focus), so the two never both fire.
+- **Action log (for testing).** The bar remembers what it itself clicked or wrote: tool/action clicks, label picks,
+  Finish, and `#` system changes. Each entry has the time, what it did, the tool and hint at that moment, and the
+  revision before and 2 s after. Only the newest 50 are kept, in memory only (nothing is written to the page,
+  browser storage or any server). Read it from the console: `__RW._pipeLogPrint()` (one line each) or `__RW._pipeLog`.
+  It lets you tell the bar's saves from your own (mouse, the app's own Enter, undo).
 - **If native changes under us** (safety net). Two checks make the bar stop instead of guess:
   - if the fitting panel is open but its hint sentence is one we don't recognise, the bar shows one
     line, "Native changed: use the mouse for this step", and does nothing else for that step (no

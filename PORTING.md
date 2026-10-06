@@ -334,6 +334,14 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
   Enter handling; the command line only needs to call it (with the same enabled checks) when the pick came from the bar.
 - Never clicked: the MEC-329 size-mismatch toast's "Resize anyway" (re-submits a rejected command with the check off).
 
+### Action log
+
+`src/core/pipe-log-core.js` (`appendLog`, `makeLogEntry`, `parseRevision`, `formatLog`) + `logAction` in the shell:
+the bar's own clicks/writes, last `PIPE_LOG_MAX` (50), memory only, `__RW._pipeLog` / `_pipeLogPrint()`. A click that did not
+happen takes its entry back. Added after a live session where 12 `/commands/` requests could not be attributed to the bar
+or to the person (the app's own history panel gives the command names; nothing else says who clicked). Not needed upstream:
+native knows which path called it.
+
 ### Safety nets and the drift check
 
 - `hintWatch` / `missingIds` (`src/core/pipe-placement-core.js`) + `PIPE_NATIVE_CHANGED_MESSAGE`,

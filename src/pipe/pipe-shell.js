@@ -24,12 +24,13 @@
     PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
     PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
     PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
-    PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN,
+    PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
     portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
   } = __m_pipe_placement_core;
+  const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
@@ -81,6 +82,23 @@
 
   function status(msg) { if (RW._commitStatus) RW._commitStatus(msg); }
 
+  /* ---------- action log: what the bar itself did (in memory only, last PIPE_LOG_MAX) ---------- */
+  // Read from the console: __RW._pipeLog (entries) or __RW._pipeLogPrint() (one line each). Never
+  // stored in the page, localStorage or sent anywhere. `revAfter` is read PIPE_LOG_AFTER_MS later.
+  RW._pipeLog = [];
+  RW._pipeLogPrint = function(){ return formatLog(RW._pipeLog); };
+  // A click that did not happen is not an action: take its entry back.
+  function unlogLast() { RW._pipeLog = RW._pipeLog.slice(0, -1); }
+  function logAction(kind, what) {
+    const snap = host.readPanel();
+    const entry = makeLogEntry({
+      at: Date.now(), kind: kind, what: what, hint: snap.open ? snap.hint : '', tool: snap.open ? snap.tool : host.readActiveTool(),
+      revBefore: parseRevision(host.readRevision()),
+    });
+    RW._pipeLog = appendLog(RW._pipeLog, entry, PIPE_LOG_MAX);
+    setTimeout(function(){ entry.revAfter = parseRevision(host.readRevision()); }, PIPE_LOG_AFTER_MS);
+  }
+
   /* ---------- running an entry ---------- */
   let inputEl = null;
   function runEntry(entry) {
@@ -92,7 +110,8 @@
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
-    if (!host.clickEntry(entry)) { status(entry.name + ': nothing to click on this page'); return false; }
+    logAction(entry.kind, entry.kind + ' ' + entry.name);
+    if (!host.clickEntry(entry)) { unlogLast(); status(entry.name + ': nothing to click on this page'); return false; }
     own.lastCmdAt = Date.now();
     if (entry.kind === 'tool') {
       if (entry.name === 'select') { own.armed = false; own.tool = null; }
@@ -227,6 +246,7 @@
     const facts = host.readSystems();
     const verdict = systemPickVerdict(facts);
     if (!verdict.ok) { status(verdict.message); hideMenu(); return false; }
+    logAction('system', 'set system dropdown: ' + system.name);
     const after = host.writeSystem(system.id);
     own.lastCmdAt = Date.now();
     const shown = host.readSystems();
@@ -302,7 +322,8 @@
       return;
     }
     // Click native's own label button (what a mouse click does). Never Finish: that stays manual.
-    if (!host.clickFamily(plan.id)) { status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
+    logAction('label', 'chose ' + plan.id);
+    if (!host.clickFamily(plan.id)) { unlogLast(); status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
     status(plan.label + ' chosen');
     endPrompt();
     // Native has just moved keyboard focus onto its own label button (subtype.focus()), and that
@@ -364,7 +385,8 @@
     const second = finishVerdict(finishFacts(e)); // fresh read right before the click
     if (!second.ok) { if (second.message) status(second.message); return true; }
     const label = (host.readPanel().tool || 'fitting');
-    if (!host.clickFinish(PIPE_FINISH_BUTTON_ID)) { status('Finish is not available right now'); return true; }
+    logAction('finish', 'clicked Finish (' + label + ')');
+    if (!host.clickFinish(PIPE_FINISH_BUTTON_ID)) { status('Finish is not available right now'); unlogLast(); return true; }
     finishLatch = finishLatchClick(Date.now());
     own.lastCmdAt = Date.now();
     status('Finish pressed (' + label + '): placing it now');

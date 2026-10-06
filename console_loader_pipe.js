@@ -148,6 +148,10 @@ const PIPE_UNAVAILABLE_MARK = 'unavailable';
 
 // Step 3. The ONE control the bar may click as a placement step: native's Finish, reached only from
 // Enter in the bar (never from a typed word; it stays in PIPE_FORBIDDEN_BUTTON_IDS for every other path).
+// The bar's in-memory action log keeps only this many of the newest entries (nothing is stored or sent).
+const PIPE_LOG_MAX = 50;
+// How long after an action the log re-reads the revision to fill in "after".
+const PIPE_LOG_AFTER_MS = 2000;
 const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
@@ -233,7 +237,7 @@ const PIPE_FIXTURE_DISPLAY_NAMES = {
 const PIPE_FIXTURE_TOOL = 'fixture';
 const PIPE_FITTING_TOOL = 'fitting';
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -370,6 +374,14 @@ function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unava
     },
 
     readActiveTool: activeTool,
+
+    // The page's current revision number, or null.
+    readRevision() {
+      const debug = win.__graphDebug;
+      if (debug && typeof debug.revision === 'number') return debug.revision;
+      const el = doc.getElementById('graph-revision-status');
+      return el ? text(el) : null;
+    },
 
     // Plain snapshot of native's "Place Fitting" panel (see pipe-placement-core.js for the shape).
     // The menu is rebuilt by native even while it is hidden, so it is read straight from the DOM.
@@ -1187,6 +1199,46 @@ function systemQuery(text) {
 return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
 })();
 
+// ===== src/core/pipe-log-core.js =====
+const __m_pipe_log_core = (function(){
+// Pure helpers for the bar's action log: a short, in-memory record of what the bar itself clicked or
+// wrote, so that after a live test it is possible to tell the bar's actions from the person's own
+// (mouse, native's Enter, native's undo). Nothing here stores, sends or writes anything.
+
+// Append `entry` and keep only the newest `max` entries. Returns a new array (never mutates).
+function appendLog(log, entry, max) {
+  const next = (log ?? []).concat([entry]);
+  const cap = Number.isFinite(max) && max > 0 ? Math.floor(max) : 1;
+  return next.length > cap ? next.slice(next.length - cap) : next;
+}
+
+// A log entry. `rev*` are revision numbers (or null when unreadable); `revAfter` is filled in later.
+function makeLogEntry({ at, what, kind, hint, tool, revBefore }) {
+  return {
+    at, time: new Date(at).toISOString(), kind: String(kind ?? ''), what: String(what ?? ''),
+    hint: String(hint ?? ''), tool: tool ?? null,
+    revBefore: Number.isFinite(revBefore) ? revBefore : null, revAfter: null,
+  };
+}
+
+// Revision number from native's status text ("R14") or a plain number; null if unreadable.
+function parseRevision(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const m = String(value ?? '').match(/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+// One short line per entry, for printing in the console.
+function formatLog(log) {
+  return (log ?? []).map((e) => {
+    const rev = e.revAfter === null ? `R${e.revBefore ?? '?'} -> ?` : `R${e.revBefore ?? '?'} -> R${e.revAfter}`;
+    return `${e.time}  ${e.kind}  ${e.what}  [${rev}]  tool=${e.tool ?? '-'}  hint="${e.hint.slice(0, 60)}"`;
+  });
+}
+
+return {appendLog, makeLogEntry, parseRevision, formatLog};
+})();
+
   // ===== loader guard (src/core/pipe-table-core.js loaderGuard) =====
   const __guard = __m_pipe_table_core.loaderGuard(
     __m_pipe_host.createPipeHost({ doc: document, win: window, ids: __m_pipe_tables.PIPE_PAGE_IDS }).readPageFacts()
@@ -1493,12 +1545,13 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
     PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
     PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
-    PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN,
+    PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
     portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
   } = __m_pipe_placement_core;
+  const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
@@ -1550,6 +1603,23 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
 
   function status(msg) { if (RW._commitStatus) RW._commitStatus(msg); }
 
+  /* ---------- action log: what the bar itself did (in memory only, last PIPE_LOG_MAX) ---------- */
+  // Read from the console: __RW._pipeLog (entries) or __RW._pipeLogPrint() (one line each). Never
+  // stored in the page, localStorage or sent anywhere. `revAfter` is read PIPE_LOG_AFTER_MS later.
+  RW._pipeLog = [];
+  RW._pipeLogPrint = function(){ return formatLog(RW._pipeLog); };
+  // A click that did not happen is not an action: take its entry back.
+  function unlogLast() { RW._pipeLog = RW._pipeLog.slice(0, -1); }
+  function logAction(kind, what) {
+    const snap = host.readPanel();
+    const entry = makeLogEntry({
+      at: Date.now(), kind: kind, what: what, hint: snap.open ? snap.hint : '', tool: snap.open ? snap.tool : host.readActiveTool(),
+      revBefore: parseRevision(host.readRevision()),
+    });
+    RW._pipeLog = appendLog(RW._pipeLog, entry, PIPE_LOG_MAX);
+    setTimeout(function(){ entry.revAfter = parseRevision(host.readRevision()); }, PIPE_LOG_AFTER_MS);
+  }
+
   /* ---------- running an entry ---------- */
   let inputEl = null;
   function runEntry(entry) {
@@ -1561,7 +1631,8 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
-    if (!host.clickEntry(entry)) { status(entry.name + ': nothing to click on this page'); return false; }
+    logAction(entry.kind, entry.kind + ' ' + entry.name);
+    if (!host.clickEntry(entry)) { unlogLast(); status(entry.name + ': nothing to click on this page'); return false; }
     own.lastCmdAt = Date.now();
     if (entry.kind === 'tool') {
       if (entry.name === 'select') { own.armed = false; own.tool = null; }
@@ -1696,6 +1767,7 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     const facts = host.readSystems();
     const verdict = systemPickVerdict(facts);
     if (!verdict.ok) { status(verdict.message); hideMenu(); return false; }
+    logAction('system', 'set system dropdown: ' + system.name);
     const after = host.writeSystem(system.id);
     own.lastCmdAt = Date.now();
     const shown = host.readSystems();
@@ -1771,7 +1843,8 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
       return;
     }
     // Click native's own label button (what a mouse click does). Never Finish: that stays manual.
-    if (!host.clickFamily(plan.id)) { status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
+    logAction('label', 'chose ' + plan.id);
+    if (!host.clickFamily(plan.id)) { unlogLast(); status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
     status(plan.label + ' chosen');
     endPrompt();
     // Native has just moved keyboard focus onto its own label button (subtype.focus()), and that
@@ -1833,7 +1906,8 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     const second = finishVerdict(finishFacts(e)); // fresh read right before the click
     if (!second.ok) { if (second.message) status(second.message); return true; }
     const label = (host.readPanel().tool || 'fitting');
-    if (!host.clickFinish(PIPE_FINISH_BUTTON_ID)) { status('Finish is not available right now'); return true; }
+    logAction('finish', 'clicked Finish (' + label + ')');
+    if (!host.clickFinish(PIPE_FINISH_BUTTON_ID)) { status('Finish is not available right now'); unlogLast(); return true; }
     finishLatch = finishLatchClick(Date.now());
     own.lastCmdAt = Date.now();
     status('Finish pressed (' + label + '): placing it now');

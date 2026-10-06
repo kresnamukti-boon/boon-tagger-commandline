@@ -49,7 +49,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   const byId = {};
   const listeners = { window: {}, document: {} };
   const warnings = [];
-  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [], finishClicks: 0, systemChanges: [], selectedEntityId: selected };
+  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [], revision: 4, finishClicks: 0, systemChanges: [], selectedEntityId: selected };
 
   function el(tag) {
     const own = {};
@@ -110,7 +110,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
 
   const win = {
     innerHeight: 800, innerWidth: 1200, Event: class { constructor(type, init) { this.type = type; Object.assign(this, init || {}); } },
-    __graphDebug: Object.defineProperties({}, Object.assign({ activeTool: { get() { return state.activeTool; }, enumerable: true } }, selectionReadable ? { selectedEntityId: { get() { return state.selectedEntityId; }, enumerable: true } } : {})),
+    __graphDebug: Object.defineProperties({}, Object.assign({ activeTool: { get() { return state.activeTool; }, enumerable: true }, revision: { get() { return state.revision; }, enumerable: true } }, selectionReadable ? { selectedEntityId: { get() { return state.selectedEntityId; }, enumerable: true } } : {})),
     addEventListener(type, fn, capture) { (listeners.window[type] = listeners.window[type] || []).push({ fn, capture: !!capture }); },
   };
 
@@ -158,7 +158,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
     const b = el('button'); b.id = id; b.textContent = id === 'graph-finish-route' ? 'Finish' : '';
     if (id === 'graph-finish-route') {
       b.disabled = finishDisabled;
-      b.addEventListener('click', () => { state.finishClicks += 1; });
+      b.addEventListener('click', () => { state.finishClicks += 1; state.revision += 1; }); // a real placement bumps the revision
       (finishInToast ? toastStack : doc.body).appendChild(b);
     } else doc.body.appendChild(b);
   }
@@ -929,6 +929,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     btn.click = () => { page.state.finishClicks += 1; }; // bypass the fake's own disabled check: only our re-check can stop this
     pressEnter(page);
     eq(page.state.finishClicks, 0, 'Finish went disabled after the second check: the click re-checks and does nothing');
+    eq(page.RW._pipeLog.length, 0, 'and the click that did not happen is not in the action log');
   }
   {
     // never anything inside native's toast stack (the "Resize anyway" toast)
@@ -953,6 +954,67 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     h.hintEl.textContent = READY; page.tick();
     ok(!menuShown(page), 'when native leaves the ports phase the note goes away');
     ok(page.state.finishClicks === 0 && !page.state.clicks.some((c) => /pointer|graph-finish/.test(c)), 'and nothing was clicked');
+  }
+
+  /* ----- the bar's action log: in memory, last 50, what the bar itself did ----- */
+  {
+    const page = makePage(); loadShell(page);
+    eq(page.RW._pipeLog, [], 'the log starts empty');
+    page.RW.runCommand('route');
+    eq(page.RW._pipeLog.length, 1, 'a tool click is logged');
+    const e = page.RW._pipeLog[0];
+    eq([e.kind, e.what, e.revBefore, e.tool], ['tool', 'tool route', 4, 'select'], 'kind, what, revision before, and the tool at that moment');
+    ok(/^\d{4}-\d\d-\d\dT/.test(e.time) && e.revAfter === null, 'with a time, and revision-after still to come');
+    page.RW.runCommand('nonsense'); page.RW.runCommand('save'); page.RW.runCommand('finish');
+    eq(page.RW._pipeLog.length, 1, 'unknown or forbidden commands are not logged (nothing was clicked)');
+    page.RW.runCommand('zoomin');
+    eq(page.RW._pipeLog.map((x) => x.what), ['tool route', 'action zoomin'], 'actions are logged in order');
+    ok(Array.isArray(page.RW._pipeLogPrint()) && /action zoomin/.test(page.RW._pipeLogPrint()[1]), 'and can be printed one line each');
+  }
+  {
+    // label pick and Finish, with the hint at that moment and the revision before / after
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fixture', hint: 'Choose the fitting subtype.', groups: FITTING_GROUPS }); page.tick();
+    typeText(page, 'pipe-wye-reducer'); page.press(input(page), 'Enter');
+    const pick = page.RW._pipeLog[page.RW._pipeLog.length - 1];
+    eq([pick.kind, pick.what, pick.hint], ['label', 'chose pipe-wye-reducer', 'Choose the fitting subtype.'], 'a label pick is logged with the hint it was made under');
+    page.tick();
+    await new Promise((r) => setTimeout(r, 30)); // the bar takes focus back once
+    const n = page.RW._pipeLog.length;
+    page.press(input(page), 'Enter');
+    const fin = page.RW._pipeLog[page.RW._pipeLog.length - 1];
+    eq(page.RW._pipeLog.length, n + 1, 'Finish from the bar is logged');
+    eq([fin.kind, fin.what, fin.revBefore, fin.tool], ['finish', 'clicked Finish (fixture)', 4, 'fixture'], 'with the revision before');
+    ok(/^Finish inserts this fitting/.test(fin.hint), 'and the ready hint at that moment');
+    eq(fin.revAfter, null, 'revision-after is not known yet');
+    await new Promise((r) => setTimeout(r, 2200));
+    eq(fin.revAfter, 5, 'it is filled in two seconds later (the fake page bumped R4 -> R5)');
+  }
+  {
+    // a refused or failed Finish is not an action
+    const page = makePage({ finishDisabled: true }); loadShell(page);
+    page.openPanel({ tool: 'fixture', hint: 'Finish inserts this fitting.', groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    pressEnter(page);
+    eq(page.RW._pipeLog.length, 0, 'Finish refused (disabled): nothing logged');
+    const p2 = makePage(); loadShell(p2);
+    p2.openPanel({ tool: 'fixture', hint: 'Choose the fitting subtype.', groups: FITTING_GROUPS }); p2.tick();
+    typeText(p2, 'pipe-wye-reducer');
+    p2.byId['graph-pipe-fitting-select-menu'].children[0].children.slice(1).forEach((b) => { b.disabled = true; });
+    p2.press(input(p2), 'Enter');
+    eq(p2.RW._pipeLog.length, 0, 'a label click that did not happen (menu changed) takes its entry back');
+  }
+  {
+    // keeps only the newest 50, in memory only
+    const page = makePage(); loadShell(page);
+    for (let i = 0; i < 60; i++) { page.state.revision = i; page.RW.runCommand('zoomin'); }
+    eq(page.RW._pipeLog.length, 50, 'only the last 50 are kept');
+    eq([page.RW._pipeLog[0].revBefore, page.RW._pipeLog[49].revBefore], [10, 59], 'the oldest were dropped, the newest kept, in order');
+    const code = (f) => fs.readFileSync(path.join(__dirname, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    for (const f of ['src/pipe/pipe-shell.js', 'src/core/pipe-log-core.js']) {
+      for (const word of ['localStorage', 'sessionStorage', 'indexedDB', 'fetch(', 'XMLHttpRequest', 'sendBeacon', 'document.cookie', 'WebSocket']) {
+        ok(!code(f).includes(word), f + ' does not use ' + word + ' (the log is memory only)');
+      }
+    }
   }
 
   console.log(`${pass} passed, ${fail} failed`);

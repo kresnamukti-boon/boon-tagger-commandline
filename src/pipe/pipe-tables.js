@@ -129,6 +129,10 @@ export const PIPE_UNAVAILABLE_MARK = 'unavailable';
 
 // Step 3. The ONE control the bar may click as a placement step: native's Finish, reached only from
 // Enter in the bar (never from a typed word; it stays in PIPE_FORBIDDEN_BUTTON_IDS for every other path).
+// The bar's in-memory action log keeps only this many of the newest entries (nothing is stored or sent).
+export const PIPE_LOG_MAX = 50;
+// How long after an action the log re-reads the revision to fill in "after".
+export const PIPE_LOG_AFTER_MS = 2000;
 export const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 export const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';

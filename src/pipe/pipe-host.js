@@ -92,6 +92,14 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
 
     readActiveTool: activeTool,
 
+    // The page's current revision number, or null.
+    readRevision() {
+      const debug = win.__graphDebug;
+      if (debug && typeof debug.revision === 'number') return debug.revision;
+      const el = doc.getElementById('graph-revision-status');
+      return el ? text(el) : null;
+    },
+
     // Plain snapshot of native's "Place Fitting" panel (see pipe-placement-core.js for the shape).
     // The menu is rebuilt by native even while it is hidden, so it is read straight from the DOM.
     readPanel() {
