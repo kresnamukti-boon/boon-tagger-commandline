@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
   PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_TRADE, DUCT_TRADE,
-  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS, PIPE_FINISH_BUTTON_ID, PIPE_SIZE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_PORT_ROLE_PATTERN, PIPE_FINISH_HINT_PREFIX,
+  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS, PIPE_FINISH_BUTTON_ID, PIPE_SIZE_IDS, PIPE_ADJUST, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_PORT_ROLE_PATTERN, PIPE_FINISH_HINT_PREFIX,
 } from '../src/pipe/pipe-tables.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -165,4 +165,14 @@ test('Step 3b dependencies are listed: the per-port container, the catalog scrip
   assert.ok(ui.includes('sameProfileGroups'));
   assert.ok(ids.pipeBboxConnect.strings.includes('maximumProfileByPort'));
   assert.ok(!PIPE_REQUIRED_IDS.includes(PIPE_SIZE_IDS.bootstrap), 'an unreadable catalog warns, it never blocks');
+});
+
+test('Step 3c dependencies are listed: the Adjust ports label, when native hides it, what it does, and the roles', () => {
+  const ui = ids.pipeSessionUi.strings.join('\n');
+  assert.ok(ui.includes(`' ${PIPE_ADJUST.labelText}'`), 'the label text we find the box by');
+  assert.ok(ui.includes('adjustPortsLabel.hidden = !operation.detectedPorts?.length'), 'visible only with detected intersections');
+  assert.ok(ui.includes('toggleAdjustPorts(adjustPorts.checked)'), 'ticking calls the placement controller only');
+  assert.ok(ids.pipeBboxConnect.strings.some((x) => x.includes('toggleAdjustPorts(enabled)')));
+  assert.ok(ids.pipeBboxConnect.strings.some((x) => x.includes("adjustPorts: true, ports: [], phase: 'ports'")), 'ticking restarts the ports phase');
+  assert.ok(ids.families.fitting.includes('pipe-cross'), 'the cross is a known family (its roles come from the live catalog)');
 });

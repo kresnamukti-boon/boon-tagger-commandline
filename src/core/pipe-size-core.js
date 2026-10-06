@@ -116,6 +116,11 @@ export const SIZE_CHOICES = [
   { id: 'asis', text: 'Use port sizes as is' },
   { id: 'edit', text: 'Edit port sizes' },
 ];
+// A third row when native's Adjust ports box can be used right now.
+export const SIZE_CHOICE_ADJUST = { id: 'adjust', text: 'Adjust ports (click each port)' };
+export function sizeChoiceRows({ adjustUsable }) {
+  return adjustUsable ? SIZE_CHOICES.concat([SIZE_CHOICE_ADJUST]) : SIZE_CHOICES.slice();
+}
 
 // Which fields the edit step asks about, in order: the ones that are not locked.
 export function editableFields(fields) {

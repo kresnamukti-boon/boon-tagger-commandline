@@ -25,16 +25,16 @@
     PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
     PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
     PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
-    PIPE_SIZE_IDS, PIPE_SIZE_TOOLS,
+    PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
-    portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
+    portRoleFromHint, portLine, adjustVerdict, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
   } = __m_pipe_placement_core;
   const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const {
     planSizeInput, planSizeWrite, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields,
-    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize,
+    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows,
   } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
@@ -44,7 +44,7 @@
   const { createPipeHost } = __m_pipe_host;
 
   const host = createPipeHost({
-    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, unavailableMark: PIPE_UNAVAILABLE_MARK,
+    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, adjustLabelText: PIPE_ADJUST.labelText, unavailableMark: PIPE_UNAVAILABLE_MARK,
   });
 
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
@@ -71,8 +71,23 @@
       curatedAliases: PIPE_TOOL_ALIASES, actions: PIPE_GRAPH_ACTIONS,
     });
   }
-  function currentTable() { return buildTable(derive().tools, PIPE_GRAPH_ACTIONS); }
-  function stateFor(entry) { return entryState(entry, host.describeTarget(entry), FORBIDDEN); }
+  function currentTable() { return buildTable(derive().tools, PIPE_GRAPH_ACTIONS).concat([PIPE_ADJUST_ENTRY]); }
+  // Can the bar tick/untick native's Adjust ports box right now? (see adjustVerdict)
+  function adjustFacts() {
+    const snap = host.readPanel();
+    const a = host.readAdjustPorts();
+    return {
+      panelOpen: snap.open, phase: snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed',
+      found: a.found, visible: a.visible, disabled: a.disabled,
+    };
+  }
+  function stateFor(entry) {
+    if (entry.kind === 'adjust') {
+      const v = adjustVerdict(adjustFacts());
+      return { usable: v.ok, forbidden: false, reason: v.ok ? null : v.message.replace(/^adjust ports: /, '') };
+    }
+    return entryState(entry, host.describeTarget(entry), FORBIDDEN);
+  }
 
   /* ---------- our own record of what is armed (see reconcileArmed) ---------- */
   const own = { armed: false, tool: null, lastTool: null, lastCmdAt: 0 };
@@ -112,6 +127,7 @@
     // While a placement panel is open only the ways out and the view/undo actions may run.
     const iso = isolationVerdict({ panelOpen: host.readPanel().open, name: entry.name, allowed: PIPE_ISOLATION_ALLOWED });
     if (!iso.ok) { status(iso.message); return false; }
+    if (entry.kind === 'adjust') return runAdjust();
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
@@ -145,7 +161,7 @@
   // The label prompt for native's Place Fitting panel (Step 2).
   const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
-  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
+  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', adjust: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
 
   function ensureMenu() {
     if (menuEl) return;
@@ -355,9 +371,17 @@
   // never takes focus (Esc and clicks keep going to the app) and never clicks anything.
   function updatePortNote(snap) {
     const role = (snap.open && panelPhase(snap.hint, PIPE_HINT_PREFIXES) === 'ports') ? portRoleFromHint(snap.hint, PIPE_PORT_ROLE_PATTERN) : null;
-    if (role === portNoteRole) return;
-    portNoteRole = role;
-    if (!role) {
+    let line = null;
+    if (role) {
+      // With Adjust ports ticked every role is asked from scratch, so "n of N" is exact; otherwise role only.
+      const adjustOn = host.readAdjustPorts().checked === true;
+      const famId = host.readChosenFamilyId();
+      const rules = adjustOn && famId ? host.readFamilyRules(famId) : null;
+      line = portLine({ role: role, adjustOn: adjustOn, portContract: rules && rules.readable ? rules.portContract : null });
+    }
+    if (line === portNoteRole) return;
+    portNoteRole = line;
+    if (!line) {
       if (portNoteShown) { portNoteShown = false; if (!prompt.active && document.activeElement !== inputEl) hideMenu(); }
       return;
     }
@@ -368,12 +392,12 @@
     menuEl.innerHTML = '';
     const head = document.createElement('div');
     head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
-    head.textContent = 'click: ' + role;
+    head.textContent = line;
     menuEl.appendChild(head);
     positionMenu();
     menuEl.style.display = 'block';
     portNoteShown = true;
-    status('click: ' + role);
+    status(line);
   }
 
   /* ---------- Step 3b: port sizes on reducing fittings (keyboard only) ---------- */
@@ -417,7 +441,7 @@
   function renderSizesChoice() {
     sizesUi.active = true;
     sizesUi.header = 'Port sizes: pick one (Enter or Space)';
-    menuItems = SIZE_CHOICES.map(function(c){ return { size: c }; });
+    menuItems = sizeChoiceRows({ adjustUsable: adjustVerdict(adjustFacts()).ok }).map(function(c){ return { size: c }; });
     menuHighlight = 0;
     ensureMenu(); renderMenu();
   }
@@ -444,12 +468,29 @@
     inputEl.focus();
     renderSizesChoice();
   }
+  // Tick or untick native's Adjust ports box (placement state only; nothing is saved).
+  function runAdjust() {
+    const v = adjustVerdict(adjustFacts());
+    if (!v.ok) { status(v.message); return false; }
+    const wasOn = host.readAdjustPorts().checked === true;
+    logAction('adjust', (wasOn ? 'unticked' : 'ticked') + ' Adjust ports');
+    const r = host.clickAdjustPorts();
+    if (!r.ok) { unlogLast(); status('adjust ports: could not change it'); return false; }
+    own.lastCmdAt = Date.now();
+    const keep = placementCount; resetSizes(); placementCount = keep;
+    status(r.checked
+      ? 'adjust ports on: click each port in the order the bar shows (click an assigned port again to undo)'
+      : 'adjust ports off: the app assigns the ports itself');
+    return true;
+  }
   function sizeTick(snap) {
     if (!snap.open) { if (panelWasOpen) resetSizes(); panelWasOpen = false; return; }
     if (!panelWasOpen) { placementCount += 1; panelWasOpen = true; resetSizes(); }
     const f = sizesFacts(snap);
     if (sizes.key !== null && sizes.key !== f.key) { const keep = placementCount; resetSizes(); placementCount = keep; }
-    if (!f.ready) { if (sizesUi.active) { sizesUi.active = false; sizesUi.header = ''; hideMenu(); } return; }
+    // Leaving ready (a label change, the ports phase after Adjust ports, saving) forgets any confirmation:
+    // assigning ports reseeds the sizes, so the rows ask again when ready returns.
+    if (!f.ready) { const keep = placementCount; resetSizes(); placementCount = keep; return; }
     const plan = sizesTickPlan({
       state: sizes, key: f.key, perPort: f.pf.present, ready: f.ready,
       selectedEntityId: f.sel.selectedEntityId, selectionReadable: f.sel.selectionReadable,
@@ -466,6 +507,7 @@
     }
   }
   function pickSizeChoice(choice) {
+    if (choice.id === 'adjust') { sizesUi.active = false; sizesUi.header = ''; hideMenu(); runAdjust(); return; }
     if (choice.id === 'asis') { confirmSizes('kept'); return; }
     // edit: ask for each editable port in on-screen order
     sizes.stage = 'edit'; sizes.index = 0; sizes.drafts = {};

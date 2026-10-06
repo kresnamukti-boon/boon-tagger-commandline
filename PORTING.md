@@ -334,6 +334,20 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
   Enter handling; the command line only needs to call it (with the same enabled checks) when the pick came from the bar.
 - Never clicked: the MEC-329 size-mismatch toast's "Resize anyway" (re-submits a rejected command with the check off).
 
+### Step 3c (Adjust ports)
+
+- `adjustVerdict`, `portProgress`, `portLine`, `roleDisplayName` in `src/core/pipe-placement-core.js`; `PIPE_ADJUST` and
+  `PIPE_ADJUST_ENTRY` (a typed entry with no button; listed only while usable) in `src/pipe/pipe-tables.js`; host
+  `readAdjustPorts` / `clickAdjustPorts` (finds the checkbox by its label text " Adjust ports": it has no id) and
+  `readFamilyRules` now also returns `portContract`; `sizeChoiceRows` adds the third row.
+- Native: the box is hidden unless `operation.detectedPorts?.length && operation.familyId`; its `change` calls
+  `toggleAdjustPorts` (placement state, no command). Ticking resets `ports` and starts the ports phase, asking every role
+  in catalog order (so "n of N" is exact only then; without Adjust native skips detected ports and a count would be a guess).
+  Roles: 1 port [inlet]; 2 [inlet, outlet]; 3 [inlet, outlet, branch]; cross [inlet, outlet, branch_a, branch_b].
+- The sizes step forgets its confirmation whenever the phase leaves ready (assigning ports reseeds sizes), whether the box
+  was ticked from the bar or the mouse. Upstream: native already owns the controller; none of the key/focus plumbing is
+  needed. Keyboard-only picking of the intersections themselves (numbered markers) is Step 3d, deliberately not built.
+
 ### Step 3b (port sizes)
 
 - `src/core/pipe-size-core.js`: `parseSizeInput`/`formatSize` (copies of native's `parsePipeDiameter`/`formatPipeDiameter`,

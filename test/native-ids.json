@@ -103,7 +103,11 @@
       "select.addEventListener('change', toggleCustom);",
       "const groups = family.profileCompatibility.sameProfileGroups ?? [];",
       "Decimal or fraction. Range 3/8 to 48 inches.",
-      "const contract = bootstrap.catalogSupportedUi;"
+      "const contract = bootstrap.catalogSupportedUi;",
+      "adjustPortsLabel.append(adjustPorts, document.createTextNode(' Adjust ports'));",
+      "adjustPortsLabel.hidden = !operation.detectedPorts?.length || !operation.familyId;",
+      "adjustPorts.addEventListener('change', () => { try { bboxController()?.toggleAdjustPorts(adjustPorts.checked); }",
+      "adjustPorts.checked = operation.adjustPorts === true;"
     ]
   },
   "tradePackValues": {
@@ -171,7 +175,9 @@
       "phase: 'ready' }",
       "missingPorts()",
       "chooseFamily(id) {",
-      "maximumProfileByPort"
+      "maximumProfileByPort",
+      "toggleAdjustPorts(enabled) {",
+      "this.update({ ...this.state, adjustPorts: true, ports: [], phase: 'ports' });"
     ]
   }
 }

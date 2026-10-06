@@ -4,7 +4,7 @@
 // page and against the Node test harness.
 import { isElementVisible } from '../features/actions.js';
 
-export function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, unavailableMark = 'unavailable' }) {
+export function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, adjustLabelText = 'Adjust ports', unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -206,7 +206,10 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, una
         const data = JSON.parse(el.textContent);
         const fam = data.catalogSupportedUi.fittingFamilies.find((f) => f.id === familyId);
         if (!fam) return { readable: false };
-        return { readable: true, maximumProfileByPort: (fam.profileCompatibility && fam.profileCompatibility.maximumProfileByPort) || {} };
+        return {
+          readable: true, maximumProfileByPort: (fam.profileCompatibility && fam.profileCompatibility.maximumProfileByPort) || {},
+          portContract: Array.isArray(fam.portContract) ? fam.portContract.slice() : null,
+        };
       } catch (err) {
         return { readable: false };
       }
@@ -251,6 +254,34 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, una
     // Which of these element ids are not on the page right now?
     missingIds(list) {
       return list.filter((id) => !doc.getElementById(id));
+    },
+
+    // Native's "Adjust ports" checkbox (inside a label in the placement panel): { found, visible, checked, disabled }.
+    readAdjustPorts() {
+      const panel = doc.getElementById(panelIds.panel);
+      if (!panel) return { found: false };
+      for (const lab of panel.querySelectorAll('label')) {
+        if (text(lab).indexOf(adjustLabelText) === -1) continue;
+        const box = lab.querySelectorAll('input')[0];
+        if (!box) continue;
+        return { found: true, visible: !lab.hidden && isElementVisible(lab), checked: !!box.checked, disabled: !!box.disabled };
+      }
+      return { found: false };
+    },
+
+    // The one click on that checkbox (native toggles its placement state on change; nothing is saved).
+    // Re-checks right before clicking. Returns { ok, checked }.
+    clickAdjustPorts() {
+      const panel = doc.getElementById(panelIds.panel);
+      if (!panel || panel.hidden) return { ok: false };
+      for (const lab of panel.querySelectorAll('label')) {
+        if (text(lab).indexOf(adjustLabelText) === -1) continue;
+        const box = lab.querySelectorAll('input')[0];
+        if (!box || lab.hidden || box.disabled) return { ok: false };
+        box.click();
+        return { ok: true, checked: !!box.checked };
+      }
+      return { ok: false };
     },
 
     // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.

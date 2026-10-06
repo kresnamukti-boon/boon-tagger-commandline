@@ -136,7 +136,7 @@ export function listEntries(table, stateFor) {
   const rows = [];
   for (const entry of table) {
     const state = stateFor(entry);
-    if (entry.kind === 'action' && !state.usable) continue;
+    if ((entry.kind === 'action' || entry.kind === 'adjust') && !state.usable) continue;
     rows.push({ entry, state });
   }
   return rows;

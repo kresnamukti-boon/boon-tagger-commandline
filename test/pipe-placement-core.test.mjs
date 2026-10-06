@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, missingIds, hintWatch, portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict,
+  panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, missingIds, hintWatch, portRoleFromHint, roleDisplayName, portProgress, portLine, adjustVerdict, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict,
 } from '../src/core/pipe-placement-core.js';
 import {
   PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES,
@@ -309,4 +309,46 @@ test('finishVerdict: a sizes gate that is not ok blocks Finish and passes its re
   assert.equal(finishVerdict({ ...FACTS(), sizesGate: { ok: true } }).ok, true);
   assert.equal(finishVerdict({ ...FACTS(), sizesGate: { ok: false, reason: 'sizes-max', message: 'm' } }).reopen, false);
   assert.equal(finishVerdict({ ...FACTS(), sizesGate: gate, key: ' ' }).reason, 'not-enter', 'the key checks still come first');
+});
+
+test('roleDisplayName: display only; branch_a -> "branch A"', () => {
+  assert.equal(roleDisplayName('branch_a'), 'branch A');
+  assert.equal(roleDisplayName('branch_b'), 'branch B');
+  assert.equal(roleDisplayName('inlet'), 'inlet');
+  assert.equal(roleDisplayName('outlet'), 'outlet');
+  assert.equal(roleDisplayName('side_port'), 'side port');
+  assert.equal(roleDisplayName(undefined), '');
+});
+
+test('portProgress: where a role sits in the family\'s port list (exact in Adjust mode)', () => {
+  const cross = ['inlet', 'outlet', 'branch_a', 'branch_b'];
+  assert.deepEqual(portProgress('inlet', cross), { n: 1, N: 4, done: [] });
+  assert.deepEqual(portProgress('branch_a', cross), { n: 3, N: 4, done: ['inlet', 'outlet'] });
+  assert.deepEqual(portProgress('branch_b', cross), { n: 4, N: 4, done: ['inlet', 'outlet', 'branch_a'] });
+  assert.equal(portProgress('nope', cross), null);
+  assert.equal(portProgress('inlet', null), null);
+  assert.deepEqual(portProgress('inlet', ['inlet']), { n: 1, N: 1, done: [] });
+});
+
+test('portLine: count and done-list only with Adjust on and the roles known; role only otherwise', () => {
+  const cross = ['inlet', 'outlet', 'branch_a', 'branch_b'];
+  assert.equal(portLine({ role: 'inlet', adjustOn: true, portContract: cross }), 'click: inlet (1 of 4)  (click an assigned port again to undo)');
+  assert.equal(portLine({ role: 'branch_b', adjustOn: true, portContract: cross }), 'click: branch B (4 of 4)  done: inlet, outlet, branch A  (click an assigned port again to undo)');
+  assert.equal(portLine({ role: 'branch_b', adjustOn: false, portContract: cross }), 'click: branch B', 'not adjusting: no count');
+  assert.equal(portLine({ role: 'outlet', adjustOn: true, portContract: null }), 'click: outlet', 'catalog unreadable: role only');
+  assert.equal(portLine({ role: 'zzz', adjustOn: true, portContract: cross }), 'click: zzz', 'role not in the list: role only');
+});
+
+test('adjustVerdict: only a placement panel in the ready or ports phase with native\'s box visible and enabled', () => {
+  const ok = { panelOpen: true, phase: 'ready', found: true, visible: true, disabled: false };
+  assert.deepEqual(adjustVerdict(ok), { ok: true });
+  assert.equal(adjustVerdict({ ...ok, phase: 'ports' }).ok, true);
+  assert.equal(adjustVerdict({ ...ok, panelOpen: false }).reason, 'no-panel');
+  for (const phase of ['box', 'label', 'submitting', 'unknown', 'closed']) assert.equal(adjustVerdict({ ...ok, phase }).reason, 'phase', phase);
+  assert.equal(adjustVerdict({ ...ok, found: false }).reason, 'no-checkbox');
+  assert.equal(adjustVerdict({ ...ok, visible: false }).reason, 'no-checkbox');
+  assert.equal(adjustVerdict({ ...ok, disabled: true }).reason, 'disabled');
+  assert.equal(adjustVerdict(undefined).ok, false, 'no facts: fail closed');
+  assert.equal(adjustVerdict({}).ok, false);
+  assert.ok(adjustVerdict({ ...ok, found: false }).message);
 });

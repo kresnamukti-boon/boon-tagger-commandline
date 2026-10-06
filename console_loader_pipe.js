@@ -116,7 +116,7 @@ const PIPE_FORBIDDEN_CONTAINER_IDS = ['graph-toast-stack'];
 // Command names that stay reachable while a placement panel is open. Shipped now as data;
 // enforced from the placement step onward (Step 1 has no panel state to isolate).
 const PIPE_ISOLATION_ALLOWED = [
-  'select', 'undo', 'redo', 'zoomfit', 'zoomin', 'zoomout',
+  'select', 'undo', 'redo', 'zoomfit', 'zoomin', 'zoomout', 'adjust',
 ];
 
 // ---- Placement panel (Step 2: choose the fitting label) ----
@@ -161,6 +161,12 @@ const PIPE_SIZE_IDS = {
 };
 // Only this tool places fittings that have per-port sizes (reducing tees/wyes, reducers, ...).
 const PIPE_SIZE_TOOLS = ['fitting'];
+// Step 3c: native's "Adjust ports" checkbox (no id: a checkbox inside a label of the placement panel).
+const PIPE_ADJUST = { labelText: 'Adjust ports' };
+// The typed command for it. Not a button entry: it is handled by the shell, listed only when usable.
+const PIPE_ADJUST_ENTRY = {
+  id: 'adjust', name: 'adjust', label: 'Adjust ports', aliases: ['ports', 'adj'], kind: 'adjust',
+};
 const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
@@ -246,7 +252,7 @@ const PIPE_FIXTURE_DISPLAY_NAMES = {
 const PIPE_FIXTURE_TOOL = 'fixture';
 const PIPE_FITTING_TOOL = 'fitting';
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -296,7 +302,7 @@ const __m_pipe_host = (function(){
 // page and against the Node test harness.
 const { isElementVisible } = __m_actions;
 
-function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, unavailableMark = 'unavailable' }) {
+function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, adjustLabelText = 'Adjust ports', unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -498,7 +504,10 @@ function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, unavailabl
         const data = JSON.parse(el.textContent);
         const fam = data.catalogSupportedUi.fittingFamilies.find((f) => f.id === familyId);
         if (!fam) return { readable: false };
-        return { readable: true, maximumProfileByPort: (fam.profileCompatibility && fam.profileCompatibility.maximumProfileByPort) || {} };
+        return {
+          readable: true, maximumProfileByPort: (fam.profileCompatibility && fam.profileCompatibility.maximumProfileByPort) || {},
+          portContract: Array.isArray(fam.portContract) ? fam.portContract.slice() : null,
+        };
       } catch (err) {
         return { readable: false };
       }
@@ -543,6 +552,34 @@ function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, unavailabl
     // Which of these element ids are not on the page right now?
     missingIds(list) {
       return list.filter((id) => !doc.getElementById(id));
+    },
+
+    // Native's "Adjust ports" checkbox (inside a label in the placement panel): { found, visible, checked, disabled }.
+    readAdjustPorts() {
+      const panel = doc.getElementById(panelIds.panel);
+      if (!panel) return { found: false };
+      for (const lab of panel.querySelectorAll('label')) {
+        if (text(lab).indexOf(adjustLabelText) === -1) continue;
+        const box = lab.querySelectorAll('input')[0];
+        if (!box) continue;
+        return { found: true, visible: !lab.hidden && isElementVisible(lab), checked: !!box.checked, disabled: !!box.disabled };
+      }
+      return { found: false };
+    },
+
+    // The one click on that checkbox (native toggles its placement state on change; nothing is saved).
+    // Re-checks right before clicking. Returns { ok, checked }.
+    clickAdjustPorts() {
+      const panel = doc.getElementById(panelIds.panel);
+      if (!panel || panel.hidden) return { ok: false };
+      for (const lab of panel.querySelectorAll('label')) {
+        if (text(lab).indexOf(adjustLabelText) === -1) continue;
+        const box = lab.querySelectorAll('input')[0];
+        if (!box || lab.hidden || box.disabled) return { ok: false };
+        box.click();
+        return { ok: true, checked: !!box.checked };
+      }
+      return { ok: false };
     },
 
     // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.
@@ -1027,7 +1064,49 @@ function finishLatchStep({ latch, phase, panelOpen, now, expireMs }) {
   return latch;
 }
 
-return {panelPhase, missingIds, hintWatch, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict, portRoleFromHint, targetForbidden, finishVerdict, FINISH_LATCH_OFF, finishLatchClick, finishLatchStep};
+/* ---------- Step 3c: Adjust ports ---------- */
+
+// "branch_a" -> "branch A", "inlet" -> "inlet". Display only: native's own role names are unchanged.
+function roleDisplayName(role) {
+  const r = String(role ?? '');
+  const m = r.match(/^(.*)_([a-z])$/);
+  return m ? `${m[1].replace(/_/g, ' ')} ${m[2].toUpperCase()}` : r.replace(/_/g, ' ');
+}
+
+// Where `role` sits in the family's port list: { n, N, done } (n is 1-based; done = the roles before it),
+// or null when the role is not in the list. Exact only while Adjust ports is on, because Adjust asks for
+// every role from scratch, in catalog order.
+function portProgress(role, portContract) {
+  const list = portContract ?? [];
+  const i = list.indexOf(role);
+  return i === -1 ? null : { n: i + 1, N: list.length, done: list.slice(0, i) };
+}
+
+// The line shown while native asks for a port. `adjustOn` is whether native's Adjust ports box is ticked.
+// With Adjust on and the roles known: "click: outlet (2 of 4)  done: inlet  (click an assigned port again to undo)".
+// Otherwise role only (native skips the ports it already detected, so a count there would be a guess).
+function portLine({ role, adjustOn, portContract }) {
+  const name = roleDisplayName(role);
+  const prog = adjustOn ? portProgress(role, portContract) : null;
+  if (!prog) return 'click: ' + name;
+  const done = prog.done.length ? '  done: ' + prog.done.map(roleDisplayName).join(', ') : '';
+  return `click: ${name} (${prog.n} of ${prog.N})${done}  (click an assigned port again to undo)`;
+}
+
+// May the bar tick or untick Adjust ports right now? Only while a placement panel is open in the ready or
+// ports phase and native's own checkbox is there, visible and enabled. It saves nothing (native keeps it as
+// placement state), but it does reset which port is which, so it is never done by accident.
+//   f { panelOpen, phase, found, visible, disabled }
+function adjustVerdict(f) {
+  const no = (reason, message) => ({ ok: false, reason, message });
+  if (!f?.panelOpen) return no('no-panel', 'adjust ports: no fitting is being placed');
+  if (f.phase !== 'ready' && f.phase !== 'ports') return no('phase', 'adjust ports: choose the fitting label first');
+  if (!f.found || !f.visible) return no('no-checkbox', 'adjust ports: the app shows no Adjust ports option here (it needs detected pipe intersections and a chosen fitting)');
+  if (f.disabled) return no('disabled', 'adjust ports: the app has it disabled right now');
+  return { ok: true };
+}
+
+return {panelPhase, missingIds, hintWatch, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict, portRoleFromHint, targetForbidden, finishVerdict, FINISH_LATCH_OFF, finishLatchClick, finishLatchStep, roleDisplayName, portProgress, portLine, adjustVerdict};
 })();
 
 // ===== src/core/pipe-table-core.js =====
@@ -1170,7 +1249,7 @@ function listEntries(table, stateFor) {
   const rows = [];
   for (const entry of table) {
     const state = stateFor(entry);
-    if (entry.kind === 'action' && !state.usable) continue;
+    if ((entry.kind === 'action' || entry.kind === 'adjust') && !state.usable) continue;
     rows.push({ entry, state });
   }
   return rows;
@@ -1456,6 +1535,11 @@ const SIZE_CHOICES = [
   { id: 'asis', text: 'Use port sizes as is' },
   { id: 'edit', text: 'Edit port sizes' },
 ];
+// A third row when native's Adjust ports box can be used right now.
+const SIZE_CHOICE_ADJUST = { id: 'adjust', text: 'Adjust ports (click each port)' };
+function sizeChoiceRows({ adjustUsable }) {
+  return adjustUsable ? SIZE_CHOICES.concat([SIZE_CHOICE_ADJUST]) : SIZE_CHOICES.slice();
+}
 
 // Which fields the edit step asks about, in order: the ones that are not locked.
 function editableFields(fields) {
@@ -1510,7 +1594,7 @@ function sizesFinishGate({ perPort, stage, confirmed, current, violations, selec
   return { ok: true };
 }
 
-return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, planSizeInput, planSizeWrite, effectiveSize, rolesFromLabel, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields, SIZES_IDLE, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate};
+return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, planSizeInput, planSizeWrite, effectiveSize, rolesFromLabel, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, SIZE_CHOICE_ADJUST, sizeChoiceRows, editableFields, SIZES_IDLE, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate};
 })();
 
   // ===== loader guard (src/core/pipe-table-core.js loaderGuard) =====
@@ -1820,16 +1904,16 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
     PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
     PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
-    PIPE_SIZE_IDS, PIPE_SIZE_TOOLS,
+    PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
-    portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
+    portRoleFromHint, portLine, adjustVerdict, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
   } = __m_pipe_placement_core;
   const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const {
     planSizeInput, planSizeWrite, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields,
-    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize,
+    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows,
   } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
@@ -1839,7 +1923,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
   const { createPipeHost } = __m_pipe_host;
 
   const host = createPipeHost({
-    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, unavailableMark: PIPE_UNAVAILABLE_MARK,
+    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, adjustLabelText: PIPE_ADJUST.labelText, unavailableMark: PIPE_UNAVAILABLE_MARK,
   });
 
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
@@ -1866,8 +1950,23 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       curatedAliases: PIPE_TOOL_ALIASES, actions: PIPE_GRAPH_ACTIONS,
     });
   }
-  function currentTable() { return buildTable(derive().tools, PIPE_GRAPH_ACTIONS); }
-  function stateFor(entry) { return entryState(entry, host.describeTarget(entry), FORBIDDEN); }
+  function currentTable() { return buildTable(derive().tools, PIPE_GRAPH_ACTIONS).concat([PIPE_ADJUST_ENTRY]); }
+  // Can the bar tick/untick native's Adjust ports box right now? (see adjustVerdict)
+  function adjustFacts() {
+    const snap = host.readPanel();
+    const a = host.readAdjustPorts();
+    return {
+      panelOpen: snap.open, phase: snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed',
+      found: a.found, visible: a.visible, disabled: a.disabled,
+    };
+  }
+  function stateFor(entry) {
+    if (entry.kind === 'adjust') {
+      const v = adjustVerdict(adjustFacts());
+      return { usable: v.ok, forbidden: false, reason: v.ok ? null : v.message.replace(/^adjust ports: /, '') };
+    }
+    return entryState(entry, host.describeTarget(entry), FORBIDDEN);
+  }
 
   /* ---------- our own record of what is armed (see reconcileArmed) ---------- */
   const own = { armed: false, tool: null, lastTool: null, lastCmdAt: 0 };
@@ -1907,6 +2006,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     // While a placement panel is open only the ways out and the view/undo actions may run.
     const iso = isolationVerdict({ panelOpen: host.readPanel().open, name: entry.name, allowed: PIPE_ISOLATION_ALLOWED });
     if (!iso.ok) { status(iso.message); return false; }
+    if (entry.kind === 'adjust') return runAdjust();
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
@@ -1940,7 +2040,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
   // The label prompt for native's Place Fitting panel (Step 2).
   const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
-  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
+  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', adjust: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
 
   function ensureMenu() {
     if (menuEl) return;
@@ -2150,9 +2250,17 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
   // never takes focus (Esc and clicks keep going to the app) and never clicks anything.
   function updatePortNote(snap) {
     const role = (snap.open && panelPhase(snap.hint, PIPE_HINT_PREFIXES) === 'ports') ? portRoleFromHint(snap.hint, PIPE_PORT_ROLE_PATTERN) : null;
-    if (role === portNoteRole) return;
-    portNoteRole = role;
-    if (!role) {
+    let line = null;
+    if (role) {
+      // With Adjust ports ticked every role is asked from scratch, so "n of N" is exact; otherwise role only.
+      const adjustOn = host.readAdjustPorts().checked === true;
+      const famId = host.readChosenFamilyId();
+      const rules = adjustOn && famId ? host.readFamilyRules(famId) : null;
+      line = portLine({ role: role, adjustOn: adjustOn, portContract: rules && rules.readable ? rules.portContract : null });
+    }
+    if (line === portNoteRole) return;
+    portNoteRole = line;
+    if (!line) {
       if (portNoteShown) { portNoteShown = false; if (!prompt.active && document.activeElement !== inputEl) hideMenu(); }
       return;
     }
@@ -2163,12 +2271,12 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     menuEl.innerHTML = '';
     const head = document.createElement('div');
     head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
-    head.textContent = 'click: ' + role;
+    head.textContent = line;
     menuEl.appendChild(head);
     positionMenu();
     menuEl.style.display = 'block';
     portNoteShown = true;
-    status('click: ' + role);
+    status(line);
   }
 
   /* ---------- Step 3b: port sizes on reducing fittings (keyboard only) ---------- */
@@ -2212,7 +2320,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
   function renderSizesChoice() {
     sizesUi.active = true;
     sizesUi.header = 'Port sizes: pick one (Enter or Space)';
-    menuItems = SIZE_CHOICES.map(function(c){ return { size: c }; });
+    menuItems = sizeChoiceRows({ adjustUsable: adjustVerdict(adjustFacts()).ok }).map(function(c){ return { size: c }; });
     menuHighlight = 0;
     ensureMenu(); renderMenu();
   }
@@ -2239,12 +2347,29 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     inputEl.focus();
     renderSizesChoice();
   }
+  // Tick or untick native's Adjust ports box (placement state only; nothing is saved).
+  function runAdjust() {
+    const v = adjustVerdict(adjustFacts());
+    if (!v.ok) { status(v.message); return false; }
+    const wasOn = host.readAdjustPorts().checked === true;
+    logAction('adjust', (wasOn ? 'unticked' : 'ticked') + ' Adjust ports');
+    const r = host.clickAdjustPorts();
+    if (!r.ok) { unlogLast(); status('adjust ports: could not change it'); return false; }
+    own.lastCmdAt = Date.now();
+    const keep = placementCount; resetSizes(); placementCount = keep;
+    status(r.checked
+      ? 'adjust ports on: click each port in the order the bar shows (click an assigned port again to undo)'
+      : 'adjust ports off: the app assigns the ports itself');
+    return true;
+  }
   function sizeTick(snap) {
     if (!snap.open) { if (panelWasOpen) resetSizes(); panelWasOpen = false; return; }
     if (!panelWasOpen) { placementCount += 1; panelWasOpen = true; resetSizes(); }
     const f = sizesFacts(snap);
     if (sizes.key !== null && sizes.key !== f.key) { const keep = placementCount; resetSizes(); placementCount = keep; }
-    if (!f.ready) { if (sizesUi.active) { sizesUi.active = false; sizesUi.header = ''; hideMenu(); } return; }
+    // Leaving ready (a label change, the ports phase after Adjust ports, saving) forgets any confirmation:
+    // assigning ports reseeds the sizes, so the rows ask again when ready returns.
+    if (!f.ready) { const keep = placementCount; resetSizes(); placementCount = keep; return; }
     const plan = sizesTickPlan({
       state: sizes, key: f.key, perPort: f.pf.present, ready: f.ready,
       selectedEntityId: f.sel.selectedEntityId, selectionReadable: f.sel.selectionReadable,
@@ -2261,6 +2386,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     }
   }
   function pickSizeChoice(choice) {
+    if (choice.id === 'adjust') { sizesUi.active = false; sizesUi.header = ''; hideMenu(); runAdjust(); return; }
     if (choice.id === 'asis') { confirmSizes('kept'); return; }
     // edit: ask for each editable port in on-screen order
     sizes.stage = 'edit'; sizes.index = 0; sizes.drafts = {};

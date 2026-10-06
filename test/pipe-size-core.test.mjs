@@ -7,7 +7,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import {
   parseSizeInput, formatSize, planSizeInput, planSizeWrite, effectiveSize, rolesFromLabel, roleSizes, maxViolations,
-  sizeWriteVerdict, SIZE_CHOICES, editableFields, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate, NOMINAL_SIZES_IN,
+  sizeWriteVerdict, SIZE_CHOICES, editableFields, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate, NOMINAL_SIZES_IN, sizeChoiceRows, SIZE_CHOICE_ADJUST,
 } from '../src/core/pipe-size-core.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -139,4 +139,11 @@ test('sizesFinishGate: single-size fittings pass; per-port ones need confirmed, 
   assert.equal(g({ selectedEntityId: 'p' }).reason, 'sizes-selected');
   assert.equal(g({ selectionReadable: false }).reason, 'sizes-selected');
   assert.equal(g({ selectedEntityId: 'p' }).reopen, false, 'selected: re-opening the rows would not help');
+});
+
+test('sizeChoiceRows: the third row appears only when Adjust ports can be used', () => {
+  assert.deepEqual(sizeChoiceRows({ adjustUsable: false }).map((c) => c.id), ['asis', 'edit']);
+  assert.deepEqual(sizeChoiceRows({ adjustUsable: true }).map((c) => c.id), ['asis', 'edit', 'adjust']);
+  assert.equal(SIZE_CHOICE_ADJUST.text, 'Adjust ports (click each port)');
+  assert.equal(SIZE_CHOICES.length, 2, 'the base list is not mutated');
 });

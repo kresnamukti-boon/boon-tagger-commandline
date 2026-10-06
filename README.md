@@ -138,6 +138,18 @@ the same way as above, on a **piping** page.
     saved command. The bar writes sizes only while a NEW placement is open and ready and nothing is selected on the
     drawing (or it can't tell): then it refuses and says why. Sizes confirmed earlier are re-checked right before
     Finish (a changed size means "confirm again").
+- **Adjust ports (choose which intersection is the inlet, outlet, branch).** The app's "Adjust ports" box is only
+  there when it has detected pipe intersections and a fitting is chosen. From the bar:
+  - type **`adjust`** (or `ports`, `adj`) + Enter/Space while the fitting panel is open (at ready, or while it asks
+    for a port): the bar ticks the app's box once. Type it again to untick (back to automatic). For a reducing
+    fitting the same thing is the third row, "Adjust ports (click each port)". It is listed only when it can be used.
+  - the bar then guides the clicks, with an exact count because Adjust asks for every port from scratch, e.g.
+    `click: outlet (2 of 4)  done: inlet  (click an assigned port again to undo)`. A cross has four ports:
+    inlet, outlet, **branch A**, **branch B**. Outside Adjust mode the line is just `click: <role>`.
+  - **You still click the intersections with the mouse** (the app assigns each role from a canvas click). The keyboard
+    starts it and shows the order; nothing is saved by ticking the box.
+  - Assigning ports reseeds the sizes, so after the last click the size rows ask again (an old confirmation is
+    forgotten, even if you ticked the box with the mouse).
 - **If native changes under us** (safety net). Two checks make the bar stop instead of guess:
   - if the fitting panel is open but its hint sentence is one we don't recognise, the bar shows one
     line, "Native changed: use the mouse for this step", and does nothing else for that step (no

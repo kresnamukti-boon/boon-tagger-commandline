@@ -45,6 +45,7 @@ function eq(actual, expected, name) {
 }
 
 /* ---------- a small fake page ---------- */
+const READY_HINT = 'Finish inserts this fitting. The connected pipe resumes from its outlet.';
 function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRail = true, selected = null, selectionReadable = true, systemDisabled = false, finishDisabled = false, finishInToast = false, bootstrap = true } = {}) {
   const byId = {};
   const listeners = { window: {}, document: {} };
@@ -138,6 +139,8 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   if (bootstrap) {
     const boot = el('script'); boot.id = 'graph-session-bootstrap';
     boot.textContent = JSON.stringify({ catalogSupportedUi: { fittingFamilies: [
+      { id: 'pipe-cross', portContract: ['inlet', 'outlet', 'branch_a', 'branch_b'], profileCompatibility: { allowsProfileChange: false, sameProfileGroups: [['inlet', 'outlet', 'branch_a', 'branch_b']], maximumProfileByPort: {} } },
+      { id: 'pipe-tee-eq', portContract: ['inlet', 'outlet', 'branch'], profileCompatibility: { allowsProfileChange: false, sameProfileGroups: [['inlet', 'outlet', 'branch']], maximumProfileByPort: {} } },
       { id: 'pipe-tee-reducing', portContract: ['inlet', 'outlet', 'branch'], profileCompatibility: { allowsProfileChange: true, sameProfileGroups: [], maximumProfileByPort: { branch: 'inlet', outlet: 'inlet' } } },
       { id: 'pipe-reducer-concentric', portContract: ['inlet', 'outlet'], profileCompatibility: { allowsProfileChange: true, sameProfileGroups: [], maximumProfileByPort: {} } },
     ] } });
@@ -200,7 +203,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
     return evt;
   }
   // Native's "Place Fitting" panel, built the way pipe-session-ui.js builds it. groups: [{ports, usable, ids:[[id,label,usable]]}]
-  function openPanel({ tool = 'fitting', hint = 'Choose the fitting subtype.', groups = [], perPort = null, chosen = null } = {}) {
+  function openPanel({ tool = 'fitting', hint = 'Choose the fitting subtype.', groups = [], perPort = null, chosen = null, adjust = null } = {}) {
     state.activeTool = tool;
     const old = byId['graph-pipe-bbox-op-panel'];
     if (old && old.parentNode) old.parentNode.removeChild(old);
@@ -229,6 +232,24 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
       menu.appendChild(section);
     }
     field.appendChild(menu); pan.appendChild(field);
+    // native's "Adjust ports" box: only there with detected intersections; ticking it asks for each role from scratch
+    const ctl = { assigned: 0, roles: adjust ? adjust.roles : [], clicks: 0 };
+    if (adjust) {
+      const lab = el('label'); lab.textContent = ' Adjust ports'; lab.hidden = adjust.detected === false;
+      const box = el('input'); box.type = 'checkbox'; box.checked = false; box.disabled = !!adjust.disabled;
+      const sayRole = () => { hintEl.textContent = 'Click the detected intersection for ' + ctl.roles[ctl.assigned] + '.'; };
+      box.click = () => {
+        if (box.disabled) return;
+        state.adjustClicks = (state.adjustClicks || 0) + 1;
+        box.checked = !box.checked; ctl.assigned = 0;
+        if (box.checked) sayRole(); else hintEl.textContent = READY_HINT;
+        box.dispatch({ type: 'change' });
+      };
+      lab.appendChild(box); pan.appendChild(lab);
+      ctl.box = box;
+      ctl.clickPort = () => { ctl.assigned += 1; if (ctl.assigned >= ctl.roles.length) hintEl.textContent = READY_HINT; else sayRole(); };
+      ctl.undoPort = () => { ctl.assigned -= 1; sayRole(); };
+    }
     doc.body.appendChild(pan);
     // native's per-port size fields (#graph-pipe-port-diameters): a select + custom box per group
     const old2 = byId['graph-pipe-port-diameters']; if (old2 && old2.parentNode) old2.parentNode.removeChild(old2);
@@ -247,7 +268,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
       fields[f.role] = { sel, cus };
     }
     doc.body.appendChild(cont);
-    return { hintEl, pan, fields, cont };
+    return { hintEl, pan, fields, cont, ctl };
   }
   function closePanel() { const pan = byId['graph-pipe-bbox-op-panel']; if (pan) pan.hidden = true; }
   return { doc, win, RW, state, warnings, context, press, el, byId, listeners, panel, root, openPanel, closePanel, tick() { state.timers.forEach((f) => f()); } };
@@ -279,7 +300,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     ok(!!input(page), 'the bar input is mounted');
     const names = page.RW._pipeTable().map((e) => e.name);
     eq(names.slice(0, 14), ['select', 'route', 'extend', 'terminate', 'transition', 'cut', 'split-run', 'valve', 'fixture', 'equipment', 'fitting', 'vertical', 'service', 'evidence'], 'table: the 14 rail tools, in rail order');
-    eq(names.slice(14), ['undo', 'redo', 'zoomfit', 'zoomin', 'zoomout', 'ruler', 'components'], 'table: then the 7 actions');
+    eq(names.slice(14), ['undo', 'redo', 'zoomfit', 'zoomin', 'zoomout', 'ruler', 'components', 'adjust'], 'table: then the 7 actions and the adjust command');
     const info = page.RW._pipeTableInfo();
     eq([info.source, info.skipped, info.aliasDropped, info.shadowedActions], ['toolbar', [], [], []], 'table info: clean derivation from the toolbar');
     ok(/piping command line ready: 14 tools, 7 actions/.test(page.state.statuses[0]), 'startup status line');
@@ -1208,6 +1229,141 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     eq(rows(page).slice(1), ['Use port sizes as is', 'Edit port sizes'], 'a new placement asks again');
     page.press(page.byId['rw-pipe-input'], 'Escape'); enter(page);
     eq(page.state.finishClicks, 0, 'and Enter does not finish on the old confirmation');
+  }
+
+  /* ----- Step 3c: Adjust ports (tick native's box from the bar, guide the clicks) ----- */
+  const CROSS_GROUPS = [{ ports: 4, ids: [['pipe-cross', 'Cross']] }];
+  const UNDO_NOTE = '(click an assigned port again to undo)';
+  const adjPanel = (page, over = {}) => {
+    const h = page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet', 'branch'] }, ...over });
+    page.tick(); return h;
+  };
+  {
+    // the typed command on an equal tee: ticks the box, guides each click with an exact count, then back to ready
+    const page = makePage(); loadShell(page); const h = adjPanel(page);
+    page.byId['rw-pipe-input'].focus();
+    typeText(page, 'adjust'); page.press(page.byId['rw-pipe-input'], 'Enter');
+    eq([h.ctl.box.checked, page.state.adjustClicks], [true, 1], 'adjust ticked native\'s box once');
+    ok(/adjust ports on/.test(lastStatus(page)), 'and says what to do');
+    page.tick();
+    eq(menuRows(page), ['click: inlet (1 of 3)  ' + UNDO_NOTE], 'ports phase, Adjust on: the exact count for the first role');
+    h.ctl.clickPort(); page.tick();
+    eq(menuRows(page), ['click: outlet (2 of 3)  done: inlet  ' + UNDO_NOTE], 'second role: what is done so far');
+    h.ctl.undoPort(); page.tick();
+    eq(menuRows(page), ['click: inlet (1 of 3)  ' + UNDO_NOTE], 'clicking an assigned port again un-assigns it and the line steps back');
+    h.ctl.clickPort(); h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
+    ok(!menuShown(page) || !/click:/.test(menuRows(page)[0] || ''), 'after the last role native is back at ready and the line is gone');
+    ok(page.RW._pipeLog.some((x) => x.kind === 'adjust' && x.what === 'ticked Adjust ports'), 'the tick is in the action log');
+    eq(page.state.finishClicks, 0, 'nothing finished by adjusting');
+  }
+  {
+    // a 4-port cross: roles inlet, outlet, branch_a, branch_b, shown as "branch A" / "branch B"
+    const page = makePage(); loadShell(page);
+    const h = adjPanel(page, { groups: CROSS_GROUPS, chosen: 'pipe-cross', adjust: { roles: ['inlet', 'outlet', 'branch_a', 'branch_b'] } });
+    page.byId['rw-pipe-input'].focus();
+    ok(!menuShown(page), 'a cross has one size: no rows, Enter-to-Finish stays one press');
+    typeText(page, 'ports'); page.press(page.byId['rw-pipe-input'], 'Enter');
+    page.tick(); eq(menuRows(page), ['click: inlet (1 of 4)  ' + UNDO_NOTE], 'cross: 1 of 4');
+    h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
+    eq(menuRows(page), ['click: branch A (3 of 4)  done: inlet, outlet  ' + UNDO_NOTE], 'cross: branch A is third, with the done list');
+    h.ctl.clickPort(); page.tick();
+    eq(menuRows(page), ['click: branch B (4 of 4)  done: inlet, outlet, branch A  ' + UNDO_NOTE], 'cross: branch B is fourth');
+    h.ctl.clickPort(); page.tick();
+    eq([h.ctl.assigned, page.state.finishClicks], [4, 0], 'all four assigned, nothing finished');
+    page.byId['rw-pipe-input'].focus(); page.press(page.byId['rw-pipe-input'], 'Enter');
+    eq(page.state.finishClicks, 1, 'the cross then finishes with one Enter (single size group: no sizes step)');
+  }
+  {
+    // typing `adjust` again unticks it (back to the automatic assignment); aliases; Space = Enter
+    const page = makePage(); loadShell(page); const h = adjPanel(page);
+    page.byId['rw-pipe-input'].focus(); typeText(page, 'adj'); page.press(page.byId['rw-pipe-input'], ' ');
+    eq(h.ctl.box.checked, true, '"adj" + Space ticks it');
+    page.tick(); page.byId['rw-pipe-input'].focus(); typeText(page, 'adjust'); page.press(page.byId['rw-pipe-input'], 'Enter');
+    eq([h.ctl.box.checked, page.state.adjustClicks], [false, 2], 'a second `adjust` unticks it');
+    ok(/adjust ports off/.test(lastStatus(page)), 'and says so');
+    ok(page.RW._pipeLog.filter((x) => x.kind === 'adjust').map((x) => x.what).join() === 'ticked Adjust ports,unticked Adjust ports', 'both toggles are logged');
+  }
+  {
+    // refusals: nothing open, wrong phase, no box (nothing detected), disabled box
+    const page = makePage(); loadShell(page);
+    eq(page.RW.runCommand('adjust'), false, 'nothing open: refused');
+    ok(/no fitting is being placed/.test(lastStatus(page)), 'with the reason');
+    page.openPanel({ tool: 'fitting', hint: 'Choose the fitting subtype.', groups: TEE_GROUPS, adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+    eq(page.RW.runCommand('adjust'), false, 'before the label is chosen: refused');
+    ok(/choose the fitting label first/.test(lastStatus(page)), 'with the reason');
+    const p2 = makePage(); loadShell(p2); adjPanel(p2, { adjust: { roles: ['inlet', 'outlet', 'branch'], detected: false } });
+    eq(p2.RW.runCommand('adjust'), false, 'no detected intersections (the app hides the box): refused');
+    ok(/shows no Adjust ports option/.test(lastStatus(p2)) && !p2.state.adjustClicks, 'with the reason, and no click');
+    const p3 = makePage(); loadShell(p3); adjPanel(p3, { adjust: { roles: ['inlet', 'outlet', 'branch'], disabled: true } });
+    eq(p3.RW.runCommand('adjust'), false, 'a disabled box: refused');
+    ok(!p3.state.adjustClicks, 'and not clicked');
+    const p4 = makePage(); loadShell(p4);
+    typeText(p4, 'adj');
+    ok(!menuRows(p4).some((r) => /adjust/.test(r)), 'when it cannot be used, it is not offered in the dropdown');
+  }
+  {
+    // reducing tee: the third row, and the sizes step forgets its confirmation across the ports phase
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+    eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports (click each port)'], 'three rows for a reducing fitting that can adjust');
+    enter(page);
+    ok(/port sizes kept/.test(lastStatus(page)), 'confirm sizes first');
+    page.byId['rw-pipe-input'].focus(); typeText(page, 'adjust'); enter(page);
+    eq(h.ctl.box.checked, true, 'then adjust (the command works while ready)');
+    page.tick();
+    h.ctl.clickPort(); h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
+    eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports (click each port)'], 'back at ready the rows reopen: the old confirmation is forgotten');
+    page.press(page.byId['rw-pipe-input'], 'Escape'); page.byId['rw-pipe-input'].focus(); enter(page);
+    eq(page.state.finishClicks, 0, 'and Enter does not finish on the old confirmation');
+  }
+  {
+    // the third row works too (keyboard only)
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+    page.press(page.byId['rw-pipe-input'], 'ArrowDown'); page.press(page.byId['rw-pipe-input'], 'ArrowDown'); enter(page);
+    eq([h.ctl.box.checked, page.state.finishClicks], [true, 0], 'the third row ticks the box');
+    page.tick(); eq(menuRows(page), ['click: inlet (1 of 3)  ' + UNDO_NOTE], 'and the guide starts');
+  }
+  {
+    // without Adjust (partial detection: the app asks only for what is missing): role only, with the display name
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fitting', hint: 'Click the detected intersection for branch_b.', groups: TEE_GROUPS, chosen: 'pipe-cross', adjust: { roles: ['inlet', 'outlet', 'branch_a', 'branch_b'] } }); page.tick();
+    eq(menuRows(page), ['click: branch B'], 'not adjusting: role only (a count would be a guess)');
+    const p2 = makePage({ bootstrap: false }); loadShell(p2);
+    const h2 = adjPanel(p2, { groups: CROSS_GROUPS, chosen: 'pipe-cross', adjust: { roles: ['inlet', 'outlet', 'branch_a', 'branch_b'] } });
+    p2.byId['rw-pipe-input'].focus(); typeText(p2, 'adjust'); p2.press(p2.byId['rw-pipe-input'], 'Enter'); p2.tick();
+    eq(menuRows(p2), ['click: inlet'], 'catalog unreadable: role only, no count');
+  }
+  {
+    // the host's own guard on the box click (a second layer behind the verdict), and a click that cannot happen is not logged
+    const page = makePage(); loadShell(page); const h = adjPanel(page);
+    const label = h.ctl.box.parentNode; label.hidden = true;
+    eq([page.RW._pipeHost.clickAdjustPorts().ok, page.state.adjustClicks || 0], [false, 0], 'host: a hidden box is not clicked');
+    label.hidden = false; h.ctl.box.disabled = true;
+    eq([page.RW._pipeHost.clickAdjustPorts().ok, page.state.adjustClicks || 0], [false, 0], 'host: a disabled box is not clicked');
+    const p2 = makePage(); loadShell(p2); const h2 = adjPanel(p2); let reads = 0;
+    Object.defineProperty(h2.ctl.box, 'disabled', { get() { reads += 1; return reads > 2; }, set() {}, configurable: true });
+    eq(p2.RW.runCommand('adjust'), false, 'the box went disabled between the checks and the click: nothing happens');
+    eq([p2.RW._pipeLog.length, p2.state.adjustClicks || 0], [0, 0], 'and it is not in the action log');
+    ok(/could not change it/.test(lastStatus(p2)), 'with a message');
+  }
+  {
+    // the person ticks the box with the MOUSE after confirming sizes: the confirmation is still forgotten
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+    enter(page);
+    h.ctl.box.click(); page.tick();
+    h.ctl.clickPort(); h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
+    eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports (click each port)'], 'a mouse-ticked Adjust ports also makes the rows ask again');
+    page.press(page.byId['rw-pipe-input'], 'Escape'); page.byId['rw-pipe-input'].focus(); enter(page);
+    eq(page.state.finishClicks, 0, 'and the old confirmation does not let Enter finish');
+  }
+
+  {
+    // while a fitting is open, other commands are still refused; adjust is on the allowed list
+    const page = makePage(); loadShell(page); adjPanel(page);
+    eq(page.RW.runCommand('route'), false, 'route is refused while a fitting is open');
+    eq(page.RW.runCommand('adjust'), true, 'adjust is allowed');
   }
 
   console.log(`${pass} passed, ${fail} failed`);

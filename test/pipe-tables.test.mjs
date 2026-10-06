@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
-  PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED,
+  PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED, PIPE_ADJUST_ENTRY,
 } from '../src/pipe/pipe-tables.js';
 
 test('trade values: piping and ductwork (the two TradePack values)', () => {
@@ -71,7 +71,7 @@ test('fallback keys are single unique lowercase characters', () => {
 });
 
 test('isolation-allowed names are real commands or select', () => {
-  const names = new Set(['select', ...PIPE_GRAPH_ACTIONS.map((a) => a.name)]);
+  const names = new Set(['select', PIPE_ADJUST_ENTRY.name, ...PIPE_GRAPH_ACTIONS.map((a) => a.name)]);
   for (const n of PIPE_ISOLATION_ALLOWED) assert.ok(names.has(n), n);
 });
 
@@ -79,4 +79,11 @@ test('page ids look like what the host layer expects', () => {
   assert.equal(PIPE_PAGE_IDS.root, 'graph-session-root');
   assert.equal(PIPE_PAGE_IDS.stage, 'graph-canvas-stage');
   assert.equal(PIPE_PAGE_IDS.toolSelector, '[data-tool]');
+});
+
+test('the adjust command: a typed entry (no button), names that do not clash with tools, actions or key letters', () => {
+  assert.deepEqual(PIPE_ADJUST_ENTRY, { id: 'adjust', name: 'adjust', label: 'Adjust ports', aliases: ['ports', 'adj'], kind: 'adjust' });
+  assert.ok(!('btn' in PIPE_ADJUST_ENTRY), 'it is not a button entry');
+  const taken = new Set([...PIPE_GRAPH_ACTIONS.flatMap((a) => [a.name, ...a.aliases]), ...Object.keys(PIPE_FALLBACK_KEYS), ...Object.values(PIPE_TOOL_ALIASES).flat()]);
+  for (const n of [PIPE_ADJUST_ENTRY.name, ...PIPE_ADJUST_ENTRY.aliases]) assert.ok(!taken.has(n), n + ' clashes');
 });
