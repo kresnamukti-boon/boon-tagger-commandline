@@ -312,6 +312,13 @@ every id/class/string we rely on and `test/native-ids.test.mjs` checks them.
 - **Native Escape** cancels a placement and then switches to the route tool. Our bar only swallows
   Escape while it has something to close.
 - **Panel dragging** (duct has it) is not copied yet.
+- **Flange is absent from the rail by native's design** (`pipe-session-ui.js`: "insulation/flange:
+  intentionally absent - no canvas handler yet"). The rail is read live, so a flange tool shows up
+  here by itself when native adds it.
+- **Native's recorder logs our clicks.** `graph_capture` `action-capture.js` records our programmatic
+  clicks on `[data-capture-control-id]` buttons as ordinary `tool_change` / `control_activate` steps.
+  It does not record typed text or that the command line did it. Native's own command line behaves the
+  same. The engineer may want to tag command-line-driven actions.
 - **`data-trade="ductwork"`** is native's value for duct (`TradePack: "ductwork" | "piping"`) but has
   not yet been seen on a live duct page; confirm once before merging.
 - **Fixtures** (`test/fixtures/native/`) are deliberately not in git; `test/native-ids.json` is the
