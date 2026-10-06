@@ -89,7 +89,7 @@ the same way as above, on a **piping** page.
     nothing to redo) is left out of the list. **`undo` and `redo` submit real commands** to the app's
     autosave journal, like any click on those buttons.
   - **Space** on an empty bar: closes the armed tool back to select; otherwise repeats the last tool;
-    the very first time, lists the tools. **Tab / Shift+Tab** cycle the completions, **Enter** runs,
+    the very first time, lists the tools. **Tab / Shift+Tab** cycle the completions, **Enter or Space** runs the top (highlighted) row, exactly the same as on the duct bar (so a multi-word name can't be typed with its space: use the id or a short name, e.g. `santee`),
     **Escape** closes the bar (and only passes through to the app when there is nothing of ours to
     close).
   - Like on duct, the bar captures printable keys first, so typing `g` starts a command instead of

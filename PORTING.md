@@ -310,6 +310,7 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
   never hardcoded. **Unverified live:** the real fixture family ids (read-only check pending).
 - Dropped on purpose: `ft/tt/st/td` (use `trapft`, `traptt`, `trapst`, `traptd`), `rtee`, `rwye`.
 - While a placement panel is open, `PIPE_ISOLATION_ALLOWED` is now enforced in code (`runEntry`).
+- **Space = Enter** in the bar (and in the label prompt), like the duct bar. A literal space can no longer be typed, so multi-word labels are reached by id or alias.
 - Valves and equipment get no extra aliases yet (their menus still match by id and label).
 
 ### Open decisions (as of Step 2)

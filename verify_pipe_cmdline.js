@@ -280,9 +280,9 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
   {
     const page = makePage();
     loadShell(page);
-    typeText(page, 'place fitting');
-    page.press(input(page), 'Enter');
-    eq(page.state.clicks, ['fitting'], 'the on-screen label works as a command too');
+    // A multi-word label can't be typed any more (Space confirms, like Enter), but it still resolves.
+    page.RW.runCommand('place fitting');
+    eq(page.state.clicks, ['fitting'], 'the on-screen label still resolves as a command');
   }
   {
     const page = makePage();
@@ -646,6 +646,33 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     eq(page.RW.runCommand('select'), true, 'select is still allowed');
     page.closePanel();
     eq(page.RW.runCommand('route'), true, 'with the panel closed, route works again');
+  }
+
+  /* ----- the system-assignment tool is available like any other tool ----- */
+  {
+    const page = makePage(); loadShell(page);
+    eq(page.RW.runCommand('assign'), true, '"assign" arms the Assign system tool (service)');
+    eq(page.state.activeTool, 'service', 'and the page reports it');
+  }
+  /* ----- Space confirms exactly like Enter ----- */
+  {
+    const page = makePage(); loadShell(page);
+    typeText(page, 'route'); page.press(input(page), ' ');
+    eq(page.state.activeTool, 'route', 'Space after typing a tool name runs it, like Enter');
+    ok(input(page).value === '', 'and clears the bar (no literal space typed)');
+    typeText(page, 'zoomi'); page.press(input(page), ' ');
+    ok(page.state.clicks.includes('graph-zoom-in'), 'Space runs the highlighted completion, like Enter');
+    // bar lost focus with text waiting: Space still confirms
+    typeText(page, 'extend'); input(page).blur();
+    page.press(page.doc.body, ' ');
+    eq(page.state.activeTool, 'extend', 'text waiting in an unfocused bar: Space confirms it');
+  }
+  {
+    const page = makePage(); loadShell(page); page.openPanel({ groups: FITTING_GROUPS }); page.tick();
+    typeText(page, '3'); page.press(input(page), ' ');
+    eq(page.RW._pipePrompt.category, 3, 'in the label prompt, Space picks the category like Enter');
+    typeText(page, 'wye'); page.press(input(page), ' ');
+    eq(page.state.chosen, 'pipe-wye', 'and Space picks the fitting like Enter');
   }
 
   console.log(`${pass} passed, ${fail} failed`);

@@ -1211,7 +1211,7 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
       return;
     }
     if (prompt.active) {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault(); e.stopPropagation();
         if (menuHighlight >= 0 && menuItems[menuHighlight]) pickPrompt(menuItems[menuHighlight].prompt);
         else status('nothing matches');
@@ -1224,7 +1224,9 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
         return;
       }
     }
-    if (e.key === 'Enter') {
+    // Space confirms exactly like Enter (AutoCAD's convention, same as the duct bar). It is always
+    // consumed, so a literal space is never typed: multi-word labels are reached by id or alias.
+    if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault(); e.stopPropagation();
       const typed = inputEl.value.trim();
       // An exact name/label/alias always wins; otherwise run the highlighted completion.
@@ -1304,6 +1306,12 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
       menuItems = rowsFor('').filter(function(r){ return r.entry.kind === 'tool'; });
       menuHighlight = menuItems.length ? 0 : -1;
       renderMenu();
+      return;
+    }
+    if (e.key === ' ' && !barEmpty) {
+      // Typed text waiting but the bar lost focus: Space confirms it like Enter.
+      e.preventDefault(); e.stopImmediatePropagation();
+      onInputKeydown({ key: 'Enter', preventDefault: function(){}, stopPropagation: function(){} });
       return;
     }
     e.preventDefault(); e.stopImmediatePropagation();
