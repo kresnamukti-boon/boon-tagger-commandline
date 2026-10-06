@@ -320,8 +320,10 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
 - `finishVerdict` / `finishLatchStep` / `portRoleFromHint` / `targetForbidden` in `src/core/pipe-placement-core.js`;
   `PIPE_FINISH_*`, `PIPE_FORBIDDEN_BUTTON_TEXTS` (`resize anyway`) and `PIPE_FORBIDDEN_CONTAINER_IDS`
   (`graph-toast-stack`) in `src/pipe/pipe-tables.js`.
-- Enter in the bar clicks `#graph-finish-route` only for `fitting`/`fixture` in the ready phase (hint starts with
-  "Finish inserts this fitting."), never Space, never on repeat, never with text typed. Finish stays in
+- Enter or Space (`PIPE_FINISH_KEYS`; Space was added at the user's request, the same rules as Enter) in the bar clicks
+  `#graph-finish-route` only for `fitting`/`fixture` in the ready phase (hint starts with
+  "Finish inserts this fitting."), never on repeat, never with text typed, never when the bar lacks focus (Space elsewhere
+  just focuses the bar). Finish stays in
   `PIPE_FORBIDDEN_BUTTON_IDS` for every other path; the one deliberate click goes through `host.clickFinish`,
   which re-checks the button right before clicking. Native disables Finish for an incomplete port form, a
   missing transition size, or a phase other than ready; we only obey that.

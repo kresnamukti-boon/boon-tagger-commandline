@@ -180,7 +180,7 @@ export function targetForbidden(target, { forbiddenTexts = [], forbiddenContaine
   return forbiddenContainerIds.some((id) => ancestors.includes(id));
 }
 
-// May Enter in the bar click Finish right now? Every condition is re-read by the caller at the moment
+// May Enter (or Space, per `finishKeys`) in the bar click Finish right now? Every condition is re-read by the caller at the moment
 // of the click and this runs again. Returns { ok: true } or { ok: false, reason, message } where
 // `message` is null when the key should just do nothing (the bar says something only where the
 // person could be confused).
@@ -188,7 +188,7 @@ export function targetForbidden(target, { forbiddenTexts = [], forbiddenContaine
 //       latched, button: { found, id, expectedId, visible, disabled, ariaDisabled, forbidden } }
 export function finishVerdict(f) {
   const no = (reason, message = null) => ({ ok: false, reason, message });
-  if (f?.key !== 'Enter') return no('not-enter');
+  if (!(f?.finishKeys ?? ['Enter']).includes(f?.key)) return no('not-enter');
   if (f.repeat) return no('repeat');
   if (!f.barFocused || !f.barEmpty) return no('bar');
   if (!f.panelOpen) return no('no-panel');

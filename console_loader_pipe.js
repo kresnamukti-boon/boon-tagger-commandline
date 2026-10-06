@@ -170,6 +170,8 @@ const PIPE_ADJUST_ENTRY = {
 const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
+// The keys that finish (with the bar focused and empty): Enter, and Space (the same as Enter everywhere else).
+const PIPE_FINISH_KEYS = ['Enter', ' '];
 // Only these tools may be finished from the bar (valves, equipment, cut, transition stay manual).
 const PIPE_FINISH_TOOLS = ['fitting', 'fixture'];
 // How long a Finish click holds the latch if native never shows "Saving..." (e.g. the click was ignored).
@@ -252,7 +254,7 @@ const PIPE_FIXTURE_DISPLAY_NAMES = {
 const PIPE_FIXTURE_TOOL = 'fixture';
 const PIPE_FITTING_TOOL = 'fitting';
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_KEYS, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -1020,7 +1022,7 @@ function targetForbidden(target, { forbiddenTexts = [], forbiddenContainerIds = 
   return forbiddenContainerIds.some((id) => ancestors.includes(id));
 }
 
-// May Enter in the bar click Finish right now? Every condition is re-read by the caller at the moment
+// May Enter (or Space, per `finishKeys`) in the bar click Finish right now? Every condition is re-read by the caller at the moment
 // of the click and this runs again. Returns { ok: true } or { ok: false, reason, message } where
 // `message` is null when the key should just do nothing (the bar says something only where the
 // person could be confused).
@@ -1028,7 +1030,7 @@ function targetForbidden(target, { forbiddenTexts = [], forbiddenContainerIds = 
 //       latched, button: { found, id, expectedId, visible, disabled, ariaDisabled, forbidden } }
 function finishVerdict(f) {
   const no = (reason, message = null) => ({ ok: false, reason, message });
-  if (f?.key !== 'Enter') return no('not-enter');
+  if (!(f?.finishKeys ?? ['Enter']).includes(f?.key)) return no('not-enter');
   if (f.repeat) return no('repeat');
   if (!f.barFocused || !f.barEmpty) return no('bar');
   if (!f.panelOpen) return no('no-panel');
@@ -1903,7 +1905,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
     PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
     PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
-    PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
+    PIPE_FINISH_TOOLS, PIPE_FINISH_KEYS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
     PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_ADJUST, PIPE_ADJUST_ENTRY,
   } = __m_pipe_tables;
   const {
@@ -2457,7 +2459,7 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
     const snap = host.readPanel();
     const fin = host.readFinish(PIPE_FINISH_BUTTON_ID);
     return {
-      key: e.key, repeat: !!e.repeat,
+      key: e.key, repeat: !!e.repeat, finishKeys: PIPE_FINISH_KEYS,
       barFocused: document.activeElement === inputEl, barEmpty: !!inputEl && !inputEl.value.trim(),
       panelOpen: snap.open, hint: snap.hint, tool: snap.tool,
       allowedTools: PIPE_FINISH_TOOLS, finishPrefix: PIPE_FINISH_HINT_PREFIX,
@@ -2598,8 +2600,8 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       e.preventDefault(); e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       const typed = inputEl.value.trim();
-      // Enter (never Space) on an empty bar while a fitting/fixture is ready: Finish. Nowhere else.
-      if (e.key === 'Enter' && !typed && !prompt.active && tryFinish(e)) return;
+      // Enter or Space on an empty bar while a fitting/fixture is ready: Finish. Nowhere else.
+      if (!typed && !prompt.active && tryFinish(e)) return;
       if (systemQuery(typed) !== null) {
         if (menuHighlight >= 0 && menuItems[menuHighlight] && menuItems[menuHighlight].system) pickSystem(menuItems[menuHighlight].system);
         else status('system: nothing matches "' + typed.slice(1) + '"');
@@ -2689,6 +2691,11 @@ return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, 
       const phase = panelPhase(snap.hint, PIPE_HINT_PREFIXES);
       if (phase === 'label') reopenPrompt();
       else if (phase === 'unknown' && String(snap.hint || '').trim()) status(PIPE_NATIVE_CHANGED_MESSAGE);
+      else if (phase === 'ready' && String(snap.hint || '').trim().startsWith(PIPE_FINISH_HINT_PREFIX)) {
+        // The bar is not focused, so this press must not save: focus it. A press in the bar then finishes.
+        mountBar(); if (inputEl) inputEl.focus();
+        status('bar focused: press Enter or Space again to finish (Esc cancels)');
+      }
       else status('a fitting is being placed: Esc cancels it');
       return;
     }

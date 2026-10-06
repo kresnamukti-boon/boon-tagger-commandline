@@ -940,8 +940,8 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     }
     const page = makePage(); loadShell(page);
     page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
-    page.press(mountedBar(page), ' ');
-    eq(page.state.finishClicks, 0, 'Space never finishes');
+    page.press(mountedBar(page), ' ', { repeat: true });
+    eq(page.state.finishClicks, 0, 'an auto-repeat Space never finishes');
     pressEnter(page, { repeat: true });
     eq(page.state.finishClicks, 0, 'an auto-repeat Enter never finishes');
     page.state.activeElement = null; page.press(page.doc.body, 'Enter');
@@ -1103,12 +1103,13 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     ok(e2.propagationStopped && !e3.propagationStopped, 'Esc closes our rows first; the next Esc is left for native to cancel');
   }
   {
-    // Space = Enter for the choice, but Space never finishes
+    // Space = Enter: it confirms the choice, and a second Space finishes (like a second Enter)
     const page = makePage(); loadShell(page); sizePanel(page);
     page.press(page.byId['rw-pipe-input'], ' ');
     ok(/port sizes kept/.test(lastStatus(page)), 'Space confirms "as is" like Enter');
+    eq(page.state.finishClicks, 0, 'the first Space only confirmed');
     page.press(page.byId['rw-pipe-input'], ' ');
-    eq(page.state.finishClicks, 0, 'a second Space does not finish');
+    eq(page.state.finishClicks, 1, 'a second Space finishes, like a second Enter');
   }
   {
     // edit: keep inlet, outlet = 1-1/2 (a standard size), branch = 1.75 (custom); Esc steps; bad input refused
@@ -1364,6 +1365,68 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     const page = makePage(); loadShell(page); adjPanel(page);
     eq(page.RW.runCommand('route'), false, 'route is refused while a fitting is open');
     eq(page.RW.runCommand('adjust'), true, 'adjust is allowed');
+  }
+
+  /* ----- Space finishes exactly like Enter (and only where Enter does) ----- */
+  {
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    const ev = page.press(mountedBar(page), ' ');
+    eq(page.state.finishClicks, 1, 'Space at ready (fixture, bar focused and empty): Finish clicked once');
+    ok(ev.defaultPrevented && ev.propagationStopped, 'the Space was consumed (no literal space typed)');
+    ok(/Finish pressed \(fixture\)/.test(lastStatus(page)), 'and the bar says so');
+    page.press(mountedBar(page), ' '); pressEnter(page);
+    eq(page.state.finishClicks, 1, 'Space and Enter share the latch: no second click while it is held');
+    h.hintEl.textContent = SAVING; page.tick(); page.press(mountedBar(page), ' ');
+    eq(page.state.finishClicks, 1, 'Space while saving: nothing');
+    ok(page.RW._pipeLog.filter((x) => x.kind === 'finish').length === 1, 'one entry in the action log');
+  }
+  {
+    // every other condition blocks Space the same way it blocks Enter
+    for (const [name, make] of [
+      ['phase box', (p) => p.openPanel({ tool: 'fixture', hint: 'Click two opposite corners around the fitting on the drawing.', groups: FITTING_GROUPS })],
+      ['phase ports', (p) => p.openPanel({ tool: 'fixture', hint: 'Click the detected intersection for inlet.', groups: FITTING_GROUPS })],
+      ['unknown hint', (p) => p.openPanel({ tool: 'fixture', hint: 'Something new', groups: FITTING_GROUPS })],
+      ['tool valve', (p) => p.openPanel({ tool: 'valve', hint: READY, groups: FITTING_GROUPS })],
+      ['tool transition', (p) => p.openPanel({ tool: 'transition', hint: READY, groups: FITTING_GROUPS })],
+    ]) {
+      const page = makePage(); loadShell(page); make(page); page.tick(); focusBar(page);
+      page.press(mountedBar(page), ' ');
+      eq(page.state.finishClicks, 0, 'Space does not finish: ' + name);
+    }
+    const dis = makePage({ finishDisabled: true }); loadShell(dis);
+    dis.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); dis.tick(); focusBar(dis);
+    dis.press(mountedBar(dis), ' ');
+    eq(dis.state.finishClicks, 0, 'Space does not finish a disabled Finish');
+    const toast = makePage({ finishInToast: true }); loadShell(toast);
+    toast.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); toast.tick(); focusBar(toast);
+    toast.press(mountedBar(toast), ' ');
+    eq(toast.state.finishClicks, 0, 'Space never clicks anything inside the toast stack');
+    const typed = makePage(); loadShell(typed);
+    typed.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); typed.tick(); focusBar(typed);
+    typeText(typed, 'zoomi'); typed.press(mountedBar(typed), ' ');
+    eq(typed.state.finishClicks, 0, 'text typed in the bar: Space confirms that command, not Finish');
+    ok(typed.state.clicks.includes('graph-zoom-in'), 'and the command ran');
+  }
+  {
+    // Space with focus NOT in the bar must not save: it focuses the bar; the next press finishes
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick();
+    page.state.activeElement = null;
+    const ev = page.press(page.doc.body, ' ');
+    eq(page.state.finishClicks, 0, 'Space elsewhere on the page does not finish');
+    eq(page.doc.activeElement && page.doc.activeElement.id, 'rw-pipe-input', 'it puts the keyboard in the bar');
+    ok(/press Enter or Space again to finish/.test(lastStatus(page)), 'and says what to do');
+    page.press(mountedBar(page), ' ');
+    eq(page.state.finishClicks, 1, 'the next Space in the bar finishes');
+  }
+  {
+    // a reducing fitting: Space needs its sizes confirmed first, exactly like Enter
+    const page = makePage(); loadShell(page); sizePanel(page);
+    page.press(page.byId['rw-pipe-input'], 'Escape');
+    page.press(page.byId['rw-pipe-input'], ' ');
+    eq(page.state.finishClicks, 0, 'unconfirmed sizes: Space does not finish');
+    ok(menuShown(page), 'the rows come back');
   }
 
   console.log(`${pass} passed, ${fail} failed`);

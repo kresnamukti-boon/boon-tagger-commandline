@@ -151,6 +151,8 @@ export const PIPE_ADJUST_ENTRY = {
 export const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 export const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
+// The keys that finish (with the bar focused and empty): Enter, and Space (the same as Enter everywhere else).
+export const PIPE_FINISH_KEYS = ['Enter', ' '];
 // Only these tools may be finished from the bar (valves, equipment, cut, transition stay manual).
 export const PIPE_FINISH_TOOLS = ['fitting', 'fixture'];
 // How long a Finish click holds the latch if native never shows "Saving..." (e.g. the click was ignored).

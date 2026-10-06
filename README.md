@@ -105,11 +105,13 @@ the same way as above, on a **piping** page.
   - **Port prompt:** while the app asks for a port ("Click the detected intersection for <role>."), the
     bar shows `click: <role>`. Display only: it takes no focus and clicks nothing, so Esc and your
     mouse behave as normal. It shows no "n of N", because the app skips ports it already detected.
-  - **Enter finishes (the one thing that saves).** With the bar focused and empty, **Enter** presses the
+  - **Enter or Space finishes (the one thing that saves).** With the bar focused and empty, **Enter or Space** presses the
     app's own Finish button, and only when: the panel is open, its hint starts with "Finish inserts this
     fitting.", the tool is `fitting` or `fixture`, and Finish is visible and not disabled (the app
-    disables it for an incomplete port form). Space never finishes, a held-down Enter never finishes, and
-    typed words (`finish`, `save`) are unknown commands. After one click the bar ignores Enter until the app
+    disables it for an incomplete port form). A held-down key never finishes, text typed in the bar means the key
+    confirms that command instead, and typed words (`finish`, `save`) are unknown commands. Space pressed while
+    the keyboard is NOT in the bar does not save: it moves the keyboard to the bar and asks you to press again.
+    After one click the bar ignores Enter and Space until the app
     has shown "Saving pipe and fitting…" and come back (a failed save), closed the panel, or 1.5 s passed
     with no sign it started. Other tools (valve, equipment, cut, transition) are finished with the mouse.
   - **Never clicked, ever:** the size-mismatch toast's **Resize anyway** button (refused by its text and
