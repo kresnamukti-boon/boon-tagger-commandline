@@ -2199,8 +2199,7 @@ return {isElementVisible, isActionUsable};
   // field" or "use previous for all" — rather than starting from scratch every time. This
   // used to be a deliberately separate mechanism from an older round-26 memory that
   // silently auto-filled a modal's select/checkbox fields with no choice offered and
-  // excluded branch fitting entirely (its own field-memory lives in a separate repo,
-  // boon-duct-workbench). That older mechanism was removed once every modal was covered
+  // excluded branch fitting entirely. That older mechanism was removed once every modal was covered
   // by this one: it always asks first rather than silently overwriting anything, and it
   // remembers every field type, not just select/checkbox — there was nothing left for the
   // silent one to do that this doesn't already cover, so keeping both would have meant

@@ -347,8 +347,7 @@ console-inspectable while a walk is in progress.
 wrapped in try/catch so a disabled/unavailable store just degrades to in-memory-only) and always
 asks first rather than auto-applying anything — this replaced an earlier mechanism
 (`RW._cmdModalMemory`, round 26) that silently auto-filled a modal's select/checkbox fields with no
-choice offered and excluded branch fitting entirely (its own field-memory lives in a separate,
-independent repo, `boon-duct-workbench`, per the user's own request to split it out); once this
+choice offered and excluded branch fitting entirely; once this
 memory covered branch there was nothing left for that older, silent one to do, so it was removed
 rather than kept alongside a mechanism that fully supersedes it. **Change size, GRD, and riser are
 all skipped entirely**: `MODAL_WALK_MEMORY_SKIP_TOOLS` (`['transition', 'grd', 'vertical']`) is

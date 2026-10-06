@@ -424,8 +424,7 @@ same Choose/Cancel prompt). Remembered values persist across a page reload (`loc
 `__RW._cmdModalWalkValueMemory` is console-inspectable (`{tool: {param: value}}`, no
 `transition`/`grd`/`vertical` key ever appears); `__RW._cmdModalWalkMemoryClear(tool)` forgets one
 tool or everything; `__RW._cmdModalWalkMemoryEnabled = false` disables the offer and new
-recording. Branch fitting's own field-memory (a different, narrower mechanism) lives in a
-separate repo, `boon-duct-workbench`, at the user's own request.
+recording.
 
 ## Action buttons
 

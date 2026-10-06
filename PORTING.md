@@ -30,9 +30,6 @@ How to move this project's own features into the host app's own native command l
   the walk's value memory entirely and auto-submit their last field; branch fitting still ends on
   a manual Choose/Cancel prompt. These read as an inconsistency across the four modals unless you
   know they were each asked for individually.
-- Branch fitting's own field-memory (a different, narrower mechanism than the modal-walk memory
-  above) intentionally lives in a separate repo, `boon-duct-workbench` — don't go looking for it
-  here.
 - Separately, and unrelated to this port: the **legacy** `annotation_jobs` bundle (a different
   target, the older non-native command line) is pinned by SHA-256 (`3c0581e7…`) in
   `annotation_jobs/tests/test_command_line_toggle.py`. Refreshing that vendored copy is a
@@ -202,10 +199,8 @@ today's actual current value over row 0). Every one of these is unit-tested in
   already called from `attemptActivateTool` and elsewhere, so a modal's own
   `dialog.addEventListener('close', ...)`/a wrapper around whatever opens it can fire
   this synchronously instead of polling.
-- Branch fitting's own field-memory intentionally lives in a separate repo
-  (`boon-duct-workbench`, per the user's own request) — do not port that piece from
-  here; the walk mechanism and its own value memory (`RW._cmdModalWalkValueMemory`,
-  which now covers branch only) are unaffected.
+- The modal walk and its own value memory (`RW._cmdModalWalkValueMemory`, which now covers
+  branch only) are unaffected by this port.
 - Change size, GRD, and riser are all deliberately excluded from the value memory
   (`MODAL_WALK_MEMORY_SKIP_TOOLS` in `shell.js`) — Kresna's own request, no offer or
   recording for any of the three. Port the walk for them, not the memory.
