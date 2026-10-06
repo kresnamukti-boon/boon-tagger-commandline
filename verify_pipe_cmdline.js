@@ -45,11 +45,11 @@ function eq(actual, expected, name) {
 }
 
 /* ---------- a small fake page ---------- */
-function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRail = true, selected = null, selectionReadable = true, systemDisabled = false } = {}) {
+function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRail = true, selected = null, selectionReadable = true, systemDisabled = false, finishDisabled = false, finishInToast = false } = {}) {
   const byId = {};
   const listeners = { window: {}, document: {} };
   const warnings = [];
-  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [], systemChanges: [], selectedEntityId: selected };
+  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [], finishClicks: 0, systemChanges: [], selectedEntityId: selected };
 
   function el(tag) {
     const own = {};
@@ -153,7 +153,15 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   }
   const ACTIONS = ['graph-undo-command', 'graph-redo-command', 'graph-zoom-fit', 'graph-zoom-in', 'graph-zoom-out', 'graph-ruler', 'graph-components-button',
     'graph-save-commands', 'graph-finish-route', 'graph-cancel-route', 'graph-recording-stop'];
-  for (const id of ACTIONS) { const b = el('button'); b.id = id; doc.body.appendChild(b); }
+  const toastStack = el('div'); toastStack.id = 'graph-toast-stack'; doc.body.appendChild(toastStack);
+  for (const id of ACTIONS) {
+    const b = el('button'); b.id = id; b.textContent = id === 'graph-finish-route' ? 'Finish' : '';
+    if (id === 'graph-finish-route') {
+      b.disabled = finishDisabled;
+      b.addEventListener('click', () => { state.finishClicks += 1; });
+      (finishInToast ? toastStack : doc.body).appendChild(b);
+    } else doc.body.appendChild(b);
+  }
   byId['graph-redo-command'].disabled = true; // redo starts disabled on the real page
 
   const RW = { vcore: true, enabled: true, _cmdOwnsPanelPosition: false, _commitStatus(m) { state.statuses.push(m); } };
@@ -823,6 +831,128 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     eq(page.state.statuses, [CHANGED], 'and the status line says so');
     ok(page.warnings.some((w) => /graph-system-select/.test(w)), 'the console names the missing id');
     eq(page.RW._pipeMissing, ['graph-system-select'], 'and it is recorded for inspection');
+  }
+
+  /* ----- Step 3: port prompt (display only) and Enter-to-Finish ----- */
+  const READY = 'Finish inserts this fitting. The connected pipe resumes from its outlet.';
+  const SAVING = 'Saving pipe and fitting…';
+  const focusBar = (page) => { mountedBar(page).focus(); };
+  const mountedBar = (page) => page.byId['rw-pipe-input'];
+  const pressEnter = (page, mods = {}) => page.press(mountedBar(page), 'Enter', mods);
+  {
+    // Enter at ready clicks Finish exactly once; the latch holds until native has gone through "saving"
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick();
+    focusBar(page);
+    const ev = pressEnter(page);
+    ok(ev.defaultPrevented && ev.propagationStopped, 'the Enter was consumed');
+    eq(page.state.finishClicks, 1, 'Enter at ready (fixture): Finish clicked once');
+    ok(/Finish pressed \(fixture\)/.test(lastStatus(page)), 'and the bar says so');
+    pressEnter(page); pressEnter(page);
+    eq(page.state.finishClicks, 1, 'more Enters while latched: no second click');
+    h.hintEl.textContent = SAVING; page.tick();
+    pressEnter(page);
+    eq(page.state.finishClicks, 1, 'while saving: nothing');
+    page.closePanel(); page.tick();
+    page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    pressEnter(page);
+    eq(page.state.finishClicks, 2, 'a new placement can be finished again (panel closed released the latch)');
+  }
+  {
+    // a failed save: native shows "saving" then restores the ready phase -> Enter works again
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'fitting', hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    pressEnter(page);
+    h.hintEl.textContent = SAVING; page.tick();
+    pressEnter(page);
+    eq(page.state.finishClicks, 1, 'still latched while "Saving pipe and fitting…" is showing');
+    h.hintEl.textContent = READY; page.tick();
+    pressEnter(page);
+    eq(page.state.finishClicks, 2, 'back at ready after a failed save: the latch is released');
+  }
+  {
+    // the click was ignored (native never showed "saving"): the latch lets go after its timeout
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    pressEnter(page); pressEnter(page);
+    eq(page.state.finishClicks, 1, 'ignored click: still one');
+    await new Promise((r) => setTimeout(r, 1600));
+    page.tick(); pressEnter(page);
+    eq(page.state.finishClicks, 2, 'after the timeout a fresh Enter works');
+  }
+  {
+    // nowhere else: every other phase, the wrong key, repeats, typed text, other focus
+    for (const hint of ['Click two opposite corners around the fitting on the drawing.', 'Click the detected intersection for outlet.', SAVING, 'Something new that native added', '']) {
+      const page = makePage(); loadShell(page);
+      page.openPanel({ tool: 'fixture', hint, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+      pressEnter(page);
+      eq(page.state.finishClicks, 0, 'no Finish while native says: ' + JSON.stringify(hint.slice(0, 28)));
+    }
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    page.press(mountedBar(page), ' ');
+    eq(page.state.finishClicks, 0, 'Space never finishes');
+    pressEnter(page, { repeat: true });
+    eq(page.state.finishClicks, 0, 'an auto-repeat Enter never finishes');
+    page.state.activeElement = null; page.press(page.doc.body, 'Enter');
+    eq(page.state.finishClicks, 0, 'Enter with focus elsewhere (native handles that itself): no click from us');
+    focusBar(page); typeText(page, 'zoomi'); pressEnter(page);
+    eq(page.state.finishClicks, 0, 'with text typed in the bar, Enter runs the typed command, not Finish');
+    ok(page.state.clicks.includes('graph-zoom-in'), 'and that command ran');
+    eq(page.RW.runCommand('finish'), false, '"finish" typed as a command stays unknown');
+    eq(page.state.finishClicks, 0, 'and clicks nothing');
+  }
+  {
+    // tools: fitting and fixture only
+    for (const [tool, expected] of [['fitting', 1], ['fixture', 1], ['valve', 0], ['equipment', 0], ['transition', 0], ['cut', 0], ['terminal', 0]]) {
+      const page = makePage(); loadShell(page);
+      page.openPanel({ tool, hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+      pressEnter(page);
+      eq(page.state.finishClicks, expected, 'tool ' + tool + ': ' + (expected ? 'Finish clicked' : 'not clicked'));
+      if (!expected) ok(/only for fitting and fixture/.test(lastStatus(page)), 'tool ' + tool + ': the bar says to use the mouse');
+    }
+  }
+  {
+    // the app has Finish disabled (e.g. a port size is missing): obey it
+    const page = makePage({ finishDisabled: true }); loadShell(page);
+    page.openPanel({ tool: 'fixture', hint: READY + ' Fill in every port’s diameter.', groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    pressEnter(page);
+    eq(page.state.finishClicks, 0, 'a disabled Finish is not clicked');
+    ok(/app has it disabled/.test(lastStatus(page)), 'and the bar says why');
+  }
+  {
+    // the button goes disabled between our checks and the click: the click itself re-checks and does not fire
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    const btn = page.byId['graph-finish-route']; let reads = 0;
+    Object.defineProperty(btn, 'disabled', { get() { reads += 1; return reads > 2; }, set() {}, configurable: true });
+    btn.click = () => { page.state.finishClicks += 1; }; // bypass the fake's own disabled check: only our re-check can stop this
+    pressEnter(page);
+    eq(page.state.finishClicks, 0, 'Finish went disabled after the second check: the click re-checks and does nothing');
+  }
+  {
+    // never anything inside native's toast stack (the "Resize anyway" toast)
+    const page = makePage({ finishInToast: true }); loadShell(page);
+    page.openPanel({ tool: 'fixture', hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
+    pressEnter(page);
+    eq(page.state.finishClicks, 0, 'a button inside the toast stack is never clicked');
+  }
+  {
+    // port prompt: shows only the role, never takes focus, goes away with the phase
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'fixture', hint: 'Click the detected intersection for inlet.', groups: FITTING_GROUPS });
+    page.state.activeElement = null;
+    page.tick();
+    eq(menuRows(page), ['click: inlet'], 'ports phase: the bar shows "click: <role>" and nothing else (no n-of-N)');
+    ok(page.state.activeElement === null && !page.RW._pipePrompt.active, 'it does not take focus');
+    eq(lastStatus(page), 'click: inlet', 'and the status line says it too');
+    h.hintEl.textContent = 'Click the detected intersection for branch.'; page.tick();
+    eq(menuRows(page), ['click: branch'], 'the next role replaces it');
+    const n = page.state.statuses.length; page.tick(); page.tick();
+    eq(page.state.statuses.length, n, 'not repeated every tick');
+    h.hintEl.textContent = READY; page.tick();
+    ok(!menuShown(page), 'when native leaves the ports phase the note goes away');
+    ok(page.state.finishClicks === 0 && !page.state.clicks.some((c) => /pointer|graph-finish/.test(c)), 'and nothing was clicked');
   }
 
   console.log(`${pass} passed, ${fail} failed`);

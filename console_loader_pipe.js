@@ -107,6 +107,11 @@ const PIPE_FORBIDDEN_BUTTON_IDS = [
 ];
 // The top-bar "Submit this page for review" button has no DOM id, only this capture id.
 const PIPE_FORBIDDEN_CAPTURE_IDS = ['submit-graph'];
+// Native's size-mismatch toast (MEC-329) carries a sticky "Resize anyway" button that re-submits a
+// rejected command with the check switched off. It has no id, so it is refused by its text and by
+// the toast container it lives in: nothing inside that container is ever clicked by us.
+const PIPE_FORBIDDEN_BUTTON_TEXTS = ['resize anyway'];
+const PIPE_FORBIDDEN_CONTAINER_IDS = ['graph-toast-stack'];
 
 // Command names that stay reachable while a placement panel is open. Shipped now as data;
 // enforced from the placement step onward (Step 1 has no panel state to isolate).
@@ -141,6 +146,18 @@ const PIPE_HINT_PREFIXES = {
 const PIPE_AUTOMATCH_PATTERN = /Diameter (\S+?)" auto-matched/;
 const PIPE_UNAVAILABLE_MARK = 'unavailable';
 
+// Step 3. The ONE control the bar may click as a placement step: native's Finish, reached only from
+// Enter in the bar (never from a typed word; it stays in PIPE_FORBIDDEN_BUTTON_IDS for every other path).
+const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
+// Strictly this opening, not the looser 'ready' variants the transition tool uses.
+const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
+// Only these tools may be finished from the bar (valves, equipment, cut, transition stay manual).
+const PIPE_FINISH_TOOLS = ['fitting', 'fixture'];
+// How long a Finish click holds the latch if native never shows "Saving..." (e.g. the click was ignored).
+const PIPE_FINISH_LATCH_MS = 1500;
+// "Click the detected intersection for <role>." -> role
+const PIPE_PORT_ROLE_PATTERN = /Click the detected intersection for ([A-Za-z0-9_-]+)/;
+
 // The one line shown when native's panel or page no longer looks like what we were built against.
 const PIPE_NATIVE_CHANGED_MESSAGE = 'Native changed: use the mouse for this step';
 
@@ -152,7 +169,7 @@ const PIPE_REQUIRED_IDS = [
   'graph-session-root', 'graph-canvas-stage', 'graph-command-line-toggle', 'graph-command-window',
   'graph-system-select', 'graph-pipe-bbox-op-panel', 'graph-pipe-fitting-select-menu',
   'graph-undo-command', 'graph-redo-command', 'graph-zoom-fit', 'graph-zoom-in', 'graph-zoom-out',
-  'graph-ruler', 'graph-components-button',
+  'graph-ruler', 'graph-components-button', 'graph-finish-route',
 ];
 
 // Friendly names for fittings, keyed by native's family id (approved 2026-10-06). The family id and
@@ -216,7 +233,7 @@ const PIPE_FIXTURE_DISPLAY_NAMES = {
 const PIPE_FIXTURE_TOOL = 'fixture';
 const PIPE_FITTING_TOOL = 'fitting';
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -290,6 +307,13 @@ function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unava
     return entry.btn ? doc.getElementById(entry.btn) : null;
   }
 
+  // Ids of every element above `el` (used to refuse anything that lives inside the toast stack).
+  function ancestorIds(el) {
+    const out = [];
+    for (let n = el && el.parentNode; n; n = n.parentNode) if (n.id) out.push(n.id);
+    return out;
+  }
+
   function activeTool() {
     const debug = win.__graphDebug;
     return debug && typeof debug.activeTool === 'string' ? debug.activeTool : null;
@@ -332,6 +356,8 @@ function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unava
         title: el.getAttribute('title') || '',
         id: el.id || '',
         captureId: el.getAttribute('data-capture-control-id') || '',
+        text: text(el),
+        ancestorIds: ancestorIds(el),
       };
     },
 
@@ -385,6 +411,26 @@ function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unava
       if (!active || !panel) return false;
       for (let n = active; n; n = n.parentNode) if (n === panel) return true;
       return false;
+    },
+
+    // Plain description of native's Finish button (see finishVerdict), read fresh every call.
+    readFinish(expectedId) {
+      const el = doc.getElementById(expectedId);
+      if (!el) return { found: false, expectedId };
+      return {
+        found: true, expectedId, id: el.id || '',
+        disabled: !!el.disabled, ariaDisabled: el.getAttribute('aria-disabled'),
+        visible: isElementVisible(el),
+        text: text(el), ancestorIds: ancestorIds(el),
+      };
+    },
+
+    // The one Finish click. Re-checks that the element is still enabled, then clicks it. Returns whether it clicked.
+    clickFinish(expectedId) {
+      const el = doc.getElementById(expectedId);
+      if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+      el.click();
+      return true;
     },
 
     // Which of these element ids are not on the page right now?
@@ -646,186 +692,6 @@ function shadowedActions(tools, actions) {
 return {shadowedActions};
 })();
 
-// ===== src/core/pipe-table-core.js =====
-const __m_pipe_table_core = (function(){
-// Pure logic for the piping command line: turning a plain snapshot of the page's tool rail into a
-// command table, deciding whether an entry may run right now, and deciding whether the loader may
-// start at all. No DOM, no host globals; every fact arrives as an argument and every decision comes
-// back as plain data, so the host layer (src/pipe/pipe-host.js) has nothing to decide.
-//
-// Doctrines carried over from the duct side: the live page is authoritative (the key badge, never a
-// hardcoded key), a hard boundary is enforced in code and not only by leaving something out of a
-// table (forbidden controls are checked again here), and when live state can't be read the answer
-// is "don't".
-const { resolveCommand } = __m_command_line_core;
-const { shadowedActions } = __m_table_core;
-
-const KEY_RE = /^[a-z0-9]$/;
-
-function lower(value) {
-  return String(value ?? '').trim().toLowerCase();
-}
-
-// Builds the tool half of the table from the rail's own buttons.
-//   railTools    [{ id, key, label }] in on-screen order (id = data-tool, key = badge text)
-//   fallbackKeys { toolId: 'x' } used only when a button has no readable badge
-//   curatedAliases { toolId: ['a', ...] }
-//   actions      the action table; its names/aliases are reserved so a tool alias can't shadow one
-// Never drops a tool for a key problem: dispatch is a click on the tool's own button, so the key is
-// only an extra alias. A duplicate data-tool is the one thing skipped (it can't be told apart).
-function deriveTools({ railTools, fallbackKeys = {}, curatedAliases = {}, actions = [] }) {
-  const info = { source: 'none', skipped: [], aliasDropped: [], shadowedActions: [] };
-  const tools = [];
-  const seenName = new Set();
-  const seenKey = new Set();
-  for (const raw of railTools ?? []) {
-    const name = lower(raw?.id);
-    if (!name) continue;
-    if (seenName.has(name)) { info.skipped.push(`${name}: duplicate data-tool`); continue; }
-    let key = lower(raw.key);
-    if (!KEY_RE.test(key)) {
-      const fallback = lower(fallbackKeys[name]);
-      if (KEY_RE.test(fallback)) {
-        info.skipped.push(`${name}: no key badge, used built-in "${fallback}"`);
-        key = fallback;
-      } else {
-        info.skipped.push(`${name}: no key badge and no built-in key (reachable by name only)`);
-        key = '';
-      }
-    }
-    if (key && seenKey.has(key)) {
-      info.skipped.push(`${name}: key "${key}" already taken (reachable by name only)`);
-      key = '';
-    }
-    seenName.add(name);
-    if (key) seenKey.add(key);
-    tools.push({
-      id: name, name, kind: 'tool',
-      label: String(raw.label ?? '').trim() || name,
-      key: key || null,
-      aliases: [],
-    });
-  }
-  if (!tools.length) return { tools, info };
-  info.source = 'toolbar';
-
-  const reserved = new Set();
-  for (const action of actions) {
-    reserved.add(lower(action.name));
-    for (const alias of action.aliases ?? []) reserved.add(lower(alias));
-  }
-  const taken = new Set();
-  const accept = (tool, alias, why) => {
-    const a = lower(alias);
-    if (!a) return;
-    if (seenName.has(a) && a !== tool.name) { info.aliasDropped.push(`${tool.name}: "${a}" (${why}: another tool's name)`); return; }
-    if (reserved.has(a)) { info.aliasDropped.push(`${tool.name}: "${a}" (${why}: an action's name or alias)`); return; }
-    if (taken.has(a)) { info.aliasDropped.push(`${tool.name}: "${a}" (${why}: already another alias)`); return; }
-    taken.add(a);
-    tool.aliases.push(a);
-  };
-  // Keys first, so a curated alias can never take a key letter away from the tool that owns it.
-  for (const tool of tools) if (tool.key) accept(tool, tool.key, 'key');
-  for (const tool of tools) for (const alias of curatedAliases[tool.name] ?? []) accept(tool, alias, 'alias');
-
-  info.shadowedActions = shadowedActions(tools, actions);
-  return { tools, info };
-}
-
-// Tools first, then actions: table order is the resolution rule (a tool wins its own name).
-function buildTable(tools, actions) {
-  return tools.concat(actions.map((action) => ({ ...action, kind: 'action' })));
-}
-
-// Can this entry run right now? `target` is a plain description of the page element the entry would
-// click (or null when there is none): { exists, disabled, ariaDisabled, visible, title, id, captureId }.
-// Entries whose control is a forbidden one are refused even when the element is perfectly clickable.
-function entryState(entry, target, { forbiddenIds = [], forbiddenCaptureIds = [] } = {}) {
-  if (entry?.btn && forbiddenIds.includes(entry.btn)) return { usable: false, forbidden: true, reason: null };
-  if (!target || !target.exists) return { usable: false, forbidden: false, reason: 'not on this page' };
-  if (forbiddenIds.includes(target.id) || forbiddenCaptureIds.includes(target.captureId)) {
-    return { usable: false, forbidden: true, reason: null };
-  }
-  if (target.disabled || target.ariaDisabled === true || target.ariaDisabled === 'true') {
-    // A disabled tool's own title carries native's reason ("Enter a positive diameter before ...");
-    // a title equal to the label is just the normal tooltip, not a reason.
-    const title = String(target.title ?? '').trim();
-    const reason = entry.kind === 'tool' && title && lower(title) !== lower(entry.label) ? title : 'disabled right now';
-    return { usable: false, forbidden: false, reason };
-  }
-  if (!target.visible) return { usable: false, forbidden: false, reason: 'hidden right now' };
-  return { usable: true, forbidden: false, reason: null };
-}
-
-// What to do with an entry the user picked. `state` is entryState's result for it.
-function planEntry(entry, state) {
-  if (state.forbidden) {
-    return { action: 'refuse', message: `refused: "${entry.name}" is a protected control` };
-  }
-  if (!state.usable) {
-    const label = entry.label ?? entry.name;
-    return { action: 'status', message: state.reason ? `${label}: ${state.reason}` : `${label} isn't available right now` };
-  }
-  return { action: 'click', entry };
-}
-
-// Typed text -> plan. Exact name/label, then exact alias (resolveCommand's own rule); a bare prefix
-// is never run, only listed. `stateFor(entry)` supplies entryState for the resolved entry.
-function planQuery(table, query, stateFor) {
-  const entry = resolveCommand(table, query);
-  if (!entry) return { action: 'status', message: `unknown command: ${String(query ?? '').trim()}` };
-  return planEntry(entry, stateFor(entry));
-}
-
-// Which entries the dropdown lists: every tool (a disabled one stays visible so its reason can be
-// shown), but an action that couldn't do anything right now is left out, as on the duct side.
-// `stateFor(entry)` supplies entryState; the result keeps each entry with its state attached.
-function listEntries(table, stateFor) {
-  const rows = [];
-  for (const entry of table) {
-    const state = stateFor(entry);
-    if (entry.kind === 'action' && !state.usable) continue;
-    rows.push({ entry, state });
-  }
-  return rows;
-}
-
-// Which tool the command line should consider armed. Our own record wins right after one of our own
-// commands (the page's state may not have settled); after the grace window, a readable live tool
-// string corrects drift caused by the user arming tools some other way (rail click, native hotkey).
-//   own  { armed, tool }   live  string | null | undefined   (the page's current tool)
-function reconcileArmed({ own, live, sinceLastCmdMs, graceMs = 1000 }) {
-  if (typeof live !== 'string') return { armed: !!own?.armed, tool: own?.tool ?? null };
-  if (Number.isFinite(sinceLastCmdMs) && sinceLastCmdMs < graceMs) return { armed: !!own?.armed, tool: own?.tool ?? null };
-  const tool = lower(live);
-  if (!tool || tool === 'select') return { armed: false, tool: null };
-  return { armed: true, tool };
-}
-
-// May the piping loader start? Everything arrives as plain facts.
-//   facts { hasRoot, trade, hasStage, railToolCount, nativeBarOn, ductLoaderInstalled, pipeTrade }
-// Returns { ok, message } where message tells a non-programmer exactly what to do.
-function loaderGuard(facts) {
-  const pipeTrade = facts.pipeTrade ?? 'piping';
-  if (!facts.hasRoot) return { ok: false, message: 'This is not a graph session page. Open a piping session and paste again.' };
-  if (facts.trade !== pipeTrade) {
-    return { ok: false, message: `This page is a "${facts.trade ?? 'unknown'}" page, not a piping page. Use the duct command line loader here.` };
-  }
-  if (facts.ductLoaderInstalled) {
-    return { ok: false, message: 'The duct command line is already loaded on this page. Reload the page, then paste the piping loader.' };
-  }
-  if (!facts.hasStage || !(facts.railToolCount > 0)) {
-    return { ok: false, message: 'The page is not ready yet (no tool rail found). Wait for the drawing to load and paste again.' };
-  }
-  if (facts.nativeBarOn) {
-    return { ok: false, message: 'Native\'s own "⌨ Command line" is switched ON. Switch it off (click it once), then paste again: both would grab the same keys.' };
-  }
-  return { ok: true, message: '' };
-}
-
-return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard};
-})();
-
 // ===== src/core/pipe-placement-core.js =====
 const __m_pipe_placement_core = (function(){
 // Pure logic for choosing a fitting label in native's "Place Fitting" panel. Takes a plain snapshot
@@ -990,7 +856,251 @@ function isolationVerdict({ panelOpen, name, allowed }) {
   return { ok: false, message: lower(name) + ': finish or cancel the fitting first (Esc cancels it)' };
 }
 
-return {panelPhase, missingIds, hintWatch, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict};
+/* ---------- Step 3: port prompts and Enter-to-Finish ---------- */
+
+// The role native is asking for in the ports phase ("Click the detected intersection for inlet."), or
+// null. Display only: native's own hint is missingPorts()[0], so it already skips ports native
+// detected; we deliberately show no "n of N" because that count would be a guess.
+function portRoleFromHint(hint, pattern) {
+  const m = String(hint ?? '').match(pattern);
+  return m ? m[1] : null;
+}
+
+// Is this element one we must never click, whatever else is true? By its text (the size-mismatch
+// toast's "Resize anyway") or by living inside a forbidden container (the toast stack).
+//   target { text, ancestorIds }
+function targetForbidden(target, { forbiddenTexts = [], forbiddenContainerIds = [] } = {}) {
+  const text = lower(target?.text);
+  if (text && forbiddenTexts.some((t) => text === lower(t))) return true;
+  const ancestors = target?.ancestorIds ?? [];
+  return forbiddenContainerIds.some((id) => ancestors.includes(id));
+}
+
+// May Enter in the bar click Finish right now? Every condition is re-read by the caller at the moment
+// of the click and this runs again. Returns { ok: true } or { ok: false, reason, message } where
+// `message` is null when the key should just do nothing (the bar says something only where the
+// person could be confused).
+//   f { key, repeat, barFocused, barEmpty, panelOpen, hint, tool, allowedTools, finishPrefix,
+//       latched, button: { found, id, expectedId, visible, disabled, ariaDisabled, forbidden } }
+function finishVerdict(f) {
+  const no = (reason, message = null) => ({ ok: false, reason, message });
+  if (f?.key !== 'Enter') return no('not-enter');
+  if (f.repeat) return no('repeat');
+  if (!f.barFocused || !f.barEmpty) return no('bar');
+  if (!f.panelOpen) return no('no-panel');
+  if (!String(f.hint ?? '').trim().startsWith(f.finishPrefix ?? '\u0000')) return no('phase');
+  if (!(f.allowedTools ?? []).includes(lower(f.tool))) {
+    return no('tool', 'Finish from the bar is only for fitting and fixture: use the mouse for this one');
+  }
+  if (f.latched) return no('latched');
+  const b = f.button ?? {};
+  if (!b.found || b.id !== b.expectedId || b.forbidden || !b.visible) return no('button', 'Finish is not available on this page right now');
+  if (b.disabled || b.ariaDisabled === true || b.ariaDisabled === 'true') {
+    return no('disabled', 'Finish is not available yet: the app has it disabled (is a port size missing?)');
+  }
+  return { ok: true };
+}
+
+// The latch that stops a second Enter from finishing twice. Set when we click Finish. It is released
+// when native has shown something other than "ready" (saving) and then comes back to "ready" (a failed
+// save: native restores the ready phase), when the panel closes (saved or cancelled), or after
+// `expireMs` if native never left ready (the click was ignored).
+const FINISH_LATCH_OFF = { clicked: false, at: 0, leftReady: false };
+function finishLatchClick(now) {
+  return { clicked: true, at: now, leftReady: false };
+}
+function finishLatchStep({ latch, phase, panelOpen, now, expireMs }) {
+  if (!latch?.clicked) return FINISH_LATCH_OFF;
+  if (!panelOpen) return FINISH_LATCH_OFF;
+  if (phase !== 'ready') return latch.leftReady ? latch : { ...latch, leftReady: true };
+  if (latch.leftReady) return FINISH_LATCH_OFF;
+  if (now - latch.at > expireMs) return FINISH_LATCH_OFF;
+  return latch;
+}
+
+return {panelPhase, missingIds, hintWatch, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict, portRoleFromHint, targetForbidden, finishVerdict, FINISH_LATCH_OFF, finishLatchClick, finishLatchStep};
+})();
+
+// ===== src/core/pipe-table-core.js =====
+const __m_pipe_table_core = (function(){
+// Pure logic for the piping command line: turning a plain snapshot of the page's tool rail into a
+// command table, deciding whether an entry may run right now, and deciding whether the loader may
+// start at all. No DOM, no host globals; every fact arrives as an argument and every decision comes
+// back as plain data, so the host layer (src/pipe/pipe-host.js) has nothing to decide.
+//
+// Doctrines carried over from the duct side: the live page is authoritative (the key badge, never a
+// hardcoded key), a hard boundary is enforced in code and not only by leaving something out of a
+// table (forbidden controls are checked again here), and when live state can't be read the answer
+// is "don't".
+const { resolveCommand } = __m_command_line_core;
+const { shadowedActions } = __m_table_core;
+const { targetForbidden } = __m_pipe_placement_core;
+
+const KEY_RE = /^[a-z0-9]$/;
+
+function lower(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+// Builds the tool half of the table from the rail's own buttons.
+//   railTools    [{ id, key, label }] in on-screen order (id = data-tool, key = badge text)
+//   fallbackKeys { toolId: 'x' } used only when a button has no readable badge
+//   curatedAliases { toolId: ['a', ...] }
+//   actions      the action table; its names/aliases are reserved so a tool alias can't shadow one
+// Never drops a tool for a key problem: dispatch is a click on the tool's own button, so the key is
+// only an extra alias. A duplicate data-tool is the one thing skipped (it can't be told apart).
+function deriveTools({ railTools, fallbackKeys = {}, curatedAliases = {}, actions = [] }) {
+  const info = { source: 'none', skipped: [], aliasDropped: [], shadowedActions: [] };
+  const tools = [];
+  const seenName = new Set();
+  const seenKey = new Set();
+  for (const raw of railTools ?? []) {
+    const name = lower(raw?.id);
+    if (!name) continue;
+    if (seenName.has(name)) { info.skipped.push(`${name}: duplicate data-tool`); continue; }
+    let key = lower(raw.key);
+    if (!KEY_RE.test(key)) {
+      const fallback = lower(fallbackKeys[name]);
+      if (KEY_RE.test(fallback)) {
+        info.skipped.push(`${name}: no key badge, used built-in "${fallback}"`);
+        key = fallback;
+      } else {
+        info.skipped.push(`${name}: no key badge and no built-in key (reachable by name only)`);
+        key = '';
+      }
+    }
+    if (key && seenKey.has(key)) {
+      info.skipped.push(`${name}: key "${key}" already taken (reachable by name only)`);
+      key = '';
+    }
+    seenName.add(name);
+    if (key) seenKey.add(key);
+    tools.push({
+      id: name, name, kind: 'tool',
+      label: String(raw.label ?? '').trim() || name,
+      key: key || null,
+      aliases: [],
+    });
+  }
+  if (!tools.length) return { tools, info };
+  info.source = 'toolbar';
+
+  const reserved = new Set();
+  for (const action of actions) {
+    reserved.add(lower(action.name));
+    for (const alias of action.aliases ?? []) reserved.add(lower(alias));
+  }
+  const taken = new Set();
+  const accept = (tool, alias, why) => {
+    const a = lower(alias);
+    if (!a) return;
+    if (seenName.has(a) && a !== tool.name) { info.aliasDropped.push(`${tool.name}: "${a}" (${why}: another tool's name)`); return; }
+    if (reserved.has(a)) { info.aliasDropped.push(`${tool.name}: "${a}" (${why}: an action's name or alias)`); return; }
+    if (taken.has(a)) { info.aliasDropped.push(`${tool.name}: "${a}" (${why}: already another alias)`); return; }
+    taken.add(a);
+    tool.aliases.push(a);
+  };
+  // Keys first, so a curated alias can never take a key letter away from the tool that owns it.
+  for (const tool of tools) if (tool.key) accept(tool, tool.key, 'key');
+  for (const tool of tools) for (const alias of curatedAliases[tool.name] ?? []) accept(tool, alias, 'alias');
+
+  info.shadowedActions = shadowedActions(tools, actions);
+  return { tools, info };
+}
+
+// Tools first, then actions: table order is the resolution rule (a tool wins its own name).
+function buildTable(tools, actions) {
+  return tools.concat(actions.map((action) => ({ ...action, kind: 'action' })));
+}
+
+// Can this entry run right now? `target` is a plain description of the page element the entry would
+// click (or null when there is none): { exists, disabled, ariaDisabled, visible, title, id, captureId }.
+// Entries whose control is a forbidden one are refused even when the element is perfectly clickable.
+function entryState(entry, target, { forbiddenIds = [], forbiddenCaptureIds = [], forbiddenTexts = [], forbiddenContainerIds = [] } = {}) {
+  if (target && targetForbidden(target, { forbiddenTexts, forbiddenContainerIds })) return { usable: false, forbidden: true, reason: null };
+  if (entry?.btn && forbiddenIds.includes(entry.btn)) return { usable: false, forbidden: true, reason: null };
+  if (!target || !target.exists) return { usable: false, forbidden: false, reason: 'not on this page' };
+  if (forbiddenIds.includes(target.id) || forbiddenCaptureIds.includes(target.captureId)) {
+    return { usable: false, forbidden: true, reason: null };
+  }
+  if (target.disabled || target.ariaDisabled === true || target.ariaDisabled === 'true') {
+    // A disabled tool's own title carries native's reason ("Enter a positive diameter before ...");
+    // a title equal to the label is just the normal tooltip, not a reason.
+    const title = String(target.title ?? '').trim();
+    const reason = entry.kind === 'tool' && title && lower(title) !== lower(entry.label) ? title : 'disabled right now';
+    return { usable: false, forbidden: false, reason };
+  }
+  if (!target.visible) return { usable: false, forbidden: false, reason: 'hidden right now' };
+  return { usable: true, forbidden: false, reason: null };
+}
+
+// What to do with an entry the user picked. `state` is entryState's result for it.
+function planEntry(entry, state) {
+  if (state.forbidden) {
+    return { action: 'refuse', message: `refused: "${entry.name}" is a protected control` };
+  }
+  if (!state.usable) {
+    const label = entry.label ?? entry.name;
+    return { action: 'status', message: state.reason ? `${label}: ${state.reason}` : `${label} isn't available right now` };
+  }
+  return { action: 'click', entry };
+}
+
+// Typed text -> plan. Exact name/label, then exact alias (resolveCommand's own rule); a bare prefix
+// is never run, only listed. `stateFor(entry)` supplies entryState for the resolved entry.
+function planQuery(table, query, stateFor) {
+  const entry = resolveCommand(table, query);
+  if (!entry) return { action: 'status', message: `unknown command: ${String(query ?? '').trim()}` };
+  return planEntry(entry, stateFor(entry));
+}
+
+// Which entries the dropdown lists: every tool (a disabled one stays visible so its reason can be
+// shown), but an action that couldn't do anything right now is left out, as on the duct side.
+// `stateFor(entry)` supplies entryState; the result keeps each entry with its state attached.
+function listEntries(table, stateFor) {
+  const rows = [];
+  for (const entry of table) {
+    const state = stateFor(entry);
+    if (entry.kind === 'action' && !state.usable) continue;
+    rows.push({ entry, state });
+  }
+  return rows;
+}
+
+// Which tool the command line should consider armed. Our own record wins right after one of our own
+// commands (the page's state may not have settled); after the grace window, a readable live tool
+// string corrects drift caused by the user arming tools some other way (rail click, native hotkey).
+//   own  { armed, tool }   live  string | null | undefined   (the page's current tool)
+function reconcileArmed({ own, live, sinceLastCmdMs, graceMs = 1000 }) {
+  if (typeof live !== 'string') return { armed: !!own?.armed, tool: own?.tool ?? null };
+  if (Number.isFinite(sinceLastCmdMs) && sinceLastCmdMs < graceMs) return { armed: !!own?.armed, tool: own?.tool ?? null };
+  const tool = lower(live);
+  if (!tool || tool === 'select') return { armed: false, tool: null };
+  return { armed: true, tool };
+}
+
+// May the piping loader start? Everything arrives as plain facts.
+//   facts { hasRoot, trade, hasStage, railToolCount, nativeBarOn, ductLoaderInstalled, pipeTrade }
+// Returns { ok, message } where message tells a non-programmer exactly what to do.
+function loaderGuard(facts) {
+  const pipeTrade = facts.pipeTrade ?? 'piping';
+  if (!facts.hasRoot) return { ok: false, message: 'This is not a graph session page. Open a piping session and paste again.' };
+  if (facts.trade !== pipeTrade) {
+    return { ok: false, message: `This page is a "${facts.trade ?? 'unknown'}" page, not a piping page. Use the duct command line loader here.` };
+  }
+  if (facts.ductLoaderInstalled) {
+    return { ok: false, message: 'The duct command line is already loaded on this page. Reload the page, then paste the piping loader.' };
+  }
+  if (!facts.hasStage || !(facts.railToolCount > 0)) {
+    return { ok: false, message: 'The page is not ready yet (no tool rail found). Wait for the drawing to load and paste again.' };
+  }
+  if (facts.nativeBarOn) {
+    return { ok: false, message: 'Native\'s own "⌨ Command line" is switched ON. Switch it off (click it once), then paste again: both would grab the same keys.' };
+  }
+  return { ok: true, message: '' };
+}
+
+return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard};
 })();
 
 // ===== src/core/search-core.js =====
@@ -1382,9 +1492,12 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK,
     PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
     PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
+    PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
+    PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
+    portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
   } = __m_pipe_placement_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
@@ -1410,7 +1523,8 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
   }
   RW.vpipe = true;
 
-  const FORBIDDEN = { forbiddenIds: PIPE_FORBIDDEN_BUTTON_IDS, forbiddenCaptureIds: PIPE_FORBIDDEN_CAPTURE_IDS };
+  const FORBIDDEN = { forbiddenIds: PIPE_FORBIDDEN_BUTTON_IDS, forbiddenCaptureIds: PIPE_FORBIDDEN_CAPTURE_IDS,
+    forbiddenTexts: PIPE_FORBIDDEN_BUTTON_TEXTS, forbiddenContainerIds: PIPE_FORBIDDEN_CONTAINER_IDS };
   const RESERVED_KEYS = ['m']; // native's own ruler hotkey: never captured into the bar
 
   /* ---------- table (re-derived from the live rail every time, never cached) ---------- */
@@ -1667,6 +1781,64 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     setTimeout(refocusBarOnce, 0);
   }
   let unknownHintWarned = null;
+
+  /* ---------- Step 3: port prompt (display only) and Enter-to-Finish ---------- */
+  let finishLatch = FINISH_LATCH_OFF;
+  let portNoteRole = null, portNoteShown = false;
+  // While native asks for a port ("Click the detected intersection for <role>."), say which one. It
+  // never takes focus (Esc and clicks keep going to the app) and never clicks anything.
+  function updatePortNote(snap) {
+    const role = (snap.open && panelPhase(snap.hint, PIPE_HINT_PREFIXES) === 'ports') ? portRoleFromHint(snap.hint, PIPE_PORT_ROLE_PATTERN) : null;
+    if (role === portNoteRole) return;
+    portNoteRole = role;
+    if (!role) {
+      if (portNoteShown) { portNoteShown = false; if (!prompt.active && document.activeElement !== inputEl) hideMenu(); }
+      return;
+    }
+    mountBar();
+    if (!inputEl || prompt.active) return;
+    ensureMenu();
+    menuItems = []; menuHighlight = -1;
+    menuEl.innerHTML = '';
+    const head = document.createElement('div');
+    head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+    head.textContent = 'click: ' + role;
+    menuEl.appendChild(head);
+    positionMenu();
+    menuEl.style.display = 'block';
+    portNoteShown = true;
+    status('click: ' + role);
+  }
+  function finishFacts(e) {
+    const snap = host.readPanel();
+    const fin = host.readFinish(PIPE_FINISH_BUTTON_ID);
+    return {
+      key: e.key, repeat: !!e.repeat,
+      barFocused: document.activeElement === inputEl, barEmpty: !!inputEl && !inputEl.value.trim(),
+      panelOpen: snap.open, hint: snap.hint, tool: snap.tool,
+      allowedTools: PIPE_FINISH_TOOLS, finishPrefix: PIPE_FINISH_HINT_PREFIX,
+      latched: finishLatch.clicked,
+      button: {
+        found: fin.found, id: fin.id, expectedId: PIPE_FINISH_BUTTON_ID, visible: fin.visible,
+        disabled: fin.disabled, ariaDisabled: fin.ariaDisabled,
+        forbidden: fin.found ? targetForbidden(fin, { forbiddenTexts: PIPE_FORBIDDEN_BUTTON_TEXTS, forbiddenContainerIds: PIPE_FORBIDDEN_CONTAINER_IDS }) : false,
+      },
+    };
+  }
+  // Enter on an empty bar: click Finish if (and only if) every condition holds, checked twice.
+  // Returns true when the key was dealt with (so the generic Enter path is skipped).
+  function tryFinish(e) {
+    const first = finishVerdict(finishFacts(e));
+    if (!first.ok) { if (first.message) status(first.message); return first.reason !== 'not-enter' && first.reason !== 'bar' && first.reason !== 'no-panel' && first.reason !== 'phase'; }
+    const second = finishVerdict(finishFacts(e)); // fresh read right before the click
+    if (!second.ok) { if (second.message) status(second.message); return true; }
+    const label = (host.readPanel().tool || 'fitting');
+    if (!host.clickFinish(PIPE_FINISH_BUTTON_ID)) { status('Finish is not available right now'); return true; }
+    finishLatch = finishLatchClick(Date.now());
+    own.lastCmdAt = Date.now();
+    status('Finish pressed (' + label + '): placing it now');
+    return true;
+  }
   const LABEL_GUARD_MS = 700;
   let labelGuardUntil = 0;
   function refocusBarOnce() {
@@ -1677,6 +1849,12 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
   // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
   function promptTick() {
     const snap = host.readPanel();
+    // Step 3: release the Finish latch when native has been through "saving" and is back, or closed.
+    finishLatch = finishLatchStep({
+      latch: finishLatch, phase: snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed',
+      panelOpen: snap.open, now: Date.now(), expireMs: PIPE_FINISH_LATCH_MS,
+    });
+    updatePortNote(snap);
     // Safety net: a hint we don't recognise means native changed this step. One line, nothing else.
     const watch = hintWatch({ open: snap.open, hint: snap.hint, prefixes: PIPE_HINT_PREFIXES, lastWarned: unknownHintWarned });
     unknownHintWarned = watch.hint;
@@ -1765,6 +1943,8 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
       e.preventDefault(); e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       const typed = inputEl.value.trim();
+      // Enter (never Space) on an empty bar while a fitting/fixture is ready: Finish. Nowhere else.
+      if (e.key === 'Enter' && !typed && !prompt.active && tryFinish(e)) return;
       if (systemQuery(typed) !== null) {
         if (menuHighlight >= 0 && menuItems[menuHighlight] && menuItems[menuHighlight].system) pickSystem(menuItems[menuHighlight].system);
         else status('system: nothing matches "' + typed.slice(1) + '"');

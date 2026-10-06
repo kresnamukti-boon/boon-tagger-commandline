@@ -101,6 +101,21 @@ the same way as above, on a **piping** page.
     refuses and tells you to deselect first. It also refuses when it can't tell whether something is
     selected, while a fitting is being placed, and when the dropdown is disabled. It never presses
     Create, Rename, Import or Assign network.
+- **Placing it (Step 3).**
+  - **Port prompt:** while the app asks for a port ("Click the detected intersection for <role>."), the
+    bar shows `click: <role>`. Display only: it takes no focus and clicks nothing, so Esc and your
+    mouse behave as normal. It shows no "n of N", because the app skips ports it already detected.
+  - **Enter finishes (the one thing that saves).** With the bar focused and empty, **Enter** presses the
+    app's own Finish button, and only when: the panel is open, its hint starts with "Finish inserts this
+    fitting.", the tool is `fitting` or `fixture`, and Finish is visible and not disabled (the app
+    disables it for an incomplete port form). Space never finishes, a held-down Enter never finishes, and
+    typed words (`finish`, `save`) are unknown commands. After one click the bar ignores Enter until the app
+    has shown "Saving pipe and fitting…" and come back (a failed save), closed the panel, or 1.5 s passed
+    with no sign it started. Other tools (valve, equipment, cut, transition) are finished with the mouse.
+  - **Never clicked, ever:** the size-mismatch toast's **Resize anyway** button (refused by its text and
+    because nothing inside the toast stack is ever clicked), plus everything in the "never click" list below.
+  - If you click the canvas yourself, the app's own Enter handling takes over (it only acts when the
+    canvas has focus), so the two never both fire.
 - **If native changes under us** (safety net). Two checks make the bar stop instead of guess:
   - if the fitting panel is open but its hint sentence is one we don't recognise, the bar shows one
     line, "Native changed: use the mouse for this step", and does nothing else for that step (no

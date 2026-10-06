@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
   PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_TRADE, DUCT_TRADE,
-  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS,
+  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_PORT_ROLE_PATTERN, PIPE_FINISH_HINT_PREFIX,
 } from '../src/pipe/pipe-tables.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -134,5 +134,23 @@ test('every id the loader requires at load is listed in native-ids.json (and so 
   const listed = new Set(ids.html.ids);
   const created = ids.pipeSessionUi.strings.join('\n');
   assert.deepEqual(PIPE_REQUIRED_IDS.filter((id) => !listed.has(id) && !created.includes(id)), []);
-  assert.ok(!PIPE_REQUIRED_IDS.some((id) => PIPE_FORBIDDEN_BUTTON_IDS.includes(id)), 'a protective id is never a requirement');
+  // Finish is the one deliberate exception: forbidden for every normal path, required because Enter-to-Finish needs it.
+  assert.deepEqual(PIPE_REQUIRED_IDS.filter((id) => PIPE_FORBIDDEN_BUTTON_IDS.includes(id)), [PIPE_FINISH_BUTTON_ID]);
+});
+
+test('Step 3 dependencies are all listed: Finish id, toast container, "Resize anyway", the Finish gating and the saving/ready phases', () => {
+  const ui = ids.pipeSessionUi.strings.join('\n');
+  assert.ok(ids.html.ids.includes(PIPE_FINISH_BUTTON_ID));
+  for (const id of PIPE_FORBIDDEN_CONTAINER_IDS) assert.ok(ids.html.ids.includes(id), id);
+  for (const t of PIPE_FORBIDDEN_BUTTON_TEXTS) assert.ok(ui.toLowerCase().includes(`'${t}'`), t);
+  assert.ok(ui.includes(PIPE_FINISH_HINT_PREFIX));
+  assert.ok(PIPE_PORT_ROLE_PATTERN.test('Click the detected intersection for inlet.') && ui.includes('Click the detected intersection for'));
+  assert.ok(ids.entryBundle.strings.some((x) => x.includes('finishRoute.disabled')));
+  assert.ok(ids.pipeBboxConnect.strings.some((x) => x.includes("phase: 'submitting'")), 'saving phase');
+  assert.ok(ids.pipeBboxConnect.strings.some((x) => x.includes("phase: 'ready' }")), 'a failed save restores the ready phase');
+});
+
+test('every pipe-bbox-connect string we rely on exists in the saved copy (the live copy is checked by the drift script)', { skip: SKIP }, () => {
+  const src = read('pipe-bbox-connect.js');
+  assert.deepEqual(ids.pipeBboxConnect.strings.filter((x) => !src.includes(x)), []);
 });

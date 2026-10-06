@@ -88,6 +88,11 @@ export const PIPE_FORBIDDEN_BUTTON_IDS = [
 ];
 // The top-bar "Submit this page for review" button has no DOM id, only this capture id.
 export const PIPE_FORBIDDEN_CAPTURE_IDS = ['submit-graph'];
+// Native's size-mismatch toast (MEC-329) carries a sticky "Resize anyway" button that re-submits a
+// rejected command with the check switched off. It has no id, so it is refused by its text and by
+// the toast container it lives in: nothing inside that container is ever clicked by us.
+export const PIPE_FORBIDDEN_BUTTON_TEXTS = ['resize anyway'];
+export const PIPE_FORBIDDEN_CONTAINER_IDS = ['graph-toast-stack'];
 
 // Command names that stay reachable while a placement panel is open. Shipped now as data;
 // enforced from the placement step onward (Step 1 has no panel state to isolate).
@@ -122,6 +127,18 @@ export const PIPE_HINT_PREFIXES = {
 export const PIPE_AUTOMATCH_PATTERN = /Diameter (\S+?)" auto-matched/;
 export const PIPE_UNAVAILABLE_MARK = 'unavailable';
 
+// Step 3. The ONE control the bar may click as a placement step: native's Finish, reached only from
+// Enter in the bar (never from a typed word; it stays in PIPE_FORBIDDEN_BUTTON_IDS for every other path).
+export const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
+// Strictly this opening, not the looser 'ready' variants the transition tool uses.
+export const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
+// Only these tools may be finished from the bar (valves, equipment, cut, transition stay manual).
+export const PIPE_FINISH_TOOLS = ['fitting', 'fixture'];
+// How long a Finish click holds the latch if native never shows "Saving..." (e.g. the click was ignored).
+export const PIPE_FINISH_LATCH_MS = 1500;
+// "Click the detected intersection for <role>." -> role
+export const PIPE_PORT_ROLE_PATTERN = /Click the detected intersection for ([A-Za-z0-9_-]+)/;
+
 // The one line shown when native's panel or page no longer looks like what we were built against.
 export const PIPE_NATIVE_CHANGED_MESSAGE = 'Native changed: use the mouse for this step';
 
@@ -133,7 +150,7 @@ export const PIPE_REQUIRED_IDS = [
   'graph-session-root', 'graph-canvas-stage', 'graph-command-line-toggle', 'graph-command-window',
   'graph-system-select', 'graph-pipe-bbox-op-panel', 'graph-pipe-fitting-select-menu',
   'graph-undo-command', 'graph-redo-command', 'graph-zoom-fit', 'graph-zoom-in', 'graph-zoom-out',
-  'graph-ruler', 'graph-components-button',
+  'graph-ruler', 'graph-components-button', 'graph-finish-route',
 ];
 
 // Friendly names for fittings, keyed by native's family id (approved 2026-10-06). The family id and

@@ -159,3 +159,65 @@ export function isolationVerdict({ panelOpen, name, allowed }) {
   if ((allowed ?? []).includes(lower(name))) return { ok: true };
   return { ok: false, message: lower(name) + ': finish or cancel the fitting first (Esc cancels it)' };
 }
+
+/* ---------- Step 3: port prompts and Enter-to-Finish ---------- */
+
+// The role native is asking for in the ports phase ("Click the detected intersection for inlet."), or
+// null. Display only: native's own hint is missingPorts()[0], so it already skips ports native
+// detected; we deliberately show no "n of N" because that count would be a guess.
+export function portRoleFromHint(hint, pattern) {
+  const m = String(hint ?? '').match(pattern);
+  return m ? m[1] : null;
+}
+
+// Is this element one we must never click, whatever else is true? By its text (the size-mismatch
+// toast's "Resize anyway") or by living inside a forbidden container (the toast stack).
+//   target { text, ancestorIds }
+export function targetForbidden(target, { forbiddenTexts = [], forbiddenContainerIds = [] } = {}) {
+  const text = lower(target?.text);
+  if (text && forbiddenTexts.some((t) => text === lower(t))) return true;
+  const ancestors = target?.ancestorIds ?? [];
+  return forbiddenContainerIds.some((id) => ancestors.includes(id));
+}
+
+// May Enter in the bar click Finish right now? Every condition is re-read by the caller at the moment
+// of the click and this runs again. Returns { ok: true } or { ok: false, reason, message } where
+// `message` is null when the key should just do nothing (the bar says something only where the
+// person could be confused).
+//   f { key, repeat, barFocused, barEmpty, panelOpen, hint, tool, allowedTools, finishPrefix,
+//       latched, button: { found, id, expectedId, visible, disabled, ariaDisabled, forbidden } }
+export function finishVerdict(f) {
+  const no = (reason, message = null) => ({ ok: false, reason, message });
+  if (f?.key !== 'Enter') return no('not-enter');
+  if (f.repeat) return no('repeat');
+  if (!f.barFocused || !f.barEmpty) return no('bar');
+  if (!f.panelOpen) return no('no-panel');
+  if (!String(f.hint ?? '').trim().startsWith(f.finishPrefix ?? '\u0000')) return no('phase');
+  if (!(f.allowedTools ?? []).includes(lower(f.tool))) {
+    return no('tool', 'Finish from the bar is only for fitting and fixture: use the mouse for this one');
+  }
+  if (f.latched) return no('latched');
+  const b = f.button ?? {};
+  if (!b.found || b.id !== b.expectedId || b.forbidden || !b.visible) return no('button', 'Finish is not available on this page right now');
+  if (b.disabled || b.ariaDisabled === true || b.ariaDisabled === 'true') {
+    return no('disabled', 'Finish is not available yet: the app has it disabled (is a port size missing?)');
+  }
+  return { ok: true };
+}
+
+// The latch that stops a second Enter from finishing twice. Set when we click Finish. It is released
+// when native has shown something other than "ready" (saving) and then comes back to "ready" (a failed
+// save: native restores the ready phase), when the panel closes (saved or cancelled), or after
+// `expireMs` if native never left ready (the click was ignored).
+export const FINISH_LATCH_OFF = { clicked: false, at: 0, leftReady: false };
+export function finishLatchClick(now) {
+  return { clicked: true, at: now, leftReady: false };
+}
+export function finishLatchStep({ latch, phase, panelOpen, now, expireMs }) {
+  if (!latch?.clicked) return FINISH_LATCH_OFF;
+  if (!panelOpen) return FINISH_LATCH_OFF;
+  if (phase !== 'ready') return latch.leftReady ? latch : { ...latch, leftReady: true };
+  if (latch.leftReady) return FINISH_LATCH_OFF;
+  if (now - latch.at > expireMs) return FINISH_LATCH_OFF;
+  return latch;
+}

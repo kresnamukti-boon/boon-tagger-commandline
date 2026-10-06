@@ -249,6 +249,7 @@ async function buildReport(opts) {
   const checks = [
     ['pipe-session-ui.js', 'pipeSessionUi.strings', ids.pipeSessionUi.strings],
     ['graph-session-entry.js', 'entryBundle.strings', ids.entryBundle.strings],
+    ['pipe-bbox-connect.js', 'pipeBboxConnect.strings', (ids.pipeBboxConnect || {}).strings || []],
   ];
   for (const [file, label, needles] of checks) {
     if (!(file in sources)) { say(`  ${file}: not read`); continue; }

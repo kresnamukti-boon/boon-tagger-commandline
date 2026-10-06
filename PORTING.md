@@ -315,6 +315,25 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
 - **System/network:** the `service` ("Assign system") tool is a normal tool in the list (alias `assign`); arming it saves nothing. The system create/rename/import/assign **buttons** stay forbidden. `#<name>` system search is built (`src/core/pipe-system-core.js`): it writes `#graph-system-select` (value + input/change). Native's change handler REASSIGNS the selected pipe when one is selected (`assignPipeService`, a real command), so the write is refused unless `__graphDebug.selectedEntityId` is readable and empty. **Handover:** `#` writes `#graph-system-select`. With a pipe selected, native's change handler calls `assignPipeService` (a saved command), so the bar refuses (`systemPickVerdict`). Native's port should keep that rule: only write the dropdown when nothing is selected; the rest of that function is only needed because we are outside.
 - Valves and equipment get no extra aliases yet (their menus still match by id and label).
 
+### Step 3 (placing)
+
+- `finishVerdict` / `finishLatchStep` / `portRoleFromHint` / `targetForbidden` in `src/core/pipe-placement-core.js`;
+  `PIPE_FINISH_*`, `PIPE_FORBIDDEN_BUTTON_TEXTS` (`resize anyway`) and `PIPE_FORBIDDEN_CONTAINER_IDS`
+  (`graph-toast-stack`) in `src/pipe/pipe-tables.js`.
+- Enter in the bar clicks `#graph-finish-route` only for `fitting`/`fixture` in the ready phase (hint starts with
+  "Finish inserts this fitting."), never Space, never on repeat, never with text typed. Finish stays in
+  `PIPE_FORBIDDEN_BUTTON_IDS` for every other path; the one deliberate click goes through `host.clickFinish`,
+  which re-checks the button right before clicking. Native disables Finish for an incomplete port form, a
+  missing transition size, or a phase other than ready; we only obey that.
+- Latch: set on our click; released when the phase has left ready (saving) and returns (native restores
+  `phase: 'ready'` after a non-synced save), when the panel closes, or after `PIPE_FINISH_LATCH_MS` if native never
+  showed "Saving pipe and fitting…". Native's own Enter runs only when `document.activeElement === #pointer-layer`;
+  ours only when the bar has focus, so they cannot both fire.
+- Port prompt is display only; the hint is `missingPorts()[0]`, so no "n of N" (detected ports are skipped).
+- Upstream: none of the key/focus plumbing is needed. Native already has `pipeBboxController.finish()` and its own
+  Enter handling; the command line only needs to call it (with the same enabled checks) when the pick came from the bar.
+- Never clicked: the MEC-329 size-mismatch toast's "Resize anyway" (re-submits a rejected command with the check off).
+
 ### Safety nets and the drift check
 
 - `hintWatch` / `missingIds` (`src/core/pipe-placement-core.js`) + `PIPE_NATIVE_CHANGED_MESSAGE`,
