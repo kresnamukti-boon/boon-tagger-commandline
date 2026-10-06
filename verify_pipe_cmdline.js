@@ -126,6 +126,13 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   sysSel.addEventListener('change', () => { state.systemChanges.push(sysSel.value); });
   doc.body.appendChild(sysSel);
 
+  // native builds the placement panel (hidden) and its label menu at init; we only ever re-use their ids
+  {
+    const pan0 = el('div'); pan0.id = 'graph-pipe-bbox-op-panel'; pan0.hidden = true;
+    const menu0 = el('div'); menu0.id = 'graph-pipe-fitting-select-menu'; menu0.hidden = true; pan0.appendChild(menu0);
+    doc.body.appendChild(pan0);
+  }
+
   const RAIL = [
     ['select', 'S', 'Select'], ['route', 'R', 'Route pipe'], ['extend', 'X', 'Extend pipe'], ['terminate', 'P', 'Terminate end'],
     ['transition', 'N', 'Change size'], ['cut', 'U', 'Split run'], ['split-run', 'K', 'Split run (no fitting)'], ['valve', 'V', 'Valve'],
@@ -777,6 +784,45 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     ok(!page.state.menuOpened, 'native\'s label menu stayed closed (' + JSON.stringify(pickKey) + ')');
     await new Promise((r) => setTimeout(r, 30));
     eq(page.doc.activeElement && page.doc.activeElement.id, 'rw-pipe-input', 'focus went back to our bar, once');
+  }
+
+  /* ----- safety nets: a hint we don't know, and a required id that is gone ----- */
+  const CHANGED = 'Native changed: use the mouse for this step';
+  {
+    const page = makePage(); loadShell(page);
+    const before = page.state.statuses.length;
+    const h = page.openPanel({ hint: 'Something new that native added', groups: FITTING_GROUPS }); page.tick();
+    eq(page.state.statuses.slice(before), [CHANGED], 'unknown hint: exactly one line is shown');
+    ok(!page.RW._pipePrompt.active && !menuShown(page), 'and nothing else happens (no prompt, no menu)');
+    page.tick(); page.tick();
+    eq(page.state.statuses.length - before, 1, 'the line is shown once, not on every tick');
+    ok(!page.state.clicks.some((c) => /pipe-|graph-finish|graph-save/.test(c)), 'nothing was clicked');
+    page.press(page.doc.body, ' ');
+    eq(lastStatus(page), CHANGED, 'Space in that state repeats the same line');
+    h.hintEl.textContent = 'Choose the fitting subtype.'; page.tick();
+    ok(page.RW._pipePrompt.active, 'when the hint is one we know again, the prompt works again');
+    h.hintEl.textContent = 'Another surprise'; page.tick();
+    eq(lastStatus(page), CHANGED, 'and a new unknown hint warns again');
+  }
+  {
+    const page = makePage(); loadShell(page);
+    const before = page.state.statuses.length;
+    page.openPanel({ hint: '', groups: FITTING_GROUPS }); page.tick();
+    eq(page.state.statuses.length, before, 'an empty hint (panel still drawing) is not a warning');
+    for (const hint of ['Pick a different diameter — a transition must change size.', 'Enter the new diameter above, then Finish.', 'From 2" → to 3". Finish inserts this fitting.']) {
+      page.openPanel({ tool: 'transition', hint, groups: FITTING_GROUPS }); page.tick();
+    }
+    eq(page.state.statuses.length, before, 'the transition tool\'s own ready hints are known, no warning');
+  }
+  {
+    // a required id is missing at load: install nothing, one line
+    const page = makePage();
+    const gone = page.byId['graph-system-select']; gone.parentNode.removeChild(gone); delete page.byId['graph-system-select'];
+    loadShell(page);
+    ok(!page.RW.vpipe && !page.byId['rw-pipe-input'] && !page.listeners.document.keydown, 'missing required id: nothing is installed');
+    eq(page.state.statuses, [CHANGED], 'and the status line says so');
+    ok(page.warnings.some((w) => /graph-system-select/.test(w)), 'the console names the missing id');
+    eq(page.RW._pipeMissing, ['graph-system-select'], 'and it is recorded for inspection');
   }
 
   console.log(`${pass} passed, ${fail} failed`);

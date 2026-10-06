@@ -114,12 +114,27 @@ export const PIPE_HINT_PREFIXES = {
   box: 'Click two opposite corners',
   label: 'Choose the fitting subtype.',
   ports: 'Click the detected intersection for',
-  ready: 'Finish inserts this fitting.',
+  // The transition tool words its ready hint differently depending on the sizes (three more openings).
+  ready: ['Finish inserts this fitting.', 'Pick a different diameter', 'Enter the new diameter above, then Finish.', 'From '],
   submitting: 'Saving pipe and fitting',
 };
 // Native's own words after the auto-matched run diameter, e.g. `Diameter 2" auto-matched from the crossed run.`
 export const PIPE_AUTOMATCH_PATTERN = /Diameter (\S+?)" auto-matched/;
 export const PIPE_UNAVAILABLE_MARK = 'unavailable';
+
+// The one line shown when native's panel or page no longer looks like what we were built against.
+export const PIPE_NATIVE_CHANGED_MESSAGE = 'Native changed: use the mouse for this step';
+
+// Element ids that must exist on the page for the command line to run at all. If one is missing at
+// load, native has changed and the bar installs nothing. Every id here is also in
+// test/native-ids.json (checked by test/native-ids.test.mjs). The protective (forbidden) ids are
+// deliberately not required: a missing Save button can't make us click it.
+export const PIPE_REQUIRED_IDS = [
+  'graph-session-root', 'graph-canvas-stage', 'graph-command-line-toggle', 'graph-command-window',
+  'graph-system-select', 'graph-pipe-bbox-op-panel', 'graph-pipe-fitting-select-menu',
+  'graph-undo-command', 'graph-redo-command', 'graph-zoom-fit', 'graph-zoom-in', 'graph-zoom-out',
+  'graph-ruler', 'graph-components-button',
+];
 
 // Friendly names for fittings, keyed by native's family id (approved 2026-10-06). The family id and
 // native's on-screen label always match as well; these are extras. An alias only ever matches

@@ -116,12 +116,27 @@ const PIPE_HINT_PREFIXES = {
   box: 'Click two opposite corners',
   label: 'Choose the fitting subtype.',
   ports: 'Click the detected intersection for',
-  ready: 'Finish inserts this fitting.',
+  // The transition tool words its ready hint differently depending on the sizes (three more openings).
+  ready: ['Finish inserts this fitting.', 'Pick a different diameter', 'Enter the new diameter above, then Finish.', 'From '],
   submitting: 'Saving pipe and fitting',
 };
 // Native's own words after the auto-matched run diameter, e.g. `Diameter 2" auto-matched from the crossed run.`
 const PIPE_AUTOMATCH_PATTERN = /Diameter (\S+?)" auto-matched/;
 const PIPE_UNAVAILABLE_MARK = 'unavailable';
+
+// The one line shown when native's panel or page no longer looks like what we were built against.
+const PIPE_NATIVE_CHANGED_MESSAGE = 'Native changed: use the mouse for this step';
+
+// Element ids that must exist on the page for the command line to run at all. If one is missing at
+// load, native has changed and the bar installs nothing. Every id here is also in
+// test/native-ids.json (checked by test/native-ids.test.mjs). The protective (forbidden) ids are
+// deliberately not required: a missing Save button can't make us click it.
+const PIPE_REQUIRED_IDS = [
+  'graph-session-root', 'graph-canvas-stage', 'graph-command-line-toggle', 'graph-command-window',
+  'graph-system-select', 'graph-pipe-bbox-op-panel', 'graph-pipe-fitting-select-menu',
+  'graph-undo-command', 'graph-redo-command', 'graph-zoom-fit', 'graph-zoom-in', 'graph-zoom-out',
+  'graph-ruler', 'graph-components-button',
+];
 
 // Friendly names for fittings, keyed by native's family id (approved 2026-10-06). The family id and
 // native's on-screen label always match as well; these are extras. An alias only ever matches
@@ -184,7 +199,7 @@ const PIPE_FIXTURE_DISPLAY_NAMES = {
 const PIPE_FIXTURE_TOOL = 'fixture';
 const PIPE_FITTING_TOOL = 'fitting';
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -353,6 +368,11 @@ function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unava
       if (!active || !panel) return false;
       for (let n = active; n; n = n.parentNode) if (n === panel) return true;
       return false;
+    },
+
+    // Which of these element ids are not on the page right now?
+    missingIds(list) {
+      return list.filter((id) => !doc.getElementById(id));
     },
 
     // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.
@@ -808,9 +828,28 @@ function lower(value) {
 function panelPhase(hint, prefixes) {
   const text = String(hint ?? '').trim();
   for (const phase of Object.keys(prefixes ?? {})) {
-    if (text.startsWith(prefixes[phase])) return phase;
+    const options = Array.isArray(prefixes[phase]) ? prefixes[phase] : [prefixes[phase]];
+    if (options.some((prefix) => text.startsWith(prefix))) return phase;
   }
   return 'unknown';
+}
+
+// Ids from `required` that are not in `present` (both plain arrays of ids).
+function missingIds(required, present) {
+  const have = new Set(present ?? []);
+  return (required ?? []).filter((id) => !have.has(id));
+}
+
+// What the bar should do about the placement panel's hint right now.
+//   hint        the hint text (may be empty while native is still drawing the panel)
+//   lastWarned  the hint we already warned about (so the warning is shown once, not every tick)
+// Returns { action: 'ok' | 'warn' | 'quiet', hint }.
+function hintWatch({ open, hint, prefixes, lastWarned }) {
+  if (!open) return { action: 'ok', hint: null };
+  const text = String(hint ?? '').trim();
+  if (!text) return { action: 'quiet', hint: lastWarned ?? null };
+  if (panelPhase(text, prefixes) !== 'unknown') return { action: 'ok', hint: null };
+  return text === lastWarned ? { action: 'quiet', hint: lastWarned } : { action: 'warn', hint: text };
 }
 
 // The auto-matched run diameter native mentions in the hint (e.g. `2"`), or null.
@@ -934,7 +973,7 @@ function isolationVerdict({ panelOpen, name, allowed }) {
   return { ok: false, message: lower(name) + ': finish or cancel the fitting first (Esc cancels it)' };
 }
 
-return {panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict};
+return {panelPhase, missingIds, hintWatch, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict};
 })();
 
 // ===== src/core/search-core.js =====
@@ -1046,9 +1085,10 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED,
     PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK,
     PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
+    PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
   } = __m_pipe_tables;
   const {
-    panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict,
+    panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
   } = __m_pipe_placement_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
@@ -1064,6 +1104,14 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
   const guard = loaderGuard(host.readPageFacts());
   if (!guard.ok) { console.warn('[RW] ' + guard.message); return guard.message; }
+  // Safety net: if native no longer has an element we depend on, install nothing and say so (one line).
+  const missing = host.missingIds(PIPE_REQUIRED_IDS);
+  if (missing.length) {
+    console.warn('[RW] ' + PIPE_NATIVE_CHANGED_MESSAGE + '. Missing on this page: ' + missing.join(', '));
+    RW._pipeMissing = missing;
+    if (RW._commitStatus) RW._commitStatus(PIPE_NATIVE_CHANGED_MESSAGE);
+    return PIPE_NATIVE_CHANGED_MESSAGE;
+  }
   RW.vpipe = true;
 
   const FORBIDDEN = { forbiddenIds: PIPE_FORBIDDEN_BUTTON_IDS, forbiddenCaptureIds: PIPE_FORBIDDEN_CAPTURE_IDS };
@@ -1322,6 +1370,7 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     labelGuardUntil = Date.now() + LABEL_GUARD_MS;
     setTimeout(refocusBarOnce, 0);
   }
+  let unknownHintWarned = null;
   const LABEL_GUARD_MS = 700;
   let labelGuardUntil = 0;
   function refocusBarOnce() {
@@ -1332,6 +1381,10 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
   // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
   function promptTick() {
     const snap = host.readPanel();
+    // Safety net: a hint we don't recognise means native changed this step. One line, nothing else.
+    const watch = hintWatch({ open: snap.open, hint: snap.hint, prefixes: PIPE_HINT_PREFIXES, lastWarned: unknownHintWarned });
+    unknownHintWarned = watch.hint;
+    if (watch.action === 'warn') { status(PIPE_NATIVE_CHANGED_MESSAGE); endPrompt(); return; }
     const phase = snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed';
     if (phase !== 'label') { prompt.dismissed = false; endPrompt(); return; }
     if (prompt.active || prompt.dismissed) return;
@@ -1493,7 +1546,9 @@ return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
     if (e.key === ' ' && barEmpty && host.readPanel().open) {
       e.preventDefault(); e.stopImmediatePropagation();
       const snap = host.readPanel();
-      if (panelPhase(snap.hint, PIPE_HINT_PREFIXES) === 'label') reopenPrompt();
+      const phase = panelPhase(snap.hint, PIPE_HINT_PREFIXES);
+      if (phase === 'label') reopenPrompt();
+      else if (phase === 'unknown' && String(snap.hint || '').trim()) status(PIPE_NATIVE_CHANGED_MESSAGE);
       else status('a fitting is being placed: Esc cancels it');
       return;
     }

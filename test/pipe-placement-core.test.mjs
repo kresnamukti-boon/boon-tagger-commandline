@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict,
+  panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, missingIds, hintWatch, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict,
 } from '../src/core/pipe-placement-core.js';
 import {
   PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES,
@@ -185,4 +185,36 @@ test('fixture display names: the nine approved names, fixture menu only, unknown
   assert.equal(displayNameFor({ ...base, id: 'pipe-toString', tool: 'fixture' }), null, 'no prototype leakage');
   assert.equal(displayNameFor({ ...base, id: 'pipe-fd', tool: 'fitting' }), null, 'never in the fitting menu');
   assert.equal(displayNameFor({ ...base, id: 'pipe-fd', tool: 'fixture', names: undefined }), null);
+});
+
+test('panelPhase: a phase can have several openings (the transition tool\'s ready hints)', () => {
+  const phase = (h) => panelPhase(h, PIPE_HINT_PREFIXES);
+  assert.equal(phase('Pick a different diameter — a transition must change size.'), 'ready');
+  assert.equal(phase('Enter the new diameter above, then Finish.'), 'ready');
+  assert.equal(phase('From 2" → to 3". Finish inserts this fitting.'), 'ready');
+  assert.equal(phase('From nowhere'), 'ready', 'prefix only: that is how native words it');
+  assert.equal(panelPhase('x', { a: ['y', 'x'] }), 'a');
+  assert.equal(panelPhase('x', undefined), 'unknown');
+});
+
+test('missingIds: required ids that are not present', () => {
+  assert.deepEqual(missingIds(['a', 'b', 'c'], ['a', 'c']), ['b']);
+  assert.deepEqual(missingIds(['a'], ['a']), []);
+  assert.deepEqual(missingIds(['a'], undefined), ['a'], 'nothing readable: everything is missing (fail closed)');
+  assert.deepEqual(missingIds(undefined, ['a']), []);
+});
+
+test('hintWatch: warns once per unknown hint, stays quiet for known, empty and closed', () => {
+  const w = (o) => hintWatch({ prefixes: PIPE_HINT_PREFIXES, open: true, ...o });
+  assert.deepEqual(w({ hint: 'Choose the fitting subtype.' }), { action: 'ok', hint: null });
+  assert.deepEqual(w({ hint: 'Brand new text' }), { action: 'warn', hint: 'Brand new text' });
+});
+
+test('hintWatch: repeats and resets', () => {
+  const w = (o) => hintWatch({ prefixes: PIPE_HINT_PREFIXES, open: true, ...o });
+  assert.deepEqual(w({ hint: 'Brand new text', lastWarned: 'Brand new text' }), { action: 'quiet', hint: 'Brand new text' });
+  assert.equal(w({ hint: 'Different new text', lastWarned: 'Brand new text' }).action, 'warn');
+  assert.deepEqual(w({ hint: '   ', lastWarned: 'Brand new text' }), { action: 'quiet', hint: 'Brand new text' });
+  assert.deepEqual(w({ hint: 'Choose the fitting subtype.', lastWarned: 'Brand new text' }), { action: 'ok', hint: null }, 'known again resets');
+  assert.deepEqual(w({ open: false, hint: 'Brand new text', lastWarned: 'Brand new text' }), { action: 'ok', hint: null }, 'panel closed resets');
 });

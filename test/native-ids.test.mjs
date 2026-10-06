@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
   PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_TRADE, DUCT_TRADE,
-  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK,
+  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS,
 } from '../src/pipe/pipe-tables.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -119,7 +119,7 @@ test('the placement panel ids, classes and hint wording we rely on are all liste
   }
   assert.ok(listed.includes('familyId'), 'data-family-id');
   assert.ok(PIPE_PANEL_IDS.optionSelector.includes('data-family-id'));
-  for (const prefix of Object.values(PIPE_HINT_PREFIXES)) assert.ok(listed.includes(prefix), prefix);
+  for (const prefix of Object.values(PIPE_HINT_PREFIXES).flat()) assert.ok(prefix === 'From ' ? listed.includes('→ to ') : listed.includes(prefix.trim()), prefix);
   assert.ok(listed.includes(PIPE_UNAVAILABLE_MARK));
 });
 
@@ -127,4 +127,12 @@ test('every placement-panel string we rely on exists in pipe-session-ui.js', { s
   const src = read('pipe-session-ui.js');
   assert.deepEqual(ids.pipeSessionUi.strings.filter((s) => !src.includes(s)), []);
   assert.ok(src.includes(`'${PIPE_PANEL_IDS.panel}'`) || read('graph_session.html').includes(`id="${PIPE_PANEL_IDS.panel}"`));
+});
+
+test('every id the loader requires at load is listed in native-ids.json (and so checked against the real page)', () => {
+  // Either in the rendered page's own markup, or an id native's pipe-session-ui.js creates at init.
+  const listed = new Set(ids.html.ids);
+  const created = ids.pipeSessionUi.strings.join('\n');
+  assert.deepEqual(PIPE_REQUIRED_IDS.filter((id) => !listed.has(id) && !created.includes(id)), []);
+  assert.ok(!PIPE_REQUIRED_IDS.some((id) => PIPE_FORBIDDEN_BUTTON_IDS.includes(id)), 'a protective id is never a requirement');
 });

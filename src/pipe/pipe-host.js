@@ -125,6 +125,11 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
       return false;
     },
 
+    // Which of these element ids are not on the page right now?
+    missingIds(list) {
+      return list.filter((id) => !doc.getElementById(id));
+    },
+
     // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.
     clickFamily(id) {
       const menu = doc.getElementById(panelIds.menu);

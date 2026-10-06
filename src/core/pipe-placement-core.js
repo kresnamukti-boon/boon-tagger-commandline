@@ -15,9 +15,28 @@ function lower(value) {
 export function panelPhase(hint, prefixes) {
   const text = String(hint ?? '').trim();
   for (const phase of Object.keys(prefixes ?? {})) {
-    if (text.startsWith(prefixes[phase])) return phase;
+    const options = Array.isArray(prefixes[phase]) ? prefixes[phase] : [prefixes[phase]];
+    if (options.some((prefix) => text.startsWith(prefix))) return phase;
   }
   return 'unknown';
+}
+
+// Ids from `required` that are not in `present` (both plain arrays of ids).
+export function missingIds(required, present) {
+  const have = new Set(present ?? []);
+  return (required ?? []).filter((id) => !have.has(id));
+}
+
+// What the bar should do about the placement panel's hint right now.
+//   hint        the hint text (may be empty while native is still drawing the panel)
+//   lastWarned  the hint we already warned about (so the warning is shown once, not every tick)
+// Returns { action: 'ok' | 'warn' | 'quiet', hint }.
+export function hintWatch({ open, hint, prefixes, lastWarned }) {
+  if (!open) return { action: 'ok', hint: null };
+  const text = String(hint ?? '').trim();
+  if (!text) return { action: 'quiet', hint: lastWarned ?? null };
+  if (panelPhase(text, prefixes) !== 'unknown') return { action: 'ok', hint: null };
+  return text === lastWarned ? { action: 'quiet', hint: lastWarned } : { action: 'warn', hint: text };
 }
 
 // The auto-matched run diameter native mentions in the hint (e.g. `2"`), or null.

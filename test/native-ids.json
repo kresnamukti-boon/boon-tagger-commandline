@@ -83,7 +83,10 @@
       "\" auto-matched from the crossed run.",
       "subtype.className = 'graph-pipe-fitting-select-trigger'",
       "if (['ArrowDown', 'Enter', ' '].includes(event.key)) {",
-      "subtype.focus();"
+      "subtype.focus();",
+      "Pick a different diameter",
+      "Enter the new diameter above, then Finish.",
+      "→ to "
     ]
   },
   "tradePackValues": {

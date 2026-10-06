@@ -22,9 +22,10 @@
     PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED,
     PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK,
     PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
+    PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
   } = __m_pipe_tables;
   const {
-    panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict,
+    panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
   } = __m_pipe_placement_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
@@ -40,6 +41,14 @@
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
   const guard = loaderGuard(host.readPageFacts());
   if (!guard.ok) { console.warn('[RW] ' + guard.message); return guard.message; }
+  // Safety net: if native no longer has an element we depend on, install nothing and say so (one line).
+  const missing = host.missingIds(PIPE_REQUIRED_IDS);
+  if (missing.length) {
+    console.warn('[RW] ' + PIPE_NATIVE_CHANGED_MESSAGE + '. Missing on this page: ' + missing.join(', '));
+    RW._pipeMissing = missing;
+    if (RW._commitStatus) RW._commitStatus(PIPE_NATIVE_CHANGED_MESSAGE);
+    return PIPE_NATIVE_CHANGED_MESSAGE;
+  }
   RW.vpipe = true;
 
   const FORBIDDEN = { forbiddenIds: PIPE_FORBIDDEN_BUTTON_IDS, forbiddenCaptureIds: PIPE_FORBIDDEN_CAPTURE_IDS };
@@ -298,6 +307,7 @@
     labelGuardUntil = Date.now() + LABEL_GUARD_MS;
     setTimeout(refocusBarOnce, 0);
   }
+  let unknownHintWarned = null;
   const LABEL_GUARD_MS = 700;
   let labelGuardUntil = 0;
   function refocusBarOnce() {
@@ -308,6 +318,10 @@
   // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
   function promptTick() {
     const snap = host.readPanel();
+    // Safety net: a hint we don't recognise means native changed this step. One line, nothing else.
+    const watch = hintWatch({ open: snap.open, hint: snap.hint, prefixes: PIPE_HINT_PREFIXES, lastWarned: unknownHintWarned });
+    unknownHintWarned = watch.hint;
+    if (watch.action === 'warn') { status(PIPE_NATIVE_CHANGED_MESSAGE); endPrompt(); return; }
     const phase = snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed';
     if (phase !== 'label') { prompt.dismissed = false; endPrompt(); return; }
     if (prompt.active || prompt.dismissed) return;
@@ -469,7 +483,9 @@
     if (e.key === ' ' && barEmpty && host.readPanel().open) {
       e.preventDefault(); e.stopImmediatePropagation();
       const snap = host.readPanel();
-      if (panelPhase(snap.hint, PIPE_HINT_PREFIXES) === 'label') reopenPrompt();
+      const phase = panelPhase(snap.hint, PIPE_HINT_PREFIXES);
+      if (phase === 'label') reopenPrompt();
+      else if (phase === 'unknown' && String(snap.hint || '').trim()) status(PIPE_NATIVE_CHANGED_MESSAGE);
       else status('a fitting is being placed: Esc cancels it');
       return;
     }
