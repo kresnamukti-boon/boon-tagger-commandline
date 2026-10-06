@@ -436,5 +436,6 @@ native knows which path called it.
   same. The engineer may want to tag command-line-driven actions.
 - **`data-trade="ductwork"`** is native's value for duct (`TradePack: "ductwork" | "piping"`) but has
   not yet been seen on a live duct page; confirm once before merging.
+- **Repeat-last was dropped (user decision): Space finishes; type the short name to pick again.**
 - **Fixtures** (`test/fixtures/native/`) are deliberately not in git; `test/native-ids.json` is the
   committed record.
