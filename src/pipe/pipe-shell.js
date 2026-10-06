@@ -19,15 +19,22 @@
 
   const {
     PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
-    PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS,
+    PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED,
+    PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK,
+    PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL,
   } = __m_pipe_tables;
+  const {
+    panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict,
+  } = __m_pipe_placement_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
   } = __m_pipe_table_core;
   const { matchCommands, commandBarShouldCapture, spaceRepeatAction } = __m_command_line_core;
   const { createPipeHost } = __m_pipe_host;
 
-  const host = createPipeHost({ doc: document, win: window, ids: PIPE_PAGE_IDS });
+  const host = createPipeHost({
+    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, unavailableMark: PIPE_UNAVAILABLE_MARK,
+  });
 
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
   const guard = loaderGuard(host.readPageFacts());
@@ -65,6 +72,9 @@
   function runEntry(entry) {
     // Blur first: native ignores a tool key while a form field has focus, and the bar's input is one.
     if (inputEl && inputEl.blur) inputEl.blur();
+    // While a placement panel is open only the ways out and the view/undo actions may run.
+    const iso = isolationVerdict({ panelOpen: host.readPanel().open, name: entry.name, allowed: PIPE_ISOLATION_ALLOWED });
+    if (!iso.ok) { status(iso.message); return false; }
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
@@ -94,6 +104,8 @@
 
   /* ---------- dropdown ---------- */
   let menuEl = null, menuItems = [], menuHighlight = -1;
+  // The label prompt for native's Place Fitting panel (Step 2).
+  const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
   const COLORS = { tool: '#a8e6a3', action: '#8ecae6', disabled: '#888' };
 
@@ -136,19 +148,33 @@
     ensureMenu();
     menuEl.innerHTML = '';
     let highlighted = null;
+    if (prompt.active && prompt.header) {
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
+      head.textContent = prompt.header;
+      menuEl.appendChild(head);
+    }
     menuItems.forEach(function(row, i){
       const el = document.createElement('div');
       el.className = 'rw-pipe-item';
-      const e = row.entry;
-      const usable = row.state.usable;
-      let label = e.name + (e.aliases.length ? ' (' + e.aliases.join(',') + ')' : '');
-      if (!usable) label += ' — ' + (row.state.reason || 'not available');
-      el.style.cssText = 'padding:3px 6px;font-size:11px;cursor:pointer;color:' + (usable ? COLORS[e.kind] : COLORS.disabled) + ';'
+      let usable, color, label;
+      if (row.prompt) {
+        usable = row.prompt.kind === 'category' ? row.prompt.usable : row.prompt.entry.usable;
+        color = usable ? COLORS.tool : COLORS.disabled;
+        label = promptLabel(row.prompt);
+      } else {
+        const e = row.entry;
+        usable = row.state.usable;
+        color = usable ? COLORS[e.kind] : COLORS.disabled;
+        label = e.name + (e.aliases.length ? ' (' + e.aliases.join(',') + ')' : '');
+        if (!usable) label += ' — ' + (row.state.reason || 'not available');
+      }
+      el.style.cssText = 'padding:3px 6px;font-size:11px;cursor:pointer;color:' + color + ';'
         + (i === menuHighlight ? 'background:rgba(255,140,0,0.3);' : '');
       el.textContent = label;
       if (i === menuHighlight) highlighted = el;
       el.addEventListener('mousedown', function(ev){ ev.preventDefault(); }); // keep focus through the click
-      el.addEventListener('click', function(){ runAndClear(row.entry); });
+      el.addEventListener('click', function(){ if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
       menuEl.appendChild(el);
     });
     positionMenu();
@@ -163,10 +189,90 @@
     return matchCommands(rows.map(function(r){ return r.entry; }), query).map(function(e){ return byName.get(e.name); });
   }
   function openMenu(query) {
+    if (prompt.active) { refreshPrompt(); return; }
     menuItems = rowsFor(query);
     menuHighlight = menuItems.length ? 0 : -1;
     renderMenu();
   }
+
+  /* ---------- label prompt: choose the fitting in native's Place Fitting panel ---------- */
+  function promptLabel(item) {
+    if (item.kind === 'category') {
+      return item.ports + (item.ports === 1 ? ' port' : ' ports') + (item.usable ? ' (' + item.count + ')' : ' — none available');
+    }
+    const e = item.entry;
+    const names = [e.id].concat(e.aliases.length ? ['(' + e.aliases.join(',') + ')'] : []);
+    return e.label + '  ' + names.join(' ') + (e.usable ? '' : ' — unavailable');
+  }
+  function promptEntries(snap) {
+    return menuEntries({
+      groups: snap.groups, tool: snap.tool, curated: PIPE_FITTING_ALIASES,
+      fixtureTool: PIPE_FIXTURE_TOOL, fixturePrefixes: PIPE_FIXTURE_ID_PREFIXES,
+    });
+  }
+  function refreshPrompt() {
+    const snap = host.readPanel();
+    const step = labelStep({ entries: promptEntries(snap), category: prompt.category, query: inputEl ? inputEl.value : '' });
+    const dia = autoMatchedDiameter(snap.hint, PIPE_AUTOMATCH_PATTERN);
+    const where = step.stage === 'category' ? 'ports: type 1-4 or a name' : (step.category !== null ? step.category + '-port: pick one (Backspace = back)' : 'pick one');
+    prompt.header = step.stage === 'none'
+      ? 'No fitting can be placed for this box. Esc cancels the placement.'
+      : 'Fitting label — ' + where + (dia ? ' — auto-matched ' + dia : '');
+    menuItems = step.items.map(function(item){ return { prompt: item }; });
+    menuHighlight = menuItems.length ? 0 : -1;
+    ensureMenu();
+    if (!menuItems.length) {
+      menuEl.innerHTML = '';
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+      head.textContent = prompt.header + (step.stage === 'none' ? '' : ' (nothing matches)');
+      menuEl.appendChild(head);
+      positionMenu();
+      menuEl.style.display = 'block';
+      return;
+    }
+    renderMenu();
+  }
+  function startPrompt() {
+    const snap = host.readPanel();
+    prompt.active = true; prompt.category = null; prompt.tool = snap.tool;
+    mountBar();
+    if (!inputEl) { prompt.active = false; return; }
+    inputEl.value = '';
+    inputEl.focus();
+    refreshPrompt();
+  }
+  function endPrompt() {
+    if (!prompt.active) return;
+    prompt.active = false; prompt.category = null; prompt.header = '';
+    if (inputEl) inputEl.value = '';
+    hideMenu();
+  }
+  function pickPrompt(item) {
+    const plan = planPick(item);
+    if (plan.action === 'status') { status(plan.message); return; }
+    if (plan.action === 'category') {
+      prompt.category = plan.ports;
+      if (inputEl) inputEl.value = '';
+      refreshPrompt();
+      return;
+    }
+    // Click native's own label button (what a mouse click does). Never Finish: that stays manual.
+    if (!host.clickFamily(plan.id)) { status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
+    status(plan.label + ' chosen');
+    endPrompt();
+    if (inputEl) inputEl.blur();
+  }
+  // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
+  function promptTick() {
+    const snap = host.readPanel();
+    const phase = snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed';
+    if (phase !== 'label') { prompt.dismissed = false; endPrompt(); return; }
+    if (prompt.active || prompt.dismissed) return;
+    if (host.anyDialogOpen()) return;
+    startPrompt();
+  }
+  function reopenPrompt() { prompt.dismissed = false; startPrompt(); }
 
   function clearBar() { if (inputEl) inputEl.value = ''; hideMenu(); }
   function runAndClear(entry) { if (runEntry(entry)) clearBar(); else hideMenu(); }
@@ -216,8 +322,25 @@
       else cycle(e.shiftKey ? -1 : 1);
       // Fill the bar with the highlighted name so Enter and Tab agree on what will run. Setting
       // .value fires no input event, so the list stays put and keeps cycling over the same rows.
-      if (menuHighlight >= 0 && menuItems[menuHighlight]) inputEl.value = menuItems[menuHighlight].entry.name;
+      if (menuHighlight >= 0 && menuItems[menuHighlight]) {
+        const row = menuItems[menuHighlight];
+        inputEl.value = row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
+      }
       return;
+    }
+    if (prompt.active) {
+      if (e.key === 'Enter') {
+        e.preventDefault(); e.stopPropagation();
+        if (menuHighlight >= 0 && menuItems[menuHighlight]) pickPrompt(menuItems[menuHighlight].prompt);
+        else status('nothing matches');
+        return;
+      }
+      if (e.key === 'Backspace' && !inputEl.value && prompt.category !== null) {
+        e.preventDefault();
+        prompt.category = null;
+        refreshPrompt();
+        return;
+      }
     }
     if (e.key === 'Enter') {
       e.preventDefault(); e.stopPropagation();
@@ -234,6 +357,8 @@
       // (cancel the current placement) must still get it.
       if (inputEl.value || (menuEl && menuEl.style.display !== 'none')) {
         e.stopPropagation();
+        // A dismissed prompt stays dismissed until native leaves the label phase (Space brings it back).
+        if (prompt.active) { prompt.dismissed = true; endPrompt(); }
         clearBar();
         inputEl.blur();
       } else {
@@ -269,13 +394,21 @@
       dialogOpen: host.anyDialogOpen(),
       enabled: RW.enabled,
       keyReserved: function(k){ return RESERVED_KEYS.indexOf(k.toLowerCase()) !== -1; },
-      // No piping command or alias starts with a digit, so a bare digit on an empty bar belongs to the page.
-      digitPassthrough: barEmpty,
+      // No tool or action name starts with a digit, so a bare digit on an empty bar belongs to the page,
+      // except while the label prompt is open (1-4 pick a port-count category, 45/90 name an elbow).
+      digitPassthrough: barEmpty && !prompt.active,
     });
     if (!shouldCapture) return;
 
     // AutoCAD's Space: nothing typed -> close the armed tool to select, else repeat the last tool,
     // else show what can be armed.
+    if (e.key === ' ' && barEmpty && host.readPanel().open) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      const snap = host.readPanel();
+      if (panelPhase(snap.hint, PIPE_HINT_PREFIXES) === 'label') reopenPrompt();
+      else status('a fitting is being placed: Esc cancels it');
+      return;
+    }
     if (e.key === ' ' && barEmpty) {
       const armed = currentArmed();
       const action = spaceRepeatAction({
@@ -313,10 +446,12 @@
   mountBar();
   RW._pipeReposition();
   window.addEventListener('resize', RW._pipeReposition);
+  setInterval(promptTick, 250);
 
   RW._pipeTable = currentTable;
   RW._pipeTableInfo = function(){ return derive().info; };
   RW._pipeOwn = own;
+  RW._pipePrompt = prompt;
   const first = derive();
   RW._commitStatus && RW._commitStatus('piping command line ready: ' + first.tools.length + ' tools, '
     + PIPE_GRAPH_ACTIONS.length + ' actions (tools read from the ' + first.info.source + ')');

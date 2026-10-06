@@ -93,3 +93,82 @@ export const PIPE_FORBIDDEN_CAPTURE_IDS = ['submit-graph'];
 export const PIPE_ISOLATION_ALLOWED = [
   'select', 'undo', 'redo', 'zoomfit', 'zoomin', 'zoomout',
 ];
+
+// ---- Placement panel (Step 2: choose the fitting label) ----
+// Native's own ids, classes and hint wording for the "Place Fitting" panel. Used for both the
+// fitting and the fixture tool (native shows one panel for every bounding-box tool). Checked by
+// test/native-ids.test.mjs against saved copies of native's files.
+export const PIPE_PANEL_IDS = {
+  panel: 'graph-pipe-bbox-op-panel',
+  menu: 'graph-pipe-fitting-select-menu',
+  groupLabelClass: 'graph-pipe-fitting-select-group-label',
+  optionSelector: 'button[data-family-id]',
+  warningClass: 'graph-pipe-bbox-unresolved-entry-warning',
+};
+
+// How native's hint line starts in each phase. Matched with "starts with" (native appends extra
+// sentences to some of them), never equality.
+export const PIPE_HINT_PREFIXES = {
+  box: 'Click two opposite corners',
+  label: 'Choose the fitting subtype.',
+  ports: 'Click the detected intersection for',
+  ready: 'Finish inserts this fitting.',
+  submitting: 'Saving pipe and fitting',
+};
+// Native's own words after the auto-matched run diameter, e.g. `Diameter 2" auto-matched from the crossed run.`
+export const PIPE_AUTOMATCH_PATTERN = /Diameter (\S+?)" auto-matched/;
+export const PIPE_UNAVAILABLE_MARK = 'unavailable';
+
+// Friendly names for fittings, keyed by native's family id (approved 2026-10-06). The family id and
+// native's on-screen label always match as well; these are extras. An alias only ever matches
+// against the menu that is open right now, so the same word can mean a fitting in one menu and a
+// fixture in another.
+// Dropped on purpose: ft/tt/st/td (too short; use trapft, traptt, trapst, traptd), rtee/rwye.
+export const PIPE_FITTING_ALIASES = {
+  'pipe-elbow-90-vertical': ['vertelbow'],
+  'pipe-cap': ['cap'],
+  'pipe-plug': ['plug'],
+  'pipe-cleanout': ['co'],
+  'pipe-floor-drain': ['fd', 'drain'],
+  'pipe-hose-bibb': ['hb', 'bibb'],
+  'pipe-hydrant': ['hyd'],
+  'pipe-nozzle': ['noz'],
+  'pipe-elbow-45': ['45', 'el45'],
+  'pipe-elbow-90': ['90', 'el90'],
+  'pipe-elbow-lr-45': ['lr45'],
+  'pipe-elbow-lr-90': ['lr90'],
+  'pipe-elbow-sr-45': ['sr45'],
+  'pipe-elbow-sr-90': ['sr90'],
+  'pipe-elbow-90-reducing': ['90r', 'el90r'],
+  'pipe-tee-eq-vertical': ['vtee'],
+  'pipe-tee-reducing-vertical': ['vteer'],
+  'pipe-wye-vertical': ['vwye'],
+  'pipe-wye-reducer-vertical': ['vwyer'],
+  'pipe-reducer-concentric': ['reducer', 'red', 'concentric'],
+  'pipe-reducer-eccentric': ['ecc', 'eccentric'],
+  'pipe-union': ['union'],
+  'pipe-coupling': ['coupling', 'cpl'],
+  'pipe-strainer-y': ['ystrainer'],
+  'pipe-strainer-t': ['tstrainer'],
+  'pipe-trap-p': ['ptrap'],
+  'pipe-trap-s': ['strap'],
+  'pipe-trap-steam-ft': ['trapft'],
+  'pipe-trap-steam-tt': ['traptt'],
+  'pipe-trap-steam-st': ['trapst'],
+  'pipe-trap-steam-td': ['traptd'],
+  'pipe-expansion-joint-bellows': ['bellows'],
+  'pipe-expansion-joint-slip': ['slip'],
+  'pipe-tee-eq': ['tee', 'teeeq'],
+  'pipe-tee-reducing': ['teer'],
+  'pipe-wye': ['wye'],
+  'pipe-sanitary-tee': ['santee', 'stee'],
+  'pipe-wye-reducer': ['wyer'],
+  'pipe-cross': ['cross'],
+};
+
+// The fixture tool's own labels are named by native's family ids (wc, lav, sh, ur, ks, ms, rd, fd,
+// hb). The family id is derived from what the open menu says, after stripping one of these
+// prefixes; nothing about which fixtures exist is hardcoded here.
+export const PIPE_FIXTURE_ID_PREFIXES = ['pipe-fixture-', 'fixture-', 'pipe-'];
+export const PIPE_FIXTURE_TOOL = 'fixture';
+export const PIPE_FITTING_TOOL = 'fitting';

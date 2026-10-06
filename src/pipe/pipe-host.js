@@ -4,7 +4,7 @@
 // page and against the Node test harness.
 import { isElementVisible } from '../features/actions.js';
 
-export function createPipeHost({ doc, win, ids }) {
+export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -26,6 +26,11 @@ export function createPipeHost({ doc, win, ids }) {
       return railButtons().find((el) => String(el.getAttribute('data-tool') || '').trim().toLowerCase() === entry.name) || null;
     }
     return entry.btn ? doc.getElementById(entry.btn) : null;
+  }
+
+  function activeTool() {
+    const debug = win.__graphDebug;
+    return debug && typeof debug.activeTool === 'string' ? debug.activeTool : null;
   }
 
   return {
@@ -76,9 +81,43 @@ export function createPipeHost({ doc, win, ids }) {
       return true;
     },
 
-    readActiveTool() {
-      const debug = win.__graphDebug;
-      return debug && typeof debug.activeTool === 'string' ? debug.activeTool : null;
+    readActiveTool: activeTool,
+
+    // Plain snapshot of native's "Place Fitting" panel (see pipe-placement-core.js for the shape).
+    // The menu is rebuilt by native even while it is hidden, so it is read straight from the DOM.
+    readPanel() {
+      const panel = doc.getElementById(panelIds.panel);
+      if (!panel || panel.hidden) return { open: false, tool: null, hint: '', groups: [] };
+      let hint = '';
+      for (const child of panel.children || []) {
+        if (child.tagName === 'P' && String(child.className || '').indexOf(panelIds.warningClass) === -1) { hint = text(child); break; }
+      }
+      const menu = doc.getElementById(panelIds.menu);
+      const groups = [];
+      if (menu) {
+        for (const section of menu.children || []) {
+          const heading = Array.from(section.children || []).find((c) => String(c.className || '').indexOf(panelIds.groupLabelClass) !== -1);
+          const headingText = text(heading);
+          const ports = parseInt(headingText, 10);
+          const options = Array.from(section.querySelectorAll(panelIds.optionSelector)).map((btn) => ({
+            id: btn.getAttribute('data-family-id') || '',
+            label: text(btn.children && btn.children[0]),
+            usable: !btn.disabled,
+          }));
+          groups.push({ ports: isNaN(ports) ? 0 : ports, usable: headingText.indexOf(unavailableMark) === -1, options });
+        }
+      }
+      return { open: true, tool: activeTool(), hint, groups };
+    },
+
+    // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.
+    clickFamily(id) {
+      const menu = doc.getElementById(panelIds.menu);
+      if (!menu) return false;
+      const btn = Array.from(menu.querySelectorAll(panelIds.optionSelector)).find((b) => b.getAttribute('data-family-id') === id);
+      if (!btn || btn.disabled) return false;
+      btn.click();
+      return true;
     },
 
     anyDialogOpen() {

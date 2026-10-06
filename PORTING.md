@@ -280,11 +280,12 @@ every id/class/string we rely on and `test/native-ids.test.mjs` checks them.
 | `src/pipe/pipe-tables.js` (`PIPE_GRAPH_ACTIONS`, `PIPE_FORBIDDEN_BUTTON_IDS`, `PIPE_ISOLATION_ALLOWED`, `PIPE_TOOL_ALIASES`) | next to `buildPipeCommandTable` in `pipe-command-line.js`, shaped like `duct-command-line.js`'s `DUCT_*` exports | yes: pure data, same entry shape `{ id, name, label, aliases, btn }` |
 | `src/core/pipe-table-core.js`: `entryState`, `planEntry`, `planQuery`, `listEntries` | the dispatch verdict half of `command-line-core.js` / `command-line-ui.js` | yes, as a superset (disabled-with-reason rows, forbidden controls refused twice) |
 | `src/core/pipe-table-core.js`: `deriveTools`, `reconcileArmed`, `loaderGuard` | none | **no.** `deriveTools` reads the live rail only because a pasted script can't see native's contract (native already has `visiblePipeTools(contract, mode)`); `reconcileArmed` and `loaderGuard` exist because we are an outside script |
+| `src/core/pipe-placement-core.js` (Step 2): `labelStep`, `menuEntries`, `aliasesFor`, `planPick`, `isolationVerdict` | the Place Fitting panel's label menu in `pipe-session-ui.js` | `labelStep`/`planPick`/`isolationVerdict`: yes, pure. `panelPhase`/`autoMatchedDiameter`: **no**, native reads `bboxController().state.phase` directly instead of its own hint text |
+| `src/pipe/pipe-tables.js` (`PIPE_FITTING_ALIASES`, `PIPE_HINT_PREFIXES`, ...) | beside the family catalog (server contract) | aliases yes; hint prefixes no (we only need them because we are outside) |
 | `src/pipe/pipe-host.js` | none | **no.** Native has its own DOM wiring (`command-line-ui.js`) |
 | `src/pipe/pipe-shell.js` | none | **no** |
 
-(Placement-step files, when they exist, get a row each: pure phase/port-size logic in
-`src/core/pipe-placement-core.js` is the portable part.)
+Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; that is the portable part.
 
 ### What must not be ported
 
@@ -297,14 +298,28 @@ every id/class/string we rely on and `test/native-ids.test.mjs` checks them.
 - Reading the key badge off the rendered rail button: native has `PIPE_TOOL_KEYS`.
 - The loader guard and the "native's bar must be OFF" rule: inside native they don't exist.
 
-### Open decisions (as of Step 1)
+### Step 2 notes (label pick)
+
+- Native shows ONE panel ("Place Fitting") for every bounding-box tool (fitting, fixture, valve,
+  equipment, terminal, transition, cut). Our prompt opens by itself when native's hint says "Choose
+  the fitting subtype." (phase `label`) and picks by clicking native's own `button[data-family-id]`.
+  It never clicks Finish.
+- Aliases are matched only against the menu that is open right now. Fitting menu: the curated
+  `PIPE_FITTING_ALIASES` (keyed by native family id). Fixture menu: the family id with `pipe-` /
+  `fixture-` removed (the user's `wc, lav, sh, ur, ks, ms, rd, fd, hb`); which fixtures exist is
+  never hardcoded. **Unverified live:** the real fixture family ids (read-only check pending).
+- Dropped on purpose: `ft/tt/st/td` (use `trapft`, `traptt`, `trapst`, `traptd`), `rtee`, `rwye`.
+- While a placement panel is open, `PIPE_ISOLATION_ALLOWED` is now enforced in code (`runEntry`).
+- Valves and equipment get no extra aliases yet (their menus still match by id and label).
+
+### Open decisions (as of Step 2)
 
 - **Aliases.** `PIPE_TOOL_ALIASES` was proposed, not approved (to be reviewed with the engineer).
   `fit` stays `zoomfit`'s.
 - **Finish / Cancel** (`graph-finish-route`, `graph-cancel-route`) are in `PIPE_FORBIDDEN_BUTTON_IDS`
   for now. The placement step has to decide how Enter-at-ready reaches Finish deliberately.
-- **Isolation.** `PIPE_ISOLATION_ALLOWED` is shipped as data but not enforced: Step 1 has no panel
-  state to isolate. It applies once the placement panel is open.
+- **Isolation.** `PIPE_ISOLATION_ALLOWED` is enforced while the placement panel is open (Step 2).
+  Finish/Cancel stay forbidden until Step 3 decides how Enter-at-ready reaches Finish.
 - **No hardcoded tool table.** Unlike duct, there is no fallback table when the rail can't be read;
   the loader refuses ("no tool rail found"). `PIPE_FALLBACK_KEYS` only supplies a key for a rail
   button with no readable badge. Note native's badge falls back to the tool id's first letter when

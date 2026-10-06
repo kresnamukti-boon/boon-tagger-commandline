@@ -97,8 +97,22 @@ the same way as above, on a **piping** page.
 - **What it will never click**, enforced in code and not only by leaving them out of the list: Save,
   the recording controls, the top-bar **Submit**, "Submit anyway", Finish and Cancel, and the system
   create/rename/import/assign buttons.
-- **Not built yet:** picking a fitting label after the box, port prompts, and port sizes (next steps).
-  The panel is not draggable yet.
+- **Picking a fitting** (Step 2). Arm `fitting` (or `fixture`), draw the box as usual. When the app
+  reaches "Choose the fitting subtype." the bar opens a prompt by itself:
+  - it lists the port counts that have something you can place (1/2/3/4 ports; the ones with nothing
+    available are greyed). Press the number and Enter, or type a name. With only one usable port
+    count it goes straight to the fittings.
+  - typing a name works at any point: the id, the on-screen label, or a short name (`tee`, `wye`,
+    `cross`, `90`, `el90`, `45`, `lr90`, `90r`, `reducer`, `cap`, `trapft`, ...). Names only match the
+    menu that is open right now (in the fixture menu `fd` is the fixture, in the fitting menu it is
+    the floor drain). Enter picks the top row, which is always the best match.
+  - Backspace on an empty bar steps back to the port counts. **Esc** closes the prompt; a second Esc
+    reaches the app and cancels the placement. **Space** on an empty bar brings the prompt back.
+  - The prompt only clicks the app's own label button. It never presses Finish.
+  - While a fitting is being placed, only `select`, `undo`, `redo`, `zoomfit`, `zoomin`, `zoomout`
+    run; other commands are refused with a reason.
+- **Not built yet:** port prompts, port sizes, and Enter-to-finish (next steps). The panel is not
+  draggable yet.
 - **Checks:** `node verify_pipe_cmdline.js` (a fake page driving the real built files),
   `node --test "test/**/*.test.mjs"` (includes `test/native-ids.test.mjs`, which checks every native
   id/class/string we rely on against saved copies of native's files in `test/fixtures/native/`; that

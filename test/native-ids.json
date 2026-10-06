@@ -41,7 +41,8 @@
       "graph-rename-system",
       "graph-assign-network",
       "graph-finish-route",
-      "graph-cancel-route"
+      "graph-cancel-route",
+      "graph-pipe-bbox-op-panel"
     ],
     "strings": [
       "data-trade=\"piping\"",
@@ -63,7 +64,18 @@
   "pipeSessionUi": {
     "strings": [
       "export const PIPE_TOOL_KEYS",
-      "const SUPPORTED_TOOLS"
+      "const SUPPORTED_TOOLS",
+      "subtypeMenu.id = 'graph-pipe-fitting-select-menu'",
+      "heading.className = 'graph-pipe-fitting-select-group-label'",
+      "bboxUnresolvedEntryWarning.className = 'graph-pipe-bbox-unresolved-entry-warning'",
+      "option.dataset.familyId = family.id",
+      "' · unavailable'",
+      "Click two opposite corners",
+      "Choose the fitting subtype.",
+      "Click the detected intersection for",
+      "Finish inserts this fitting.",
+      "Saving pipe and fitting",
+      "\" auto-matched from the crossed run."
     ]
   },
   "tradePackValues": {

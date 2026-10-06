@@ -49,7 +49,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   const byId = {};
   const listeners = { window: {}, document: {} };
   const warnings = [];
-  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [] };
+  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [] };
 
   function el(tag) {
     const own = {};
@@ -78,6 +78,11 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
         this.dispatch({ type: 'click', target: this });
       },
       setSelectionRange() {},
+      querySelectorAll(sel) {
+        const out = [];
+        if (sel === 'button[data-family-id]') walk(this, (n) => { if (n.tagName === 'BUTTON' && 'data-family-id' in n.attrs) out.push(n); });
+        return out;
+      },
       getBoundingClientRect() { return { left: 100, top: 100, right: 700, bottom: 500, width: 600, height: 400 }; },
     };
     return node;
@@ -144,6 +149,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   const context = vm.createContext({
     window: win, document: doc, console: { log() {}, warn(m) { warnings.push(String(m)); }, error() {} },
     setTimeout, clearTimeout, Date, Math, __graphDebug: win.__graphDebug,
+    setInterval(fn) { state.timers.push(fn); return state.timers.length; },
   });
 
   // key events: window capture -> document capture -> target's own listeners (like a real dispatch)
@@ -160,7 +166,35 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
     if (!evt.immediateStopped) target.dispatch(evt);
     return evt;
   }
-  return { doc, win, RW, state, warnings, context, press, el, byId, listeners, panel, root };
+  // Native's "Place Fitting" panel, built the way pipe-session-ui.js builds it. groups: [{ports, usable, ids:[[id,label,usable]]}]
+  function openPanel({ tool = 'fitting', hint = 'Choose the fitting subtype.', groups = [] } = {}) {
+    state.activeTool = tool;
+    const old = byId['graph-pipe-bbox-op-panel'];
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    const pan = el('div'); pan.id = 'graph-pipe-bbox-op-panel';
+    const header = el('div'); const title = el('span'); title.textContent = 'Place Fitting'; header.appendChild(title); pan.appendChild(header);
+    const hintEl = el('p'); hintEl.textContent = hint; pan.appendChild(hintEl);
+    const warn = el('p'); warn.className = 'graph-pipe-bbox-unresolved-entry-warning'; warn.hidden = true; pan.appendChild(warn);
+    const field = el('div'); const menu = el('div'); menu.id = 'graph-pipe-fitting-select-menu'; menu.hidden = true;
+    for (const g of groups) {
+      const section = el('section'); const heading = el('div'); heading.className = 'graph-pipe-fitting-select-group-label';
+      heading.textContent = g.ports + (g.ports === 1 ? ' port' : ' ports') + (g.usable === false ? ' \u00b7 unavailable' : '');
+      section.appendChild(heading);
+      for (const [id, label, usable] of g.ids) {
+        const b = el('button'); b.setAttribute('data-family-id', id); b.disabled = usable === false;
+        const l = el('span'); l.textContent = label; const c = el('span'); c.textContent = String(g.ports);
+        b.appendChild(l); b.appendChild(c);
+        b.addEventListener('click', () => { hintEl.textContent = 'Finish inserts this fitting. The connected pipe resumes from its outlet.'; state.chosen = id; });
+        section.appendChild(b);
+      }
+      menu.appendChild(section);
+    }
+    field.appendChild(menu); pan.appendChild(field);
+    doc.body.appendChild(pan);
+    return { hintEl, pan };
+  }
+  function closePanel() { const pan = byId['graph-pipe-bbox-op-panel']; if (pan) pan.hidden = true; }
+  return { doc, win, RW, state, warnings, context, press, el, byId, listeners, panel, root, openPanel, closePanel, tick() { state.timers.forEach((f) => f()); } };
 }
 
 function loadShell(page) {
@@ -470,6 +504,148 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     await runLoader(DUCT_LOADER, page);
     ok(page.warnings.some((w) => /piping page/.test(w) && /console_loader_pipe/.test(w)), 'duct loader on a piping page: refuses, naming the piping loader');
     ok(!page.RW.vcmd && !page.listeners.document.keydown && !page.listeners.window.keydown, 'and installs nothing (no listeners, no panel changes)');
+  }
+
+  /* ----- Step 2: choosing the fitting label in native's Place Fitting panel ----- */
+  const FITTING_GROUPS = [
+    { ports: 3, ids: [['pipe-tee-eq', 'Tee Eq'], ['pipe-tee-reducing', 'Tee Reducing'], ['pipe-wye', 'Wye'], ['pipe-sanitary-tee', 'Sanitary Tee'], ['pipe-wye-reducer', 'Wye Reducer']] },
+    { ports: 4, ids: [['pipe-cross', 'Cross']] },
+    { ports: 1, usable: false, ids: [['pipe-cap', 'Cap', false], ['pipe-floor-drain', 'Floor Drain', false]] },
+    { ports: 2, usable: false, ids: [['pipe-elbow-90', 'Elbow 90', false], ['pipe-elbow-45', 'Elbow 45', false]] },
+  ];
+  {
+    const page = makePage();
+    loadShell(page);
+    page.tick();
+    ok(!page.RW._pipePrompt.active, 'no panel: no prompt');
+    page.openPanel({ groups: FITTING_GROUPS });
+    page.tick();
+    ok(page.RW._pipePrompt.active, 'panel in the label phase: the prompt opens by itself');
+    eq(page.state.activeElement && page.state.activeElement.id, 'rw-pipe-input', 'and takes the keyboard');
+    const rows = menuRows(page);
+    ok(/ports: type 1-4/.test(rows[0]), 'header explains the first step');
+    eq(rows.slice(1).map((r) => r.replace(/ .*/, '')), ['3', '4', '1', '2'], 'categories: usable first (3, 4), then the unusable ones (1, 2)');
+    ok(/1 port — none available/.test(rows[3]) && /2 ports — none available/.test(rows[4]), 'unusable categories are shown greyed with a reason');
+    ok(!page.state.clicks.includes('graph-finish-route'), 'nothing pressed Finish');
+  }
+  {
+    // digit picks a category, Enter picks the fitting; native's own label button is what gets clicked
+    const page = makePage(); loadShell(page); page.openPanel({ groups: FITTING_GROUPS }); page.tick();
+    typeText(page, '3'); page.press(input(page), 'Enter');
+    eq(page.RW._pipePrompt.category, 3, '"3" + Enter chooses the 3-port category');
+    const rows = menuRows(page);
+    ok(/3-port/.test(rows[0]) && /Tee Eq/.test(rows[1]) && /Sanitary Tee/.test(rows[4]), 'it then lists the 3-port fittings');
+    ok(/pipe-tee-eq \(tee,teeeq\)/.test(rows[1]), 'with the id and the approved aliases shown');
+    page.press(input(page), 'Backspace');
+    eq(page.RW._pipePrompt.category, null, 'Backspace on an empty bar goes back to the categories');
+    typeText(page, '3'); page.press(input(page), 'Enter'); page.press(input(page), 'ArrowDown'); page.press(input(page), 'Enter');
+    eq(page.state.chosen, 'pipe-tee-reducing', 'the highlighted fitting is chosen by clicking the real label button');
+    ok(!page.RW._pipePrompt.active && /Tee Reducing chosen/.test(lastStatus(page)), 'the prompt ends and says what was chosen');
+    ok(!page.state.clicks.includes('graph-finish-route') && !page.state.clicks.includes('graph-save-commands'), 'Finish and Save are never touched');
+  }
+  {
+    // typing a fitting name picks it directly; unusable ones are refused
+    const page = makePage(); loadShell(page); page.openPanel({ groups: FITTING_GROUPS }); page.tick();
+    typeText(page, 'tee'); page.press(input(page), 'Enter');
+    eq(page.state.chosen, 'pipe-tee-eq', '"tee" + Enter picks Tee Eq directly (no category step)');
+  }
+  {
+    const page = makePage(); loadShell(page); page.openPanel({ groups: FITTING_GROUPS }); page.tick();
+    typeText(page, 'wyer'); page.press(input(page), 'Enter');
+    eq(page.state.chosen, 'pipe-wye-reducer', 'alias "wyer" picks Wye Reducer');
+  }
+  {
+    const page = makePage(); loadShell(page); page.openPanel({ groups: FITTING_GROUPS }); page.tick();
+    typeText(page, 'cap'); page.press(input(page), 'Enter');
+    ok(page.state.chosen === undefined, 'an unavailable fitting (cap) is not chosen');
+    ok(/no|nothing/.test(lastStatus(page)), 'and the bar says so');
+  }
+  {
+    // only one usable category: the category step is skipped
+    const page = makePage(); loadShell(page);
+    page.openPanel({ groups: [{ ports: 2, ids: [['pipe-elbow-90', 'Elbow 90'], ['pipe-elbow-45', 'Elbow 45']] }, { ports: 3, usable: false, ids: [['pipe-tee-eq', 'Tee Eq', false]] }] });
+    page.tick();
+    const rows = menuRows(page);
+    ok(/2-port/.test(rows[0]) && /Elbow 90/.test(rows[1]), 'one usable category: straight to its fittings');
+    typeText(page, '45'); page.press(input(page), 'Enter');
+    eq(page.state.chosen, 'pipe-elbow-45', 'alias "45" picks Elbow 45');
+  }
+  {
+    // the auto-matched run diameter is shown, and the phase is read with "starts with"
+    const page = makePage(); loadShell(page);
+    page.openPanel({ hint: 'Choose the fitting subtype. Diameter 2" auto-matched from the crossed run.', groups: FITTING_GROUPS }); page.tick();
+    ok(/auto-matched 2"/.test(menuRows(page)[0]), 'header shows the auto-matched diameter');
+  }
+  {
+    // nothing usable
+    const page = makePage(); loadShell(page);
+    page.openPanel({ groups: [{ ports: 3, usable: false, ids: [['pipe-tee-eq', 'Tee Eq', false]] }] }); page.tick();
+    ok(/No fitting can be placed/.test(menuRows(page)[0]), 'nothing usable: says so and points at Esc');
+  }
+  {
+    // fixture menu: aliases come from the open menu's own ids
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fixture', groups: [{ ports: 1, ids: [['pipe-wc', 'Wc'], ['pipe-lav', 'Lav'], ['pipe-fd', 'Fd'], ['pipe-hb', 'Hb']] }] }); page.tick();
+    typeText(page, 'fd'); page.press(input(page), 'Enter');
+    eq(page.state.chosen, 'pipe-fd', 'fixture menu: "fd" is the fixture');
+  }
+  {
+    // the same word in the fitting menu is the fitting, not the fixture
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fitting', groups: [{ ports: 1, ids: [['pipe-floor-drain', 'Floor Drain'], ['pipe-cap', 'Cap']] }] }); page.tick();
+    typeText(page, 'fd'); page.press(input(page), 'Enter');
+    eq(page.state.chosen, 'pipe-floor-drain', 'fitting menu: "fd" is Floor Drain');
+  }
+  {
+    // Escape: first Esc closes our prompt and swallows the key, second reaches native (cancel); the prompt stays closed
+    const page = makePage(); loadShell(page); page.openPanel({ groups: FITTING_GROUPS }); page.tick();
+    const e1 = page.press(input(page), 'Escape');
+    ok(e1.propagationStopped && !page.RW._pipePrompt.active, 'first Esc closes the prompt and is swallowed');
+    page.tick();
+    ok(!page.RW._pipePrompt.active, 'the prompt does not pop straight back open');
+    const e2 = page.press(page.doc.body, 'Escape');
+    ok(!e2.propagationStopped, 'second Esc is left alone, so native can cancel the placement');
+    page.press(page.doc.body, ' ');
+    ok(page.RW._pipePrompt.active, 'Space brings the prompt back');
+    page.closePanel(); page.tick();
+    ok(!page.RW._pipePrompt.active && !menuShown(page), 'when native closes the panel the prompt goes away');
+  }
+  {
+    // a dismissed prompt comes back for the NEXT label phase (a new placement), not the same one
+    const page = makePage(); loadShell(page); const h = page.openPanel({ groups: FITTING_GROUPS }); page.tick();
+    page.press(input(page), 'Escape'); page.tick();
+    h.hintEl.textContent = 'Click two opposite corners around the fitting on the drawing.'; page.tick();
+    h.hintEl.textContent = 'Choose the fitting subtype.'; page.tick();
+    ok(page.RW._pipePrompt.active, 'after native leaves and re-enters the label phase the prompt opens again');
+  }
+  {
+    // a disabled label is never clicked, even if our own list were stale
+    const page = makePage(); loadShell(page);
+    page.openPanel({ groups: [{ ports: 3, ids: [['pipe-tee-eq', 'Tee Eq'], ['pipe-wye', 'Wye']] }] }); page.tick();
+    typeText(page, 'tee');
+    page.byId['graph-pipe-fitting-select-menu'].children[0].children.slice(1).forEach((b) => { b.disabled = true; });
+    page.press(input(page), 'Enter');
+    ok(page.state.chosen === undefined && !/ chosen$/.test(lastStatus(page)), 'a label that went disabled after we listed it is not chosen, and the bar does not claim it was');
+  }
+  {
+    // prompts only run in the label phase
+    const page = makePage(); loadShell(page);
+    for (const hint of ['Click two opposite corners around the fitting on the drawing.', 'Click the detected intersection for outlet.', 'Finish inserts this fitting.', 'Saving pipe and fitting…']) {
+      page.openPanel({ hint, groups: FITTING_GROUPS }); page.tick();
+      ok(!page.RW._pipePrompt.active, 'no prompt while native says: ' + hint.slice(0, 30));
+    }
+  }
+  {
+    // isolation: while a placement panel is open, other tools are refused in code; the ways out still work
+    const page = makePage(); loadShell(page);
+    page.openPanel({ hint: 'Finish inserts this fitting.', groups: FITTING_GROUPS });
+    page.state.clicks.length = 0;
+    eq(page.RW.runCommand('route'), false, 'route refused while a fitting is open');
+    ok(/finish or cancel the fitting/.test(lastStatus(page)) && !page.state.clicks.length, 'with a reason, and no click');
+    eq(page.RW.runCommand('zoomin'), true, 'zoomin is still allowed');
+    eq(page.RW.runCommand('select'), true, 'select is still allowed');
+    page.closePanel();
+    eq(page.RW.runCommand('route'), true, 'with the panel closed, route works again');
   }
 
   console.log(`${pass} passed, ${fail} failed`);

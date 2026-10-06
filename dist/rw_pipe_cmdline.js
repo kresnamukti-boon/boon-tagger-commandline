@@ -96,7 +96,86 @@ const PIPE_ISOLATION_ALLOWED = [
   'select', 'undo', 'redo', 'zoomfit', 'zoomin', 'zoomout',
 ];
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED};
+// ---- Placement panel (Step 2: choose the fitting label) ----
+// Native's own ids, classes and hint wording for the "Place Fitting" panel. Used for both the
+// fitting and the fixture tool (native shows one panel for every bounding-box tool). Checked by
+// test/native-ids.test.mjs against saved copies of native's files.
+const PIPE_PANEL_IDS = {
+  panel: 'graph-pipe-bbox-op-panel',
+  menu: 'graph-pipe-fitting-select-menu',
+  groupLabelClass: 'graph-pipe-fitting-select-group-label',
+  optionSelector: 'button[data-family-id]',
+  warningClass: 'graph-pipe-bbox-unresolved-entry-warning',
+};
+
+// How native's hint line starts in each phase. Matched with "starts with" (native appends extra
+// sentences to some of them), never equality.
+const PIPE_HINT_PREFIXES = {
+  box: 'Click two opposite corners',
+  label: 'Choose the fitting subtype.',
+  ports: 'Click the detected intersection for',
+  ready: 'Finish inserts this fitting.',
+  submitting: 'Saving pipe and fitting',
+};
+// Native's own words after the auto-matched run diameter, e.g. `Diameter 2" auto-matched from the crossed run.`
+const PIPE_AUTOMATCH_PATTERN = /Diameter (\S+?)" auto-matched/;
+const PIPE_UNAVAILABLE_MARK = 'unavailable';
+
+// Friendly names for fittings, keyed by native's family id (approved 2026-10-06). The family id and
+// native's on-screen label always match as well; these are extras. An alias only ever matches
+// against the menu that is open right now, so the same word can mean a fitting in one menu and a
+// fixture in another.
+// Dropped on purpose: ft/tt/st/td (too short; use trapft, traptt, trapst, traptd), rtee/rwye.
+const PIPE_FITTING_ALIASES = {
+  'pipe-elbow-90-vertical': ['vertelbow'],
+  'pipe-cap': ['cap'],
+  'pipe-plug': ['plug'],
+  'pipe-cleanout': ['co'],
+  'pipe-floor-drain': ['fd', 'drain'],
+  'pipe-hose-bibb': ['hb', 'bibb'],
+  'pipe-hydrant': ['hyd'],
+  'pipe-nozzle': ['noz'],
+  'pipe-elbow-45': ['45', 'el45'],
+  'pipe-elbow-90': ['90', 'el90'],
+  'pipe-elbow-lr-45': ['lr45'],
+  'pipe-elbow-lr-90': ['lr90'],
+  'pipe-elbow-sr-45': ['sr45'],
+  'pipe-elbow-sr-90': ['sr90'],
+  'pipe-elbow-90-reducing': ['90r', 'el90r'],
+  'pipe-tee-eq-vertical': ['vtee'],
+  'pipe-tee-reducing-vertical': ['vteer'],
+  'pipe-wye-vertical': ['vwye'],
+  'pipe-wye-reducer-vertical': ['vwyer'],
+  'pipe-reducer-concentric': ['reducer', 'red', 'concentric'],
+  'pipe-reducer-eccentric': ['ecc', 'eccentric'],
+  'pipe-union': ['union'],
+  'pipe-coupling': ['coupling', 'cpl'],
+  'pipe-strainer-y': ['ystrainer'],
+  'pipe-strainer-t': ['tstrainer'],
+  'pipe-trap-p': ['ptrap'],
+  'pipe-trap-s': ['strap'],
+  'pipe-trap-steam-ft': ['trapft'],
+  'pipe-trap-steam-tt': ['traptt'],
+  'pipe-trap-steam-st': ['trapst'],
+  'pipe-trap-steam-td': ['traptd'],
+  'pipe-expansion-joint-bellows': ['bellows'],
+  'pipe-expansion-joint-slip': ['slip'],
+  'pipe-tee-eq': ['tee', 'teeeq'],
+  'pipe-tee-reducing': ['teer'],
+  'pipe-wye': ['wye'],
+  'pipe-sanitary-tee': ['santee', 'stee'],
+  'pipe-wye-reducer': ['wyer'],
+  'pipe-cross': ['cross'],
+};
+
+// The fixture tool's own labels are named by native's family ids (wc, lav, sh, ur, ks, ms, rd, fd,
+// hb). The family id is derived from what the open menu says, after stripping one of these
+// prefixes; nothing about which fixtures exist is hardcoded here.
+const PIPE_FIXTURE_ID_PREFIXES = ['pipe-fixture-', 'fixture-', 'pipe-'];
+const PIPE_FIXTURE_TOOL = 'fixture';
+const PIPE_FITTING_TOOL = 'fitting';
+
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -146,7 +225,7 @@ const __m_pipe_host = (function(){
 // page and against the Node test harness.
 const { isElementVisible } = __m_actions;
 
-function createPipeHost({ doc, win, ids }) {
+function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -168,6 +247,11 @@ function createPipeHost({ doc, win, ids }) {
       return railButtons().find((el) => String(el.getAttribute('data-tool') || '').trim().toLowerCase() === entry.name) || null;
     }
     return entry.btn ? doc.getElementById(entry.btn) : null;
+  }
+
+  function activeTool() {
+    const debug = win.__graphDebug;
+    return debug && typeof debug.activeTool === 'string' ? debug.activeTool : null;
   }
 
   return {
@@ -218,9 +302,43 @@ function createPipeHost({ doc, win, ids }) {
       return true;
     },
 
-    readActiveTool() {
-      const debug = win.__graphDebug;
-      return debug && typeof debug.activeTool === 'string' ? debug.activeTool : null;
+    readActiveTool: activeTool,
+
+    // Plain snapshot of native's "Place Fitting" panel (see pipe-placement-core.js for the shape).
+    // The menu is rebuilt by native even while it is hidden, so it is read straight from the DOM.
+    readPanel() {
+      const panel = doc.getElementById(panelIds.panel);
+      if (!panel || panel.hidden) return { open: false, tool: null, hint: '', groups: [] };
+      let hint = '';
+      for (const child of panel.children || []) {
+        if (child.tagName === 'P' && String(child.className || '').indexOf(panelIds.warningClass) === -1) { hint = text(child); break; }
+      }
+      const menu = doc.getElementById(panelIds.menu);
+      const groups = [];
+      if (menu) {
+        for (const section of menu.children || []) {
+          const heading = Array.from(section.children || []).find((c) => String(c.className || '').indexOf(panelIds.groupLabelClass) !== -1);
+          const headingText = text(heading);
+          const ports = parseInt(headingText, 10);
+          const options = Array.from(section.querySelectorAll(panelIds.optionSelector)).map((btn) => ({
+            id: btn.getAttribute('data-family-id') || '',
+            label: text(btn.children && btn.children[0]),
+            usable: !btn.disabled,
+          }));
+          groups.push({ ports: isNaN(ports) ? 0 : ports, usable: headingText.indexOf(unavailableMark) === -1, options });
+        }
+      }
+      return { open: true, tool: activeTool(), hint, groups };
+    },
+
+    // Click one label in native's own menu (what a mouse click would do). False if it isn't there or is disabled.
+    clickFamily(id) {
+      const menu = doc.getElementById(panelIds.menu);
+      if (!menu) return false;
+      const btn = Array.from(menu.querySelectorAll(panelIds.optionSelector)).find((b) => b.getAttribute('data-family-id') === id);
+      if (!btn || btn.disabled) return false;
+      btn.click();
+      return true;
     },
 
     anyDialogOpen() {
@@ -621,6 +739,146 @@ function loaderGuard(facts) {
 return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard};
 })();
 
+// ===== src/core/pipe-placement-core.js =====
+const __m_pipe_placement_core = (function(){
+// Pure logic for choosing a fitting label in native's "Place Fitting" panel. Takes a plain snapshot
+// of that panel (read by src/pipe/pipe-host.js) and returns what the bar should show and what a
+// typed word means. No DOM, no clicks: the host layer does those.
+//
+// Snapshot shape (all plain data):
+//   { open, tool, hint, groups: [{ ports, usable, options: [{ id, label, usable }] }] }
+const { matchCommands } = __m_command_line_core;
+
+function lower(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+// Which phase native's hint line says it is in. "Starts with", because native appends extra
+// sentences (auto-matched diameter, per-port notes) to the same line.
+function panelPhase(hint, prefixes) {
+  const text = String(hint ?? '').trim();
+  for (const phase of Object.keys(prefixes ?? {})) {
+    if (text.startsWith(prefixes[phase])) return phase;
+  }
+  return 'unknown';
+}
+
+// The auto-matched run diameter native mentions in the hint (e.g. `2"`), or null.
+function autoMatchedDiameter(hint, pattern) {
+  const m = String(hint ?? '').match(pattern);
+  return m ? m[1] + '"' : null;
+}
+
+// Extra names for one family in the menu that is open now. Fitting menu: the curated table.
+// Fixture menu: the family id with its prefix removed (native's own short ids, wc, lav, ...).
+function aliasesFor({ id, tool, curated, fixtureTool, fixturePrefixes }) {
+  const key = lower(id);
+  if (tool === fixtureTool) {
+    for (const prefix of fixturePrefixes ?? []) {
+      if (key.startsWith(prefix) && key.length > prefix.length) return [key.slice(prefix.length)];
+    }
+    return [];
+  }
+  return (curated?.[id] ?? []).map(lower);
+}
+
+// Flat list of every fitting in the open menu as table entries (name = native's family id).
+function menuEntries({ groups, tool, curated, fixtureTool, fixturePrefixes }) {
+  const entries = [];
+  for (const group of groups ?? []) {
+    for (const option of group.options ?? []) {
+      entries.push({
+        id: option.id, name: lower(option.id), label: String(option.label ?? option.id),
+        aliases: aliasesFor({ id: option.id, tool, curated, fixtureTool, fixturePrefixes }),
+        ports: group.ports, usable: option.usable === true && group.usable !== false,
+      });
+    }
+  }
+  return entries;
+}
+
+// Port-count categories with how many fittings in each can be picked right now.
+function categoriesOf(entries) {
+  const byPorts = new Map();
+  for (const e of entries) {
+    const c = byPorts.get(e.ports) ?? { ports: e.ports, count: 0, usableCount: 0 };
+    c.count += 1;
+    if (e.usable) c.usableCount += 1;
+    byPorts.set(e.ports, c);
+  }
+  return Array.from(byPorts.values()).sort((a, b) => a.ports - b.ports);
+}
+
+// Usable first, original order kept inside each half.
+function usableFirst(entries) {
+  return entries.filter((e) => e.usable).concat(entries.filter((e) => !e.usable));
+}
+
+// What the bar should list, given what has been typed so far.
+//   category   null, or the port count already chosen
+//   query      the text typed in the bar
+// Returns { stage: 'none' | 'category' | 'label', category, items }.
+// Item kinds: { kind: 'category', ports, count, usable } and { kind: 'fitting', entry }.
+// Enter takes the first item, so ranking decides what "typing a fitting name picks it directly"
+// means: an exact id/label/alias is always first.
+function labelStep({ entries, category = null, query = '' }) {
+  const usableAny = entries.some((e) => e.usable);
+  if (!usableAny) return { stage: 'none', category: null, items: [] };
+  const q = lower(query);
+  const cats = categoriesOf(entries);
+  const usableCats = cats.filter((c) => c.usableCount > 0);
+
+  if (category !== null) {
+    const pool = entries.filter((e) => e.ports === category);
+    const ranked = q ? matchCommands(pool, q) : pool;
+    return { stage: 'label', category, items: usableFirst(ranked).map((entry) => ({ kind: 'fitting', entry })) };
+  }
+
+  if (q) {
+    const matches = usableFirst(matchCommands(entries, q)).map((entry) => ({ kind: 'fitting', entry }));
+    // A single digit that names a usable category (1-4 ports) is listed first, so "3" + Enter picks
+    // the 3-port category while "45" (typed on past the 4) still reaches the 45-degree elbow.
+    if (/^[0-9]$/.test(q)) {
+      const hit = usableCats.find((c) => String(c.ports) === q);
+      if (hit) return { stage: 'category', category: null, items: [{ kind: 'category', ports: hit.ports, count: hit.usableCount, usable: true }, ...matches] };
+    }
+    return { stage: 'label', category: null, items: matches };
+  }
+
+  // Nothing typed. One usable category: skip the category step.
+  if (usableCats.length === 1) {
+    const only = usableCats[0].ports;
+    const pool = entries.filter((e) => e.ports === only);
+    return { stage: 'label', category: only, items: usableFirst(pool).map((entry) => ({ kind: 'fitting', entry })) };
+  }
+  const items = usableCats.map((c) => ({ kind: 'category', ports: c.ports, count: c.usableCount, usable: true }))
+    .concat(cats.filter((c) => c.usableCount === 0).map((c) => ({ kind: 'category', ports: c.ports, count: 0, usable: false })));
+  return { stage: 'category', category: null, items };
+}
+
+// What Enter does with a chosen item.
+function planPick(item) {
+  if (!item) return { action: 'status', message: 'nothing matches' };
+  if (item.kind === 'category') {
+    return item.usable
+      ? { action: 'category', ports: item.ports }
+      : { action: 'status', message: item.ports + '-port fittings: none available for this box' };
+  }
+  if (!item.entry.usable) return { action: 'status', message: item.entry.label + ': not available for this box' };
+  return { action: 'choose', id: item.entry.id, label: item.entry.label };
+}
+
+// Isolation while a placement panel is open: only the ways out and the view/undo actions run.
+// `allowed` is PIPE_ISOLATION_ALLOWED. Fails closed: an unknown name is refused.
+function isolationVerdict({ panelOpen, name, allowed }) {
+  if (!panelOpen) return { ok: true };
+  if ((allowed ?? []).includes(lower(name))) return { ok: true };
+  return { ok: false, message: lower(name) + ': finish or cancel the fitting first (Esc cancels it)' };
+}
+
+return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict};
+})();
+
 // ===== src/pipe/pipe-shell.js =====
 // RW vpipe: AutoCAD-style command line for the PIPING graph page. Type a tool name (or its key
 // letter, or an alias) from anywhere on the page and the real tool-rail button is clicked; type an
@@ -643,15 +901,22 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
 
   const {
     PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
-    PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS,
+    PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_ISOLATION_ALLOWED,
+    PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK,
+    PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL,
   } = __m_pipe_tables;
+  const {
+    panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict,
+  } = __m_pipe_placement_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
   } = __m_pipe_table_core;
   const { matchCommands, commandBarShouldCapture, spaceRepeatAction } = __m_command_line_core;
   const { createPipeHost } = __m_pipe_host;
 
-  const host = createPipeHost({ doc: document, win: window, ids: PIPE_PAGE_IDS });
+  const host = createPipeHost({
+    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, unavailableMark: PIPE_UNAVAILABLE_MARK,
+  });
 
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
   const guard = loaderGuard(host.readPageFacts());
@@ -689,6 +954,9 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
   function runEntry(entry) {
     // Blur first: native ignores a tool key while a form field has focus, and the bar's input is one.
     if (inputEl && inputEl.blur) inputEl.blur();
+    // While a placement panel is open only the ways out and the view/undo actions may run.
+    const iso = isolationVerdict({ panelOpen: host.readPanel().open, name: entry.name, allowed: PIPE_ISOLATION_ALLOWED });
+    if (!iso.ok) { status(iso.message); return false; }
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
@@ -718,6 +986,8 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
 
   /* ---------- dropdown ---------- */
   let menuEl = null, menuItems = [], menuHighlight = -1;
+  // The label prompt for native's Place Fitting panel (Step 2).
+  const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
   const COLORS = { tool: '#a8e6a3', action: '#8ecae6', disabled: '#888' };
 
@@ -760,19 +1030,33 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
     ensureMenu();
     menuEl.innerHTML = '';
     let highlighted = null;
+    if (prompt.active && prompt.header) {
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
+      head.textContent = prompt.header;
+      menuEl.appendChild(head);
+    }
     menuItems.forEach(function(row, i){
       const el = document.createElement('div');
       el.className = 'rw-pipe-item';
-      const e = row.entry;
-      const usable = row.state.usable;
-      let label = e.name + (e.aliases.length ? ' (' + e.aliases.join(',') + ')' : '');
-      if (!usable) label += ' — ' + (row.state.reason || 'not available');
-      el.style.cssText = 'padding:3px 6px;font-size:11px;cursor:pointer;color:' + (usable ? COLORS[e.kind] : COLORS.disabled) + ';'
+      let usable, color, label;
+      if (row.prompt) {
+        usable = row.prompt.kind === 'category' ? row.prompt.usable : row.prompt.entry.usable;
+        color = usable ? COLORS.tool : COLORS.disabled;
+        label = promptLabel(row.prompt);
+      } else {
+        const e = row.entry;
+        usable = row.state.usable;
+        color = usable ? COLORS[e.kind] : COLORS.disabled;
+        label = e.name + (e.aliases.length ? ' (' + e.aliases.join(',') + ')' : '');
+        if (!usable) label += ' — ' + (row.state.reason || 'not available');
+      }
+      el.style.cssText = 'padding:3px 6px;font-size:11px;cursor:pointer;color:' + color + ';'
         + (i === menuHighlight ? 'background:rgba(255,140,0,0.3);' : '');
       el.textContent = label;
       if (i === menuHighlight) highlighted = el;
       el.addEventListener('mousedown', function(ev){ ev.preventDefault(); }); // keep focus through the click
-      el.addEventListener('click', function(){ runAndClear(row.entry); });
+      el.addEventListener('click', function(){ if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
       menuEl.appendChild(el);
     });
     positionMenu();
@@ -787,10 +1071,90 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
     return matchCommands(rows.map(function(r){ return r.entry; }), query).map(function(e){ return byName.get(e.name); });
   }
   function openMenu(query) {
+    if (prompt.active) { refreshPrompt(); return; }
     menuItems = rowsFor(query);
     menuHighlight = menuItems.length ? 0 : -1;
     renderMenu();
   }
+
+  /* ---------- label prompt: choose the fitting in native's Place Fitting panel ---------- */
+  function promptLabel(item) {
+    if (item.kind === 'category') {
+      return item.ports + (item.ports === 1 ? ' port' : ' ports') + (item.usable ? ' (' + item.count + ')' : ' — none available');
+    }
+    const e = item.entry;
+    const names = [e.id].concat(e.aliases.length ? ['(' + e.aliases.join(',') + ')'] : []);
+    return e.label + '  ' + names.join(' ') + (e.usable ? '' : ' — unavailable');
+  }
+  function promptEntries(snap) {
+    return menuEntries({
+      groups: snap.groups, tool: snap.tool, curated: PIPE_FITTING_ALIASES,
+      fixtureTool: PIPE_FIXTURE_TOOL, fixturePrefixes: PIPE_FIXTURE_ID_PREFIXES,
+    });
+  }
+  function refreshPrompt() {
+    const snap = host.readPanel();
+    const step = labelStep({ entries: promptEntries(snap), category: prompt.category, query: inputEl ? inputEl.value : '' });
+    const dia = autoMatchedDiameter(snap.hint, PIPE_AUTOMATCH_PATTERN);
+    const where = step.stage === 'category' ? 'ports: type 1-4 or a name' : (step.category !== null ? step.category + '-port: pick one (Backspace = back)' : 'pick one');
+    prompt.header = step.stage === 'none'
+      ? 'No fitting can be placed for this box. Esc cancels the placement.'
+      : 'Fitting label — ' + where + (dia ? ' — auto-matched ' + dia : '');
+    menuItems = step.items.map(function(item){ return { prompt: item }; });
+    menuHighlight = menuItems.length ? 0 : -1;
+    ensureMenu();
+    if (!menuItems.length) {
+      menuEl.innerHTML = '';
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+      head.textContent = prompt.header + (step.stage === 'none' ? '' : ' (nothing matches)');
+      menuEl.appendChild(head);
+      positionMenu();
+      menuEl.style.display = 'block';
+      return;
+    }
+    renderMenu();
+  }
+  function startPrompt() {
+    const snap = host.readPanel();
+    prompt.active = true; prompt.category = null; prompt.tool = snap.tool;
+    mountBar();
+    if (!inputEl) { prompt.active = false; return; }
+    inputEl.value = '';
+    inputEl.focus();
+    refreshPrompt();
+  }
+  function endPrompt() {
+    if (!prompt.active) return;
+    prompt.active = false; prompt.category = null; prompt.header = '';
+    if (inputEl) inputEl.value = '';
+    hideMenu();
+  }
+  function pickPrompt(item) {
+    const plan = planPick(item);
+    if (plan.action === 'status') { status(plan.message); return; }
+    if (plan.action === 'category') {
+      prompt.category = plan.ports;
+      if (inputEl) inputEl.value = '';
+      refreshPrompt();
+      return;
+    }
+    // Click native's own label button (what a mouse click does). Never Finish: that stays manual.
+    if (!host.clickFamily(plan.id)) { status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
+    status(plan.label + ' chosen');
+    endPrompt();
+    if (inputEl) inputEl.blur();
+  }
+  // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
+  function promptTick() {
+    const snap = host.readPanel();
+    const phase = snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed';
+    if (phase !== 'label') { prompt.dismissed = false; endPrompt(); return; }
+    if (prompt.active || prompt.dismissed) return;
+    if (host.anyDialogOpen()) return;
+    startPrompt();
+  }
+  function reopenPrompt() { prompt.dismissed = false; startPrompt(); }
 
   function clearBar() { if (inputEl) inputEl.value = ''; hideMenu(); }
   function runAndClear(entry) { if (runEntry(entry)) clearBar(); else hideMenu(); }
@@ -840,8 +1204,25 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
       else cycle(e.shiftKey ? -1 : 1);
       // Fill the bar with the highlighted name so Enter and Tab agree on what will run. Setting
       // .value fires no input event, so the list stays put and keeps cycling over the same rows.
-      if (menuHighlight >= 0 && menuItems[menuHighlight]) inputEl.value = menuItems[menuHighlight].entry.name;
+      if (menuHighlight >= 0 && menuItems[menuHighlight]) {
+        const row = menuItems[menuHighlight];
+        inputEl.value = row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
+      }
       return;
+    }
+    if (prompt.active) {
+      if (e.key === 'Enter') {
+        e.preventDefault(); e.stopPropagation();
+        if (menuHighlight >= 0 && menuItems[menuHighlight]) pickPrompt(menuItems[menuHighlight].prompt);
+        else status('nothing matches');
+        return;
+      }
+      if (e.key === 'Backspace' && !inputEl.value && prompt.category !== null) {
+        e.preventDefault();
+        prompt.category = null;
+        refreshPrompt();
+        return;
+      }
     }
     if (e.key === 'Enter') {
       e.preventDefault(); e.stopPropagation();
@@ -858,6 +1239,8 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
       // (cancel the current placement) must still get it.
       if (inputEl.value || (menuEl && menuEl.style.display !== 'none')) {
         e.stopPropagation();
+        // A dismissed prompt stays dismissed until native leaves the label phase (Space brings it back).
+        if (prompt.active) { prompt.dismissed = true; endPrompt(); }
         clearBar();
         inputEl.blur();
       } else {
@@ -893,13 +1276,21 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
       dialogOpen: host.anyDialogOpen(),
       enabled: RW.enabled,
       keyReserved: function(k){ return RESERVED_KEYS.indexOf(k.toLowerCase()) !== -1; },
-      // No piping command or alias starts with a digit, so a bare digit on an empty bar belongs to the page.
-      digitPassthrough: barEmpty,
+      // No tool or action name starts with a digit, so a bare digit on an empty bar belongs to the page,
+      // except while the label prompt is open (1-4 pick a port-count category, 45/90 name an elbow).
+      digitPassthrough: barEmpty && !prompt.active,
     });
     if (!shouldCapture) return;
 
     // AutoCAD's Space: nothing typed -> close the armed tool to select, else repeat the last tool,
     // else show what can be armed.
+    if (e.key === ' ' && barEmpty && host.readPanel().open) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      const snap = host.readPanel();
+      if (panelPhase(snap.hint, PIPE_HINT_PREFIXES) === 'label') reopenPrompt();
+      else status('a fitting is being placed: Esc cancels it');
+      return;
+    }
     if (e.key === ' ' && barEmpty) {
       const armed = currentArmed();
       const action = spaceRepeatAction({
@@ -937,10 +1328,12 @@ return {deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, 
   mountBar();
   RW._pipeReposition();
   window.addEventListener('resize', RW._pipeReposition);
+  setInterval(promptTick, 250);
 
   RW._pipeTable = currentTable;
   RW._pipeTableInfo = function(){ return derive().info; };
   RW._pipeOwn = own;
+  RW._pipePrompt = prompt;
   const first = derive();
   RW._commitStatus && RW._commitStatus('piping command line ready: ' + first.tools.length + ' tools, '
     + PIPE_GRAPH_ACTIONS.length + ' actions (tools read from the ' + first.info.source + ')');

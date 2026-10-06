@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
   PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_TRADE, DUCT_TRADE,
+  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK,
 } from '../src/pipe/pipe-tables.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,7 @@ test('native-ids.json records its source commit and the live check date', () => 
 
 test('every element id the tables and host depend on is listed in native-ids.json', () => {
   const needed = [
+    PIPE_PANEL_IDS.panel,
     PIPE_PAGE_IDS.root, PIPE_PAGE_IDS.stage, PIPE_PAGE_IDS.nativeBarToggle, PIPE_PAGE_IDS.nativeBarWindow,
     ...PIPE_GRAPH_ACTIONS.map((a) => a.btn),
     ...PIPE_FORBIDDEN_BUTTON_IDS,
@@ -108,4 +110,21 @@ test('every tool native supports has a built-in key, and every alias we curate b
   assert.ok(supported.length >= 14, 'found the supported tool list');
   assert.deepEqual(supported.filter((tool) => !(tool in PIPE_FALLBACK_KEYS)), [], 'supported tool with no built-in key');
   assert.deepEqual(Object.keys(PIPE_TOOL_ALIASES).filter((tool) => !supported.includes(tool)), [], 'alias for a tool native does not support');
+});
+
+test('the placement panel ids, classes and hint wording we rely on are all listed in native-ids.json', () => {
+  const listed = ids.pipeSessionUi.strings.join('\n');
+  for (const cls of [PIPE_PANEL_IDS.menu, PIPE_PANEL_IDS.groupLabelClass, PIPE_PANEL_IDS.warningClass]) {
+    assert.ok(listed.includes(cls), cls);
+  }
+  assert.ok(listed.includes('familyId'), 'data-family-id');
+  assert.ok(PIPE_PANEL_IDS.optionSelector.includes('data-family-id'));
+  for (const prefix of Object.values(PIPE_HINT_PREFIXES)) assert.ok(listed.includes(prefix), prefix);
+  assert.ok(listed.includes(PIPE_UNAVAILABLE_MARK));
+});
+
+test('every placement-panel string we rely on exists in pipe-session-ui.js', { skip: SKIP }, () => {
+  const src = read('pipe-session-ui.js');
+  assert.deepEqual(ids.pipeSessionUi.strings.filter((s) => !src.includes(s)), []);
+  assert.ok(src.includes(`'${PIPE_PANEL_IDS.panel}'`) || read('graph_session.html').includes(`id="${PIPE_PANEL_IDS.panel}"`));
 });
