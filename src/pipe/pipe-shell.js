@@ -23,10 +23,14 @@
     PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK,
     PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES,
     PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
+    PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
+    PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
+    portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
   } = __m_pipe_placement_core;
+  const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
@@ -51,7 +55,8 @@
   }
   RW.vpipe = true;
 
-  const FORBIDDEN = { forbiddenIds: PIPE_FORBIDDEN_BUTTON_IDS, forbiddenCaptureIds: PIPE_FORBIDDEN_CAPTURE_IDS };
+  const FORBIDDEN = { forbiddenIds: PIPE_FORBIDDEN_BUTTON_IDS, forbiddenCaptureIds: PIPE_FORBIDDEN_CAPTURE_IDS,
+    forbiddenTexts: PIPE_FORBIDDEN_BUTTON_TEXTS, forbiddenContainerIds: PIPE_FORBIDDEN_CONTAINER_IDS };
   const RESERVED_KEYS = ['m']; // native's own ruler hotkey: never captured into the bar
 
   /* ---------- table (re-derived from the live rail every time, never cached) ---------- */
@@ -77,6 +82,23 @@
 
   function status(msg) { if (RW._commitStatus) RW._commitStatus(msg); }
 
+  /* ---------- action log: what the bar itself did (in memory only, last PIPE_LOG_MAX) ---------- */
+  // Read from the console: __RW._pipeLog (entries) or __RW._pipeLogPrint() (one line each). Never
+  // stored in the page, localStorage or sent anywhere. `revAfter` is read PIPE_LOG_AFTER_MS later.
+  RW._pipeLog = [];
+  RW._pipeLogPrint = function(){ return formatLog(RW._pipeLog); };
+  // A click that did not happen is not an action: take its entry back.
+  function unlogLast() { RW._pipeLog = RW._pipeLog.slice(0, -1); }
+  function logAction(kind, what) {
+    const snap = host.readPanel();
+    const entry = makeLogEntry({
+      at: Date.now(), kind: kind, what: what, hint: snap.open ? snap.hint : '', tool: snap.open ? snap.tool : host.readActiveTool(),
+      revBefore: parseRevision(host.readRevision()),
+    });
+    RW._pipeLog = appendLog(RW._pipeLog, entry, PIPE_LOG_MAX);
+    setTimeout(function(){ entry.revAfter = parseRevision(host.readRevision()); }, PIPE_LOG_AFTER_MS);
+  }
+
   /* ---------- running an entry ---------- */
   let inputEl = null;
   function runEntry(entry) {
@@ -88,7 +110,8 @@
     const plan = planEntry(entry, stateFor(entry));
     if (plan.action !== 'click') { status(plan.message); return false; }
     const before = host.readActiveTool();
-    if (!host.clickEntry(entry)) { status(entry.name + ': nothing to click on this page'); return false; }
+    logAction(entry.kind, entry.kind + ' ' + entry.name);
+    if (!host.clickEntry(entry)) { unlogLast(); status(entry.name + ': nothing to click on this page'); return false; }
     own.lastCmdAt = Date.now();
     if (entry.kind === 'tool') {
       if (entry.name === 'select') { own.armed = false; own.tool = null; }
@@ -223,6 +246,7 @@
     const facts = host.readSystems();
     const verdict = systemPickVerdict(facts);
     if (!verdict.ok) { status(verdict.message); hideMenu(); return false; }
+    logAction('system', 'set system dropdown: ' + system.name);
     const after = host.writeSystem(system.id);
     own.lastCmdAt = Date.now();
     const shown = host.readSystems();
@@ -298,7 +322,8 @@
       return;
     }
     // Click native's own label button (what a mouse click does). Never Finish: that stays manual.
-    if (!host.clickFamily(plan.id)) { status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
+    logAction('label', 'chose ' + plan.id);
+    if (!host.clickFamily(plan.id)) { unlogLast(); status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
     status(plan.label + ' chosen');
     endPrompt();
     // Native has just moved keyboard focus onto its own label button (subtype.focus()), and that
@@ -308,6 +333,65 @@
     setTimeout(refocusBarOnce, 0);
   }
   let unknownHintWarned = null;
+
+  /* ---------- Step 3: port prompt (display only) and Enter-to-Finish ---------- */
+  let finishLatch = FINISH_LATCH_OFF;
+  let portNoteRole = null, portNoteShown = false;
+  // While native asks for a port ("Click the detected intersection for <role>."), say which one. It
+  // never takes focus (Esc and clicks keep going to the app) and never clicks anything.
+  function updatePortNote(snap) {
+    const role = (snap.open && panelPhase(snap.hint, PIPE_HINT_PREFIXES) === 'ports') ? portRoleFromHint(snap.hint, PIPE_PORT_ROLE_PATTERN) : null;
+    if (role === portNoteRole) return;
+    portNoteRole = role;
+    if (!role) {
+      if (portNoteShown) { portNoteShown = false; if (!prompt.active && document.activeElement !== inputEl) hideMenu(); }
+      return;
+    }
+    mountBar();
+    if (!inputEl || prompt.active) return;
+    ensureMenu();
+    menuItems = []; menuHighlight = -1;
+    menuEl.innerHTML = '';
+    const head = document.createElement('div');
+    head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+    head.textContent = 'click: ' + role;
+    menuEl.appendChild(head);
+    positionMenu();
+    menuEl.style.display = 'block';
+    portNoteShown = true;
+    status('click: ' + role);
+  }
+  function finishFacts(e) {
+    const snap = host.readPanel();
+    const fin = host.readFinish(PIPE_FINISH_BUTTON_ID);
+    return {
+      key: e.key, repeat: !!e.repeat,
+      barFocused: document.activeElement === inputEl, barEmpty: !!inputEl && !inputEl.value.trim(),
+      panelOpen: snap.open, hint: snap.hint, tool: snap.tool,
+      allowedTools: PIPE_FINISH_TOOLS, finishPrefix: PIPE_FINISH_HINT_PREFIX,
+      latched: finishLatch.clicked,
+      button: {
+        found: fin.found, id: fin.id, expectedId: PIPE_FINISH_BUTTON_ID, visible: fin.visible,
+        disabled: fin.disabled, ariaDisabled: fin.ariaDisabled,
+        forbidden: fin.found ? targetForbidden(fin, { forbiddenTexts: PIPE_FORBIDDEN_BUTTON_TEXTS, forbiddenContainerIds: PIPE_FORBIDDEN_CONTAINER_IDS }) : false,
+      },
+    };
+  }
+  // Enter on an empty bar: click Finish if (and only if) every condition holds, checked twice.
+  // Returns true when the key was dealt with (so the generic Enter path is skipped).
+  function tryFinish(e) {
+    const first = finishVerdict(finishFacts(e));
+    if (!first.ok) { if (first.message) status(first.message); return first.reason !== 'not-enter' && first.reason !== 'bar' && first.reason !== 'no-panel' && first.reason !== 'phase'; }
+    const second = finishVerdict(finishFacts(e)); // fresh read right before the click
+    if (!second.ok) { if (second.message) status(second.message); return true; }
+    const label = (host.readPanel().tool || 'fitting');
+    logAction('finish', 'clicked Finish (' + label + ')');
+    if (!host.clickFinish(PIPE_FINISH_BUTTON_ID)) { status('Finish is not available right now'); unlogLast(); return true; }
+    finishLatch = finishLatchClick(Date.now());
+    own.lastCmdAt = Date.now();
+    status('Finish pressed (' + label + '): placing it now');
+    return true;
+  }
   const LABEL_GUARD_MS = 700;
   let labelGuardUntil = 0;
   function refocusBarOnce() {
@@ -318,6 +402,12 @@
   // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
   function promptTick() {
     const snap = host.readPanel();
+    // Step 3: release the Finish latch when native has been through "saving" and is back, or closed.
+    finishLatch = finishLatchStep({
+      latch: finishLatch, phase: snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed',
+      panelOpen: snap.open, now: Date.now(), expireMs: PIPE_FINISH_LATCH_MS,
+    });
+    updatePortNote(snap);
     // Safety net: a hint we don't recognise means native changed this step. One line, nothing else.
     const watch = hintWatch({ open: snap.open, hint: snap.hint, prefixes: PIPE_HINT_PREFIXES, lastWarned: unknownHintWarned });
     unknownHintWarned = watch.hint;
@@ -406,6 +496,8 @@
       e.preventDefault(); e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       const typed = inputEl.value.trim();
+      // Enter (never Space) on an empty bar while a fitting/fixture is ready: Finish. Nowhere else.
+      if (e.key === 'Enter' && !typed && !prompt.active && tryFinish(e)) return;
       if (systemQuery(typed) !== null) {
         if (menuHighlight >= 0 && menuItems[menuHighlight] && menuItems[menuHighlight].system) pickSystem(menuItems[menuHighlight].system);
         else status('system: nothing matches "' + typed.slice(1) + '"');

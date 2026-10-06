@@ -88,7 +88,8 @@ function syntheticDir({ drop = [], rename = {} } = {}) {
   const uiOut = strip(ids.pipeSessionUi.strings).join('\n') + `\n${hints}\nexport const PIPE_TOOL_KEYS = { ${keys} };\nconst SUPPORTED_TOOLS = new Set([${tools}]);\n`;
   void ui;
   fs.writeFileSync(path.join(dir, 'pipe-session-ui.js'), uiOut);
-  for (const f of ['pipe-bbox-connect.js', 'pipe-diameter.js', 'pipe-command-line.js']) fs.writeFileSync(path.join(dir, f), '// x\n');
+  fs.writeFileSync(path.join(dir, 'pipe-bbox-connect.js'), ids.pipeBboxConnect.strings.join('\n'));
+  for (const f of ['pipe-diameter.js', 'pipe-command-line.js']) fs.writeFileSync(path.join(dir, f), '// x\n');
   fs.writeFileSync(path.join(dir, 'graph-session-entry.js'), ids.entryBundle.strings.join('\n'));
   return dir;
 }

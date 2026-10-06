@@ -9,6 +9,7 @@
 // is "don't".
 import { resolveCommand } from './command-line-core.js';
 import { shadowedActions } from './table-core.js';
+import { targetForbidden } from './pipe-placement-core.js';
 
 const KEY_RE = /^[a-z0-9]$/;
 
@@ -90,7 +91,8 @@ export function buildTable(tools, actions) {
 // Can this entry run right now? `target` is a plain description of the page element the entry would
 // click (or null when there is none): { exists, disabled, ariaDisabled, visible, title, id, captureId }.
 // Entries whose control is a forbidden one are refused even when the element is perfectly clickable.
-export function entryState(entry, target, { forbiddenIds = [], forbiddenCaptureIds = [] } = {}) {
+export function entryState(entry, target, { forbiddenIds = [], forbiddenCaptureIds = [], forbiddenTexts = [], forbiddenContainerIds = [] } = {}) {
+  if (target && targetForbidden(target, { forbiddenTexts, forbiddenContainerIds })) return { usable: false, forbidden: true, reason: null };
   if (entry?.btn && forbiddenIds.includes(entry.btn)) return { usable: false, forbidden: true, reason: null };
   if (!target || !target.exists) return { usable: false, forbidden: false, reason: 'not on this page' };
   if (forbiddenIds.includes(target.id) || forbiddenCaptureIds.includes(target.captureId)) {

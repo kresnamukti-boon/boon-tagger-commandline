@@ -43,7 +43,8 @@
       "graph-finish-route",
       "graph-cancel-route",
       "graph-pipe-bbox-op-panel",
-      "graph-system-select"
+      "graph-system-select",
+      "graph-toast-stack"
     ],
     "strings": [
       "data-trade=\"piping\"",
@@ -63,7 +64,10 @@
       "tradePack === \"piping\"",
       "get selectedEntityId()",
       "if (selId) { void assignPipeService(selId, elements.systemSelect.value); return; }",
-      "elements.systemSelect.addEventListener(\"change\""
+      "elements.systemSelect.addEventListener(\"change\"",
+      "elements.finishRoute.disabled = pipeBboxController.state.phase !== 'ready';",
+      "elements.finishRoute.addEventListener(\"click\", () => {",
+      "await pipeBboxController.finish()"
     ]
   },
   "pipeSessionUi": {
@@ -86,7 +90,9 @@
       "subtype.focus();",
       "Pick a different diameter",
       "Enter the new diameter above, then Finish.",
-      "→ to "
+      "→ to ",
+      "label: 'Resize anyway'",
+      "bboxHint.textContent = operation.phase === 'box'"
     ]
   },
   "tradePackValues": {
@@ -147,5 +153,13 @@
       "pipe-rd"
     ]
   },
-  "familiesNote": "Observed on the test page's open menus (fitting tool, fixture tool), 2026-10-06. Families come from the server contract, not from the JS files; scripts/check-native-drift.js --menu compares a fresh dump to this list."
+  "familiesNote": "Observed on the test page's open menus (fitting tool, fixture tool), 2026-10-06. Families come from the server contract, not from the JS files; scripts/check-native-drift.js --menu compares a fresh dump to this list.",
+  "pipeBboxConnect": {
+    "strings": [
+      "this.update({ ...op, phase: 'submitting' });",
+      "phase: 'ready' }",
+      "missingPorts()",
+      "chooseFamily(id) {"
+    ]
+  }
 }

@@ -28,6 +28,13 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
     return entry.btn ? doc.getElementById(entry.btn) : null;
   }
 
+  // Ids of every element above `el` (used to refuse anything that lives inside the toast stack).
+  function ancestorIds(el) {
+    const out = [];
+    for (let n = el && el.parentNode; n; n = n.parentNode) if (n.id) out.push(n.id);
+    return out;
+  }
+
   function activeTool() {
     const debug = win.__graphDebug;
     return debug && typeof debug.activeTool === 'string' ? debug.activeTool : null;
@@ -70,6 +77,8 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
         title: el.getAttribute('title') || '',
         id: el.id || '',
         captureId: el.getAttribute('data-capture-control-id') || '',
+        text: text(el),
+        ancestorIds: ancestorIds(el),
       };
     },
 
@@ -82,6 +91,14 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
     },
 
     readActiveTool: activeTool,
+
+    // The page's current revision number, or null.
+    readRevision() {
+      const debug = win.__graphDebug;
+      if (debug && typeof debug.revision === 'number') return debug.revision;
+      const el = doc.getElementById('graph-revision-status');
+      return el ? text(el) : null;
+    },
 
     // Plain snapshot of native's "Place Fitting" panel (see pipe-placement-core.js for the shape).
     // The menu is rebuilt by native even while it is hidden, so it is read straight from the DOM.
@@ -123,6 +140,26 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
       if (!active || !panel) return false;
       for (let n = active; n; n = n.parentNode) if (n === panel) return true;
       return false;
+    },
+
+    // Plain description of native's Finish button (see finishVerdict), read fresh every call.
+    readFinish(expectedId) {
+      const el = doc.getElementById(expectedId);
+      if (!el) return { found: false, expectedId };
+      return {
+        found: true, expectedId, id: el.id || '',
+        disabled: !!el.disabled, ariaDisabled: el.getAttribute('aria-disabled'),
+        visible: isElementVisible(el),
+        text: text(el), ancestorIds: ancestorIds(el),
+      };
+    },
+
+    // The one Finish click. Re-checks that the element is still enabled, then clicks it. Returns whether it clicked.
+    clickFinish(expectedId) {
+      const el = doc.getElementById(expectedId);
+      if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+      el.click();
+      return true;
     },
 
     // Which of these element ids are not on the page right now?

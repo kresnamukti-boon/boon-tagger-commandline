@@ -266,3 +266,11 @@ test('loaderGuard: refuses when the page is not ready (no stage or no tool rail)
   assert.equal(loaderGuard({ ...goodFacts, hasStage: false }).ok, false);
   assert.equal(loaderGuard({ ...goodFacts, railToolCount: 0 }).ok, false);
 });
+
+test('entryState: anything with a forbidden text or inside a forbidden container is refused, even if it is clickable', () => {
+  const cfg = { forbiddenTexts: ['resize anyway'], forbiddenContainerIds: ['graph-toast-stack'] };
+  const target = { exists: true, disabled: false, visible: true, id: '', captureId: '', text: 'Resize anyway', ancestorIds: [] };
+  assert.equal(entryState({ kind: 'action', name: 'x', btn: 'b' }, target, cfg).forbidden, true);
+  assert.equal(entryState({ kind: 'action', name: 'x', btn: 'b' }, { ...target, text: 'Zoom', ancestorIds: ['graph-toast-stack'] }, cfg).forbidden, true);
+  assert.equal(entryState({ kind: 'action', name: 'x', btn: 'b' }, { ...target, text: 'Zoom' }, cfg).usable, true);
+});
