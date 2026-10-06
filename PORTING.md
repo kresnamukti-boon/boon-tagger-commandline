@@ -263,3 +263,63 @@ both flagged here rather than attempted blind:
 If a future session picks this up with live opencli access to iterate against a real
 page, both are still worth doing — for this project's own maintainability, not because
 either blocks any of the ports listed above.
+
+## Piping command line (separate build, in progress)
+
+A second command line for the **piping** trade pack, built next to the duct one and sharing none
+of its state. Native's own piping command line (`pipe-command-line.js` + `command-line-ui.js`) only
+switches tools; it has no actions, no settings, no walk and no `#` search, and the fitting-placement
+panel (`#graph-pipe-bbox-op-panel`) is not connected to it at all. Everything below was checked
+against constructions-tagger `bb2935ac` and the live page (2026-10-06); `test/native-ids.json` lists
+every id/class/string we rely on and `test/native-ids.test.mjs` checks them.
+
+### Which file maps to which native slot
+
+| Ours | Native slot | Port? |
+|---|---|---|
+| `src/pipe/pipe-tables.js` (`PIPE_GRAPH_ACTIONS`, `PIPE_FORBIDDEN_BUTTON_IDS`, `PIPE_ISOLATION_ALLOWED`, `PIPE_TOOL_ALIASES`) | next to `buildPipeCommandTable` in `pipe-command-line.js`, shaped like `duct-command-line.js`'s `DUCT_*` exports | yes: pure data, same entry shape `{ id, name, label, aliases, btn }` |
+| `src/core/pipe-table-core.js`: `entryState`, `planEntry`, `planQuery`, `listEntries` | the dispatch verdict half of `command-line-core.js` / `command-line-ui.js` | yes, as a superset (disabled-with-reason rows, forbidden controls refused twice) |
+| `src/core/pipe-table-core.js`: `deriveTools`, `reconcileArmed`, `loaderGuard` | none | **no.** `deriveTools` reads the live rail only because a pasted script can't see native's contract (native already has `visiblePipeTools(contract, mode)`); `reconcileArmed` and `loaderGuard` exist because we are an outside script |
+| `src/pipe/pipe-host.js` | none | **no.** Native has its own DOM wiring (`command-line-ui.js`) |
+| `src/pipe/pipe-shell.js` | none | **no** |
+
+(Placement-step files, when they exist, get a row each: pure phase/port-size logic in
+`src/core/pipe-placement-core.js` is the portable part.)
+
+### What must not be ported
+
+- `console_loader_pipe.js`, `dist/rw_pipe_cmdline.js`, `build_pipe_loader.sh`, `scripts/build-pipe-*.js`:
+  console-injection artifacts, like the duct ones.
+- Anything that reads the panel's **text** (the hint line: "Click two opposite corners...", "Choose
+  the fitting subtype.", "Click the detected intersection for <role>.", "Finish inserts this
+  fitting."). We only do that because we are outside the app; native owns the phase
+  (`bboxController().state.phase`) and an upstream version must read it directly, never the text.
+- Reading the key badge off the rendered rail button: native has `PIPE_TOOL_KEYS`.
+- The loader guard and the "native's bar must be OFF" rule: inside native they don't exist.
+
+### Open decisions (as of Step 1)
+
+- **Aliases.** `PIPE_TOOL_ALIASES` was proposed, not approved (to be reviewed with the engineer).
+  `fit` stays `zoomfit`'s.
+- **Finish / Cancel** (`graph-finish-route`, `graph-cancel-route`) are in `PIPE_FORBIDDEN_BUTTON_IDS`
+  for now. The placement step has to decide how Enter-at-ready reaches Finish deliberately.
+- **Isolation.** `PIPE_ISOLATION_ALLOWED` is shipped as data but not enforced: Step 1 has no panel
+  state to isolate. It applies once the placement panel is open.
+- **No hardcoded tool table.** Unlike duct, there is no fallback table when the rail can't be read;
+  the loader refuses ("no tool rail found"). `PIPE_FALLBACK_KEYS` only supplies a key for a rail
+  button with no readable badge. Note native's badge falls back to the tool id's first letter when
+  it has no hotkey, which is a label, not a real key.
+- **Native Escape** cancels a placement and then switches to the route tool. Our bar only swallows
+  Escape while it has something to close.
+- **Panel dragging** (duct has it) is not copied yet.
+- **Flange is absent from the rail by native's design** (`pipe-session-ui.js`: "insulation/flange:
+  intentionally absent - no canvas handler yet"). The rail is read live, so a flange tool shows up
+  here by itself when native adds it.
+- **Native's recorder logs our clicks.** `graph_capture` `action-capture.js` records our programmatic
+  clicks on `[data-capture-control-id]` buttons as ordinary `tool_change` / `control_activate` steps.
+  It does not record typed text or that the command line did it. Native's own command line behaves the
+  same. The engineer may want to tag command-line-driven actions.
+- **`data-trade="ductwork"`** is native's value for duct (`TradePack: "ductwork" | "piping"`) but has
+  not yet been seen on a live duct page; confirm once before merging.
+- **Fixtures** (`test/fixtures/native/`) are deliberately not in git; `test/native-ids.json` is the
+  committed record.

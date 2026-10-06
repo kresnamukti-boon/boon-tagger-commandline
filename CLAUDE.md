@@ -51,6 +51,12 @@ node --test               # unit tests for the pure, DOM-free modules under src/
                           # those ES modules directly (test/*.test.mjs), no DOM stub involved
 ```
 
+**Piping is a separate build** (`bash build_pipe_loader.sh` -> `dist/rw_pipe_cmdline.js` +
+`console_loader_pipe.js`; `node verify_pipe_cmdline.js`; sources in `src/pipe/` and
+`src/core/pipe-*.js`). It shares no state with the duct command line, and `build-dist.js` skips
+`pipe-*` files so the duct outputs stay byte-identical. See README's "Piping command line" and
+PORTING.md's piping section. `test/fixtures/native/` is gitignored on purpose.
+
 **Restructure in progress** (see `PORTING.md`): `rw_cmdline.js`'s one monolithic
 IIFE is being split into `src/core/` (pure, unit-tested directly), `src/features/` (DOM-touching,
 host-agnostic, dependencies injected), `src/ui/` and `src/hosts/` (annotate vs. graph adapters),

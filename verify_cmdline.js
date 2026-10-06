@@ -33,7 +33,8 @@ const path = require('path');
   (function walk(p){
     const stat = fs.statSync(p);
     if (stat.isDirectory()) {
-      for (const name of fs.readdirSync(p)) walk(path.join(p, name));
+      // src/pipe/ and src/**/pipe-*.js feed the separate piping build, not this dist.
+      for (const name of fs.readdirSync(p)) if (!name.startsWith('pipe')) walk(path.join(p, name));
       return;
     }
     if (!newest || stat.mtimeMs > newest.mtimeMs) newest = { path: p, mtimeMs: stat.mtimeMs };

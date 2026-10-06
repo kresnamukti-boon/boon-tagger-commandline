@@ -38,7 +38,9 @@ function listModuleFiles() {
     const abs = path.join(ROOT, dir);
     if (!fs.existsSync(abs)) continue;
     for (const name of fs.readdirSync(abs).sort()) {
-      if (name.endsWith('.js')) files.push(path.join(dir, name));
+      // pipe-*.js belongs to the separate piping build (scripts/build-pipe-dist.js);
+      // keeping it out of here is what keeps dist/rw_cmdline.js (duct) byte-identical.
+      if (name.endsWith('.js') && !name.startsWith('pipe-')) files.push(path.join(dir, name));
     }
   }
   return files;
