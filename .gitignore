@@ -13,3 +13,5 @@ Thumbs.db
 
 # Logs
 *.log
+
+test/fixtures/native/

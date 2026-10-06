@@ -1,0 +1,73 @@
+{
+  "source": "constructions-tagger bb2935ac",
+  "checkedLive": "2026-10-06",
+  "note": "Every native id, class, attribute and string the piping command line depends on. test/native-ids.test.mjs checks each against saved copies of native's own files in test/fixtures/native/ (kept out of git; see FETCHED.txt there). Where the saved copy and the live page disagree, the live page wins.",
+  "fixtures": {
+    "graph_session.html": "the rendered piping session page (view-source of /graph/projects/<id>/session/?trade=piping)",
+    "pipe-session-ui.js": "static/project_graph/js/pipe-session-ui.js",
+    "pipe-bbox-connect.js": "static/project_graph/js/pipe-bbox-connect.js (not used until the placement steps)",
+    "pipe-diameter.js": "static/project_graph/js/pipe-diameter.js (not used until the port-size step)",
+    "pipe-command-line.js": "static/project_graph/js/pipe-command-line.js (native's own piping table builder; reference only)",
+    "graph-session-entry.js": "static/project_graph/js/graph-session-entry.<hash>.js (builds the tool rail markup)"
+  },
+  "sha256First16": {
+    "pipe-session-ui.js": "4faa69ba06dc5e20",
+    "pipe-bbox-connect.js": "51bab41417171308",
+    "pipe-diameter.js": "8087fb4bad469686",
+    "pipe-command-line.js": "614c7dfb8d1ec2c5"
+  },
+  "html": {
+    "ids": [
+      "graph-session-root",
+      "graph-canvas-stage",
+      "graph-command-line-toggle",
+      "graph-command-window",
+      "graph-undo-command",
+      "graph-redo-command",
+      "graph-zoom-fit",
+      "graph-zoom-in",
+      "graph-zoom-out",
+      "graph-ruler",
+      "graph-components-button",
+      "graph-save-commands",
+      "graph-recording-configure",
+      "graph-recording-pause",
+      "graph-recording-resume",
+      "graph-recording-stop",
+      "graph-recording-start",
+      "graph-submission-blocked-force",
+      "graph-import-systems",
+      "graph-create-system",
+      "graph-rename-system",
+      "graph-assign-network",
+      "graph-finish-route",
+      "graph-cancel-route"
+    ],
+    "strings": [
+      "data-trade=\"piping\"",
+      "data-capture-control-id=\"submit-graph\""
+    ]
+  },
+  "entryBundle": {
+    "strings": [
+      "graph-tool-control",
+      "graph-tool-key",
+      "graph-tool-label",
+      "button.dataset.tool = tool.id",
+      "aria-disabled",
+      "__graphDebug",
+      "activeTool",
+      "tradePack === \"piping\""
+    ]
+  },
+  "pipeSessionUi": {
+    "strings": [
+      "export const PIPE_TOOL_KEYS",
+      "const SUPPORTED_TOOLS"
+    ]
+  },
+  "tradePackValues": {
+    "piping": "confirmed live (data-trade=\"piping\")",
+    "ductwork": "given by native's TradePack (\"ductwork\" | \"piping\"); NOT yet seen on a live duct page - confirm once before merging"
+  }
+}

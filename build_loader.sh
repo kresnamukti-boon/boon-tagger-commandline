@@ -44,6 +44,12 @@ cat > "$OUT" <<'HEADER'
   // wait for app (up to 30s) — safe to paste immediately on page load
   for (let i=0; i<60 && !ready(); i++) await new Promise(r=>setTimeout(r,500));
   if (!ready()){ console.warn('[RW] app not ready after 30s — try pasting again once the page renders'); return; }
+  // A piping page has its own command line (console_loader_pipe.js); this build is for duct pages.
+  var __rwRoot = document.getElementById('graph-session-root');
+  if (__rwRoot && __rwRoot.getAttribute('data-trade') === 'piping'){
+    console.warn('[RW] This is a piping page. Use the piping command line loader (console_loader_pipe.js) here instead.');
+    return;
+  }
   await new Promise(r=>setTimeout(r,600)); // let the canvas settle
 
 HEADER

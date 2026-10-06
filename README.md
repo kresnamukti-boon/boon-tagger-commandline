@@ -62,6 +62,49 @@ every source edit. See `CLAUDE.md`'s "Build / verify commands" for what each one
 Paste again after each page navigation — a same-URL "navigation" that doesn't actually reload the
 page is a no-op for re-injection (see `CLAUDE.md`'s live-testing gotchas).
 
+This loader is for **duct** pages. On a piping page (`#graph-session-root[data-trade="piping"]`) it
+refuses to start and points you at the piping loader below.
+
+## Piping command line (separate loader)
+
+Piping sessions (`...session/?trade=piping`) have their own command line, built separately so the
+duct one is never touched: `console_loader_pipe.js` (built by `bash build_pipe_loader.sh`). Paste it
+the same way as above, on a **piping** page.
+
+- **Native's own command line must be OFF.** The app has its own "⌨ Command line" button (off by
+  default). If it is switched on, both command lines would grab the same keys, so the piping loader
+  refuses to start and tells you to click that button once to switch it off. It never switches it
+  for you.
+- **Each loader refuses the other trade.** The duct loader refuses on a piping page and the piping
+  loader refuses on a duct page (it reads `data-trade` off `#graph-session-root`: `piping` or
+  `ductwork`). A refused page gets no panel and no listeners, only a console message. If the duct
+  loader already ran on the page, reload before pasting the piping one.
+- **What you can type** (anywhere on the page, nothing to click first):
+  - a **tool**: its id, its on-screen name, its key letter, or an alias (`route`, `pipe`, `g`,
+    `fitting`, `riser`, ...). The real tool-rail button is clicked. A tool that is greyed out on the
+    page stays in the list with the page's own reason (e.g. "Enter a positive diameter before
+    placing piping."); picking it clicks nothing.
+  - an **action**: `undo`, `redo` (`re`), `zoomfit` (`zf`, `fit`), `zoomin` (`zi`), `zoomout` (`zo`),
+    `ruler`, `components` (`comp`). An action that couldn't do anything right now (e.g. `redo` with
+    nothing to redo) is left out of the list. **`undo` and `redo` submit real commands** to the app's
+    autosave journal, like any click on those buttons.
+  - **Space** on an empty bar: closes the armed tool back to select; otherwise repeats the last tool;
+    the very first time, lists the tools. **Tab / Shift+Tab** cycle the completions, **Enter** runs,
+    **Escape** closes the bar (and only passes through to the app when there is nothing of ours to
+    close).
+  - Like on duct, the bar captures printable keys first, so typing `g` starts a command instead of
+    pressing the app's own `G` hotkey. A bare digit and `m` (the app's ruler key) are left to the app.
+- **What it will never click**, enforced in code and not only by leaving them out of the list: Save,
+  the recording controls, the top-bar **Submit**, "Submit anyway", Finish and Cancel, and the system
+  create/rename/import/assign buttons.
+- **Not built yet:** picking a fitting label after the box, port prompts, and port sizes (next steps).
+  The panel is not draggable yet.
+- **Checks:** `node verify_pipe_cmdline.js` (a fake page driving the real built files),
+  `node --test "test/**/*.test.mjs"` (includes `test/native-ids.test.mjs`, which checks every native
+  id/class/string we rely on against saved copies of native's files in `test/fixtures/native/`; that
+  folder is **not in git**, and those checks skip with a message when it is absent. The list of what
+  we rely on is `test/native-ids.json`).
+
 ## Command line
 
 **Just start typing a tool's name from anywhere**, no click or focus step needed (like AutoCAD's
