@@ -265,7 +265,8 @@ A second command line for the **piping** trade pack, built next to the duct one 
 of its state. Native's own piping command line (`pipe-command-line.js` + `command-line-ui.js`) only
 switches tools; it has no actions, no settings, no walk and no `#` search, and the fitting-placement
 panel (`#graph-pipe-bbox-op-panel`) is not connected to it at all. Everything below was checked
-against constructions-tagger `bb2935ac` and the live page (2026-10-06); `test/native-ids.json` lists
+against constructions-tagger `bb2935ac` and the live page (2026-10-06), then re-checked against the live deploy
+`6aadf9a4` (see "Fixture refetch" below); `test/native-ids.json` lists
 every id/class/string we rely on and `test/native-ids.test.mjs` checks them.
 
 ### Which file maps to which native slot
@@ -330,6 +331,15 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
 - Upstream: none of the key/focus plumbing is needed. Native already has `pipeBboxController.finish()` and its own
   Enter handling; the command line only needs to call it (with the same enabled checks) when the pick came from the bar.
 - Never clicked: the MEC-329 size-mismatch toast's "Resize anyway" (re-submits a rejected command with the check off).
+
+### Fixture refetch (2026-10-06, live deploy 6aadf9a4; earlier files were deploy 76785ba3 / commit bb2935ac)
+
+`test/fixtures/native/` (gitignored) was refetched from the live site, `native-ids.json` updated (`source`, new `deploymentVersion`,
+`pipe-bbox-connect.js` hash f80bc890..). Only `pipe-bbox-connect.js` changed (54 lines added, 5 removed): a new `placeAtRouteEnd`
+(MEC-407, the per-point menu of a 2D route) and a reworked connector lookup in `finish()` for 2D routes (picks the route's
+unresolved `end`). Nothing we use moved: every recorded id, string, hint, tool key and the 88 catalog families are the same
+(the drift script and the previously skipped fixture tests all pass with the fixtures present). `graph-session-entry` is now
+`graph-session-entry.34d090dba1f3.js`.
 
 ### Live verification status (test page, 2026-10-06)
 
