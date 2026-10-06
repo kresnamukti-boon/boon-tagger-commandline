@@ -133,6 +133,15 @@ export const PIPE_UNAVAILABLE_MARK = 'unavailable';
 export const PIPE_LOG_MAX = 50;
 // How long after an action the log re-reads the revision to fill in "after".
 export const PIPE_LOG_AFTER_MS = 2000;
+// Step 3b: native's per-port size fields (reducing fittings) and the page's own catalog JSON.
+export const PIPE_SIZE_IDS = {
+  container: 'graph-pipe-port-diameters',
+  capturePrefix: 'pipe-diameter-',
+  customSuffix: '-custom',
+  bootstrap: 'graph-session-bootstrap',
+};
+// Only this tool places fittings that have per-port sizes (reducing tees/wyes, reducers, ...).
+export const PIPE_SIZE_TOOLS = ['fitting'];
 export const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 export const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';

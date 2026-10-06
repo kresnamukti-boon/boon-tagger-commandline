@@ -121,6 +121,23 @@ the same way as above, on a **piping** page.
   revision before and 2 s after. Only the newest 50 are kept, in memory only (nothing is written to the page,
   browser storage or any server). Read it from the console: `__RW._pipeLogPrint()` (one line each) or `__RW._pipeLog`.
   It lets you tell the bar's saves from your own (mouse, the app's own Enter, undo).
+- **Port sizes for reducing fittings (Step 3b).** When the fitting you placed has separate size fields per port
+  (reducing tee/wye, reducers, reducing elbow) and the app says "Finish inserts this fitting.", the bar opens two
+  rows by itself: **Use port sizes as is** or **Edit port sizes** (Enter or Space picks the highlighted one).
+  - *As is* keeps whatever the app seeded. The bar then says "Enter finishes"; a **second Enter** finishes (the
+    first one only confirms, so a saving Enter is always its own press).
+  - *Edit* asks for each unlocked port in the app's order: type a size (`2`, `2-1/2`, `3/4`, `1.75`; a space would
+    confirm, so write 2-1/2 with a hyphen) and Enter, or just Enter to keep it. Sizes run 3/8" to 48". Esc goes
+    back to the two rows, and the next Esc closes them (then the app's own Esc cancels the placement). After the
+    last port the values are written into the app's own size fields (a standard size on the dropdown, anything
+    else as Custom + text); Enter then finishes.
+  - **Max rule:** if outlet or branch is larger than inlet (read live from the page's own catalog), the bar says the
+    server will reject it, and Enter-to-Finish stays blocked until it is fixed. If the catalog can't be read, the
+    bar warns once and does not block.
+  - **It never edits an existing fitting.** The app's size fields also edit a selected fitting, where a change is a
+    saved command. The bar writes sizes only while a NEW placement is open and ready and nothing is selected on the
+    drawing (or it can't tell): then it refuses and says why. Sizes confirmed earlier are re-checked right before
+    Finish (a changed size means "confirm again").
 - **If native changes under us** (safety net). Two checks make the bar stop instead of guess:
   - if the fitting panel is open but its hint sentence is one we don't recognise, the bar shows one
     line, "Native changed: use the mouse for this step", and does nothing else for that step (no

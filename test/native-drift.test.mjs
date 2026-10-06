@@ -85,7 +85,7 @@ function syntheticDir({ drop = [], rename = {} } = {}) {
   const hints = `const readyHint = 'Finish inserts this fitting.';\nconst more = ['Pick a different diameter — a transition must change size.', 'Enter the new diameter above, then Finish.', \`From \${a} → to \${b}.\`];\nbboxHint.textContent = a ? 'Click two opposite corners around it.' : b ? 'Choose the fitting subtype.' : c ? \`Click the detected intersection for \${x}.\` : d ? readyHint : 'Saving pipe and fitting…';\n`;
   const strip = (arr) => arr.filter((s) => !drop.includes(s)).map((s) => rename[s] ?? s);
   const ui = `${ids.pipeSessionUi.strings.join('\n')}\n${hints}\nexport const PIPE_TOOL_KEYS = { ${keys} };\nconst SUPPORTED_TOOLS = new Set([${tools}]);\n`;
-  const uiOut = strip(ids.pipeSessionUi.strings).join('\n') + `\n${hints}\nexport const PIPE_TOOL_KEYS = { ${keys} };\nconst SUPPORTED_TOOLS = new Set([${tools}]);\n`;
+  const uiOut = strip(ids.pipeSessionUi.strings).join(';\n') + ';\n' + `\n${hints}\nexport const PIPE_TOOL_KEYS = { ${keys} };\nconst SUPPORTED_TOOLS = new Set([${tools}]);\n`;
   void ui;
   fs.writeFileSync(path.join(dir, 'pipe-session-ui.js'), uiOut);
   fs.writeFileSync(path.join(dir, 'pipe-bbox-connect.js'), ids.pipeBboxConnect.strings.join('\n'));

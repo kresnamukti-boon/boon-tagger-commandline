@@ -301,3 +301,12 @@ test('finishLatch: held until native has been through "saving" and is back, clos
   assert.equal(step(stuck, 'ready', true, 1001 + PIPE_FINISH_LATCH_MS).clicked, false, 'ignored click: released after the timeout');
   assert.equal(step(finishLatchClick(0), 'unknown', true, 10).leftReady, true, 'an unknown hint also counts as having left ready');
 });
+
+test('finishVerdict: a sizes gate that is not ok blocks Finish and passes its reason/message/reopen through', () => {
+  const gate = { ok: false, reason: 'sizes-unconfirmed', message: 'port sizes: choose first', reopen: true };
+  const v = finishVerdict({ ...FACTS(), sizesGate: gate });
+  assert.deepEqual([v.ok, v.reason, v.message, v.reopen], [false, 'sizes-unconfirmed', 'port sizes: choose first', true]);
+  assert.equal(finishVerdict({ ...FACTS(), sizesGate: { ok: true } }).ok, true);
+  assert.equal(finishVerdict({ ...FACTS(), sizesGate: { ok: false, reason: 'sizes-max', message: 'm' } }).reopen, false);
+  assert.equal(finishVerdict({ ...FACTS(), sizesGate: gate, key: ' ' }).reason, 'not-enter', 'the key checks still come first');
+});

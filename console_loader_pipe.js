@@ -152,6 +152,15 @@ const PIPE_UNAVAILABLE_MARK = 'unavailable';
 const PIPE_LOG_MAX = 50;
 // How long after an action the log re-reads the revision to fill in "after".
 const PIPE_LOG_AFTER_MS = 2000;
+// Step 3b: native's per-port size fields (reducing fittings) and the page's own catalog JSON.
+const PIPE_SIZE_IDS = {
+  container: 'graph-pipe-port-diameters',
+  capturePrefix: 'pipe-diameter-',
+  customSuffix: '-custom',
+  bootstrap: 'graph-session-bootstrap',
+};
+// Only this tool places fittings that have per-port sizes (reducing tees/wyes, reducers, ...).
+const PIPE_SIZE_TOOLS = ['fitting'];
 const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
@@ -237,7 +246,7 @@ const PIPE_FIXTURE_DISPLAY_NAMES = {
 const PIPE_FIXTURE_TOOL = 'fixture';
 const PIPE_FITTING_TOOL = 'fitting';
 
-return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
+return {PIPE_TRADE, DUCT_TRADE, PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS, PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_ISOLATION_ALLOWED, PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_UNAVAILABLE_MARK, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS, PIPE_SIZE_IDS, PIPE_SIZE_TOOLS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_FIXTURE_TOOL, PIPE_FITTING_TOOL};
 })();
 
 // ===== src/features/actions.js =====
@@ -287,7 +296,7 @@ const __m_pipe_host = (function(){
 // page and against the Node test harness.
 const { isElementVisible } = __m_actions;
 
-function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unavailable' }) {
+function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -443,6 +452,92 @@ function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unava
       if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
       el.click();
       return true;
+    },
+
+    // The selection facts used by every guard that must never touch an existing item.
+    readSelection() {
+      const debug = win.__graphDebug;
+      const readable = !!debug && typeof debug === 'object' && 'selectedEntityId' in debug;
+      return { selectionReadable: readable, selectedEntityId: readable ? (debug.selectedEntityId || null) : null };
+    },
+
+    // Native's per-port size fields: [{ cap, label, selectValue, customValue, disabled, customHidden, optionValues }]
+    // in on-screen order. `present` is false when the container is missing or hidden (a single-size fitting).
+    readPortFields() {
+      const cont = doc.getElementById(sizeIds.container);
+      if (!cont || cont.hidden) return { present: false, fields: [] };
+      const fields = [];
+      for (const lab of cont.querySelectorAll('label')) {
+        const select = lab.querySelectorAll('select')[0];
+        const custom = lab.querySelectorAll('input')[0];
+        if (!select) continue;
+        const cap = select.getAttribute('data-capture-control-id') || '';
+        fields.push({
+          cap, role: cap.indexOf(sizeIds.capturePrefix) === 0 ? cap.slice(sizeIds.capturePrefix.length) : cap,
+          label: text(lab.querySelectorAll('span')[0]),
+          selectValue: select.value, customValue: custom ? custom.value : '',
+          disabled: !!select.disabled, customHidden: custom ? !!custom.hidden : true,
+          optionValues: Array.from(select.options || []).map((o) => o.value),
+        });
+      }
+      return { present: fields.length > 1, fields };
+    },
+
+    // The family id currently chosen in native's label menu (the aria-selected option), or null.
+    readChosenFamilyId() {
+      const menu = doc.getElementById(panelIds.menu);
+      if (!menu) return null;
+      const hit = Array.from(menu.querySelectorAll(panelIds.optionSelector)).find((b) => b.getAttribute('aria-selected') === 'true');
+      return hit ? hit.getAttribute('data-family-id') : null;
+    },
+
+    // profileCompatibility of one family from the page's own catalog JSON, or { readable: false }.
+    readFamilyRules(familyId) {
+      try {
+        const el = doc.getElementById(sizeIds.bootstrap);
+        const data = JSON.parse(el.textContent);
+        const fam = data.catalogSupportedUi.fittingFamilies.find((f) => f.id === familyId);
+        if (!fam) return { readable: false };
+        return { readable: true, maximumProfileByPort: (fam.profileCompatibility && fam.profileCompatibility.maximumProfileByPort) || {} };
+      } catch (err) {
+        return { readable: false };
+      }
+    },
+
+    // Put one size into one port's select + custom pair (what a person's edit does). The ONLY place sizes
+    // are written. It re-checks the guard itself: panel open, nothing selected, the field not locked.
+    // During a placement a change only toggles the custom box (values are read at Finish); on an existing
+    // selected fitting the same change would be a saved command, hence the selection check.
+    writePortSize(cap, plan) {
+      const panel = doc.getElementById(panelIds.panel);
+      const sel = this.readSelection();
+      if (!panel || panel.hidden || !sel.selectionReadable || sel.selectedEntityId) return { ok: false };
+      const cont = doc.getElementById(sizeIds.container);
+      if (!cont || cont.hidden) return { ok: false };
+      let select = null, custom = null;
+      for (const lab of cont.querySelectorAll('label')) {
+        const s = lab.querySelectorAll('select')[0];
+        if (s && s.getAttribute('data-capture-control-id') === cap) { select = s; custom = lab.querySelectorAll('input')[0] || null; }
+      }
+      if (!select || select.disabled) return { ok: false };
+      const fire = (el, type) => el.dispatchEvent(new win.Event(type, { bubbles: true }));
+      if (plan.mode === 'select') {
+        select.value = plan.selectValue;
+        fire(select, 'change');
+      } else {
+        if (!custom) return { ok: false };
+        select.value = 'custom';
+        fire(select, 'change');
+        custom.value = plan.customText;
+        fire(custom, 'input'); fire(custom, 'change');
+      }
+      return { ok: true, selectValue: select.value, customValue: custom ? custom.value : '' };
+    },
+
+    // Is this one of native's per-port size controls (a select or custom box)?
+    isPortControl(el) {
+      const c = el && String(el.getAttribute && el.getAttribute('data-capture-control-id') || '');
+      return !!c && c.indexOf(sizeIds.capturePrefix) === 0;
     },
 
     // Which of these element ids are not on the page right now?
@@ -904,6 +999,8 @@ function finishVerdict(f) {
   if (!(f.allowedTools ?? []).includes(lower(f.tool))) {
     return no('tool', 'Finish from the bar is only for fitting and fixture: use the mouse for this one');
   }
+  // Step 3b: a fitting with per-port sizes needs its sizes confirmed first (see pipe-size-core.js).
+  if (f.sizesGate && f.sizesGate.ok === false) return { ...no(f.sizesGate.reason, f.sizesGate.message), reopen: !!f.sizesGate.reopen };
   if (f.latched) return no('latched');
   const b = f.button ?? {};
   if (!b.found || b.id !== b.expectedId || b.forbidden || !b.visible) return no('button', 'Finish is not available on this page right now');
@@ -1239,6 +1336,183 @@ function formatLog(log) {
 return {appendLog, makeLogEntry, parseRevision, formatLog};
 })();
 
+// ===== src/core/pipe-size-core.js =====
+const __m_pipe_size_core = (function(){
+// Pure logic for port sizes on reducing fittings (Step 3b): parsing what a person types, formatting,
+// deciding how to put a size into native's select + custom pair, the max-size rule, the choice/edit
+// steps, and the guard that keeps us from ever editing an EXISTING fitting. No DOM, no clicks.
+//
+// parseSizeInput / formatSize are copies of native's parsePipeDiameter / formatPipeDiameter
+// (pipe-diameter.js); test/native-ids.test.mjs runs both against native's own file on a set of inputs
+// whenever the saved copy is present, so a change in native shows up as a failing test.
+
+const SIZE_MIN_IN = 0.375; // native's own "Range 3/8 to 48 inches"
+const SIZE_MAX_IN = 48;
+const NOMINAL_SIZES_IN = [
+  0.375, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20, 24, 30, 36, 42, 48,
+];
+
+const FRACTION_PATTERN = /^(?:(\d+(?:\.\d+)?)[ -])?(\d+)\/(\d+)$/;
+
+// Typed text -> positive number or null: "2", "2.5", "3/4", "1 1/2", "1-1/2", optional " or ″ suffix.
+function parseSizeInput(raw) {
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0 ? raw : null;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim().replace(/["″]\s*$/, '').trim();
+  if (trimmed === '' || trimmed.startsWith('-')) return null;
+  const m = FRACTION_PATTERN.exec(trimmed);
+  if (m) {
+    const whole = m[1] ? Number(m[1]) : 0;
+    const denominator = Number(m[3]);
+    if (denominator === 0) return null;
+    const value = whole + Number(m[2]) / denominator;
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+  if (!/^\d*\.?\d*$/.test(trimmed) || trimmed === '.') return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function formatSize(value) {
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const whole = Math.trunc(value);
+  const fraction = value - whole;
+  if (fraction === 0) return String(whole);
+  for (const denominator of [2, 4, 8, 16, 32]) {
+    const numerator = fraction * denominator;
+    if (Number.isInteger(numerator)) {
+      return whole === 0 ? `${numerator}/${denominator}` : `${whole}-${numerator}/${denominator}`;
+    }
+  }
+  return String(value);
+}
+
+// What a person typed in the bar -> { ok, value } or { ok: false, message }.
+function planSizeInput(raw) {
+  const value = parseSizeInput(raw);
+  if (value === null) return { ok: false, message: 'not a size (try 2, 1-1/2, 3/4 or 1.75)' };
+  if (value < SIZE_MIN_IN || value > SIZE_MAX_IN) return { ok: false, message: 'sizes run from 3/8" to 48"' };
+  return { ok: true, value };
+}
+
+// How to put `value` into native's pair: a standard option on the select, or "custom" + text.
+// `optionValues` are the select's own option values ("", "0.375", ..., "custom").
+function planSizeWrite(value, optionValues) {
+  const hit = (optionValues ?? []).find((o) => o !== '' && o !== 'custom' && Number(o) === value);
+  return hit !== undefined ? { mode: 'select', selectValue: hit } : { mode: 'custom', customText: formatSize(value) };
+}
+
+// The size a select + custom pair currently holds (null when blank or unreadable).
+function effectiveSize({ selectValue, customValue }) {
+  return parseSizeInput(selectValue === 'custom' ? customValue : selectValue);
+}
+
+// "Inlet / Outlet diameter (in)" -> ['inlet', 'outlet']
+function rolesFromLabel(label) {
+  return String(label ?? '').replace(/diameter.*$/i, '').split('/').map((r) => r.trim().toLowerCase()).filter(Boolean);
+}
+
+// Per-role sizes from the fields (each field covers one or more roles).
+//   fields [{ label, selectValue, customValue }]  ->  { role: number | null }
+function roleSizes(fields) {
+  const out = {};
+  for (const f of fields ?? []) {
+    const size = effectiveSize(f);
+    for (const role of rolesFromLabel(f.label)) out[role] = size;
+  }
+  return out;
+}
+
+// The max-size rule from the catalog ({ outlet: 'inlet', branch: 'inlet' } = outlet and branch may not be
+// larger than inlet). Returns messages for every broken pair; unknown sizes are skipped.
+function maxViolations(sizes, maximumProfileByPort) {
+  const out = [];
+  for (const [role, limitRole] of Object.entries(maximumProfileByPort ?? {})) {
+    const size = sizes?.[role], limit = sizes?.[limitRole];
+    if (size == null || limit == null) continue;
+    if (size > limit) out.push(`${role} ${formatSize(size)}" is larger than ${limitRole} ${formatSize(limit)}": the server will reject it`);
+  }
+  return out;
+}
+
+// May the bar write sizes right now? Only while a NEW placement is open and ready. Native's per-port
+// fields also edit an EXISTING selected fitting (a change there is a saved command), so anything
+// selected on the drawing, or a selection we cannot read, means no.
+//   f { panelOpen, ready, selectionReadable, selectedEntityId, fieldDisabled }
+function sizeWriteVerdict(f) {
+  const no = (reason, message) => ({ ok: false, reason, message });
+  if (!f?.panelOpen) return no('no-panel', 'port sizes: no fitting is being placed');
+  if (!f.ready) return no('not-ready', 'port sizes: wait until the app says "Finish inserts this fitting."');
+  if (!f.selectionReadable) return no('selection-unreadable', 'port sizes: could not tell whether something is selected, so nothing was changed');
+  if (f.selectedEntityId) {
+    return no('selected', 'port sizes: something is selected on the drawing, and changing its sizes would save. Deselect it first (or use the mouse)');
+  }
+  if (f.fieldDisabled) return no('locked', 'port sizes: that port is locked to the pipe it attaches to');
+  return { ok: true };
+}
+
+// The two rows shown at ready for a per-port fitting.
+const SIZE_CHOICES = [
+  { id: 'asis', text: 'Use port sizes as is' },
+  { id: 'edit', text: 'Edit port sizes' },
+];
+
+// Which fields the edit step asks about, in order: the ones that are not locked.
+function editableFields(fields) {
+  return (fields ?? []).filter((f) => !f.disabled);
+}
+
+// The state of the sizes step for the current placement.
+//   stage: 'idle' | 'choice' | 'edit' | 'confirmed' | 'dismissed'
+const SIZES_IDLE = { stage: 'idle', key: null, index: 0, drafts: {} };
+
+// A key that changes when the placement (or its family / set of fields) changes, so a stale
+// confirmation never carries over.
+function sizesKey({ placement, familyId, roles }) {
+  return `${placement}|${familyId ?? ''}|${(roles ?? []).join(',')}`;
+}
+
+// What the sizes step needs from the page this tick. Returns { action }:
+//   'none'    nothing to do (no per-port fitting, or not at ready)
+//   'open'    show the two rows
+//   'blocked' per-port fitting at ready, but something is selected (say so once)
+function sizesTickPlan({ state, key, perPort, ready, selectedEntityId, selectionReadable }) {
+  if (!perPort || !ready) return { action: 'none' };
+  if (!selectionReadable || selectedEntityId) return { action: 'blocked' };
+  if (state?.key === key && state.stage !== 'idle') return { action: 'none' };
+  return { action: 'open' };
+}
+
+// The recheck right before Finish: have the sizes changed since the person confirmed them?
+function sizesChanged(confirmed, current) {
+  const a = confirmed ?? {}, b = current ?? {};
+  const roles = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const r of roles) if ((a[r] ?? null) !== (b[r] ?? null)) return true;
+  return false;
+}
+
+// Extra conditions on Enter-to-Finish for a fitting with per-port sizes. Returns { ok } or
+// { ok: false, reason, message, reopen }. `rulesReadable` false = catalog unreadable: warn, never block.
+function sizesFinishGate({ perPort, stage, confirmed, current, violations, selectedEntityId, selectionReadable }) {
+  if (!perPort) return { ok: true };
+  if (!selectionReadable || selectedEntityId) {
+    return { ok: false, reason: 'sizes-selected', message: 'port sizes: something is selected on the drawing; deselect it before finishing', reopen: false };
+  }
+  if (stage !== 'confirmed') {
+    return { ok: false, reason: 'sizes-unconfirmed', message: 'port sizes: choose "Use port sizes as is" or edit them first', reopen: true };
+  }
+  if (sizesChanged(confirmed, current)) {
+    return { ok: false, reason: 'sizes-changed', message: 'port sizes changed since you confirmed them: confirm them again', reopen: true };
+  }
+  if ((violations ?? []).length) {
+    return { ok: false, reason: 'sizes-max', message: violations[0], reopen: true };
+  }
+  return { ok: true };
+}
+
+return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, planSizeInput, planSizeWrite, effectiveSize, rolesFromLabel, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields, SIZES_IDLE, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate};
+})();
+
   // ===== loader guard (src/core/pipe-table-core.js loaderGuard) =====
   const __guard = __m_pipe_table_core.loaderGuard(
     __m_pipe_host.createPipeHost({ doc: document, win: window, ids: __m_pipe_tables.PIPE_PAGE_IDS }).readPageFacts()
@@ -1546,12 +1820,17 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
     PIPE_NATIVE_CHANGED_MESSAGE, PIPE_REQUIRED_IDS,
     PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_BUTTON_ID, PIPE_FINISH_HINT_PREFIX,
     PIPE_FINISH_TOOLS, PIPE_FINISH_LATCH_MS, PIPE_PORT_ROLE_PATTERN, PIPE_LOG_MAX, PIPE_LOG_AFTER_MS,
+    PIPE_SIZE_IDS, PIPE_SIZE_TOOLS,
   } = __m_pipe_tables;
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict, hintWatch,
     portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF,
   } = __m_pipe_placement_core;
   const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
+  const {
+    planSizeInput, planSizeWrite, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields,
+    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize,
+  } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
@@ -1560,7 +1839,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
   const { createPipeHost } = __m_pipe_host;
 
   const host = createPipeHost({
-    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, unavailableMark: PIPE_UNAVAILABLE_MARK,
+    doc: document, win: window, ids: PIPE_PAGE_IDS, panelIds: PIPE_PANEL_IDS, sizeIds: PIPE_SIZE_IDS, unavailableMark: PIPE_UNAVAILABLE_MARK,
   });
 
   // Second line of defence behind the loader's own check (a direct paste of dist/ skips the loader).
@@ -1702,6 +1981,12 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
     ensureMenu();
     menuEl.innerHTML = '';
     let highlighted = null;
+    if (sizesUi.active && sizesUi.header) {
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
+      head.textContent = sizesUi.header;
+      menuEl.appendChild(head);
+    }
     if (prompt.active && prompt.header) {
       const head = document.createElement('div');
       head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
@@ -1712,7 +1997,9 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
       const el = document.createElement('div');
       el.className = 'rw-pipe-item';
       let usable, color, label;
-      if (row.system) {
+      if (row.size) {
+        usable = true; color = COLORS.tool; label = row.size.text;
+      } else if (row.system) {
         usable = true; color = COLORS.system; label = row.system.name;
       } else if (row.prompt) {
         usable = row.prompt.kind === 'category' ? row.prompt.usable : row.prompt.entry.usable;
@@ -1730,7 +2017,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
       el.textContent = label;
       if (i === menuHighlight) highlighted = el;
       el.addEventListener('mousedown', function(ev){ ev.preventDefault(); }); // keep focus through the click
-      el.addEventListener('click', function(){ if (row.system) pickSystem(row.system); else if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
+      el.addEventListener('click', function(){ if (row.size) pickSizeChoice(row.size); else if (row.system) pickSystem(row.system); else if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
       menuEl.appendChild(el);
     });
     positionMenu();
@@ -1746,6 +2033,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
   }
   function openMenu(query) {
     if (prompt.active) { refreshPrompt(); return; }
+    if (sizesUi.active) { return; } // the sizes step owns the menu; typing is the value being entered
     const sq = systemQuery(query);
     if (sq !== null) { openSystemMenu(sq); return; }
     menuItems = rowsFor(query);
@@ -1882,6 +2170,163 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
     portNoteShown = true;
     status('click: ' + role);
   }
+
+  /* ---------- Step 3b: port sizes on reducing fittings (keyboard only) ---------- */
+  // At ready, for a fitting with per-port size fields, the bar shows two rows ("Use port sizes as is" /
+  // "Edit port sizes"). Editing collects typed sizes and writes them into native's own select + custom
+  // pair only when a NEW placement is open and ready and nothing is selected (on an existing selected
+  // fitting, native saves a size change). Nothing here finishes: Enter-to-Finish stays its own press.
+  const sizesUi = { active: false, header: '' };
+  let sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null };
+  let placementCount = 0, panelWasOpen = false, sizesBlockedWarned = false, rulesUnreadableWarned = false;
+
+  function sizesFacts(snap) {
+    const pf = host.readPortFields();
+    const sel = host.readSelection();
+    const famId = host.readChosenFamilyId();
+    const ready = snap.open && String(snap.hint || '').trim().startsWith(PIPE_FINISH_HINT_PREFIX) && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1;
+    const key = sizesKey({ placement: placementCount, familyId: famId, roles: pf.fields.map(function(f){ return f.role; }) });
+    return { pf: pf, sel: sel, famId: famId, ready: ready, key: key, current: roleSizes(pf.fields) };
+  }
+  function currentViolations(f) {
+    if (!f.pf.present || !f.famId) return [];
+    const rules = host.readFamilyRules(f.famId);
+    if (!rules.readable) return null; // unreadable: warn, never block
+    return maxViolations(f.current, rules.maximumProfileByPort);
+  }
+  // The extra conditions Enter-to-Finish must meet for a fitting with per-port sizes.
+  function currentSizesGate(snap) {
+    const f = sizesFacts(snap);
+    const v = currentViolations(f);
+    return sizesFinishGate({
+      perPort: f.pf.present && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1,
+      stage: sizes.key === f.key ? sizes.stage : 'idle', confirmed: sizes.confirmed, current: f.current,
+      violations: v || [], selectedEntityId: f.sel.selectedEntityId, selectionReadable: f.sel.selectionReadable,
+    });
+  }
+  function resetSizes() {
+    sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null };
+    sizesBlockedWarned = false; rulesUnreadableWarned = false;
+    if (sizesUi.active) { sizesUi.active = false; sizesUi.header = ''; hideMenu(); }
+  }
+  function renderSizesChoice() {
+    sizesUi.active = true;
+    sizesUi.header = 'Port sizes: pick one (Enter or Space)';
+    menuItems = SIZE_CHOICES.map(function(c){ return { size: c }; });
+    menuHighlight = 0;
+    ensureMenu(); renderMenu();
+  }
+  function renderSizesEdit(field) {
+    sizesUi.active = true;
+    const cur = formatSize(effectiveSize(field) || 0);
+    sizesUi.header = field.role + ' diameter (now ' + (cur ? cur + '"' : 'blank') + '): type a size, Enter = keep, Esc = back. Use 2-1/2, not 2 1/2';
+    menuItems = []; menuHighlight = -1;
+    ensureMenu();
+    menuEl.innerHTML = '';
+    const head = document.createElement('div');
+    head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+    head.textContent = sizesUi.header;
+    menuEl.appendChild(head);
+    positionMenu();
+    menuEl.style.display = 'block';
+  }
+  function openSizesChoice() {
+    sizes.stage = 'choice'; sizes.index = 0; sizes.drafts = {};
+    sizes.key = sizesFacts(host.readPanel()).key;
+    mountBar();
+    if (!inputEl) return;
+    inputEl.value = '';
+    inputEl.focus();
+    renderSizesChoice();
+  }
+  function sizeTick(snap) {
+    if (!snap.open) { if (panelWasOpen) resetSizes(); panelWasOpen = false; return; }
+    if (!panelWasOpen) { placementCount += 1; panelWasOpen = true; resetSizes(); }
+    const f = sizesFacts(snap);
+    if (sizes.key !== null && sizes.key !== f.key) { const keep = placementCount; resetSizes(); placementCount = keep; }
+    if (!f.ready) { if (sizesUi.active) { sizesUi.active = false; sizesUi.header = ''; hideMenu(); } return; }
+    const plan = sizesTickPlan({
+      state: sizes, key: f.key, perPort: f.pf.present, ready: f.ready,
+      selectedEntityId: f.sel.selectedEntityId, selectionReadable: f.sel.selectionReadable,
+    });
+    if (plan.action === 'blocked') {
+      if (!sizesBlockedWarned) { sizesBlockedWarned = true; status(sizeWriteVerdict({ panelOpen: true, ready: true, selectionReadable: f.sel.selectionReadable, selectedEntityId: f.sel.selectedEntityId }).message); }
+      return;
+    }
+    if (plan.action === 'open' && !prompt.active) { sizes.key = f.key; openSizesChoice(); }
+    // The menu goes away when the bar loses focus; bring the current step's rows back (no focus change).
+    if (sizesUi.active && (!menuEl || menuEl.style.display === 'none')) {
+      if (sizes.stage === 'choice') renderSizesChoice();
+      else if (sizes.stage === 'edit') { const fs = editableFields(f.pf.fields); if (fs[sizes.index]) renderSizesEdit(fs[sizes.index]); }
+    }
+  }
+  function pickSizeChoice(choice) {
+    if (choice.id === 'asis') { confirmSizes('kept'); return; }
+    // edit: ask for each editable port in on-screen order
+    sizes.stage = 'edit'; sizes.index = 0; sizes.drafts = {};
+    askNextSize();
+  }
+  function askNextSize() {
+    const snap = host.readPanel();
+    const f = sizesFacts(snap);
+    const fields = editableFields(f.pf.fields);
+    if (sizes.index >= fields.length) { applySizes(f, fields); return; }
+    if (inputEl) { inputEl.value = ''; inputEl.focus(); }
+    renderSizesEdit(fields[sizes.index]);
+  }
+  function enterSizeValue() {
+    const snap = host.readPanel();
+    const f = sizesFacts(snap);
+    const fields = editableFields(f.pf.fields);
+    const field = fields[sizes.index];
+    if (!field) { openSizesChoice(); return; }
+    const typed = inputEl.value.trim();
+    if (typed) {
+      const plan = planSizeInput(typed);
+      if (!plan.ok) { status('port sizes: ' + plan.message); return; }
+      sizes.drafts[field.cap] = plan.value;
+    }
+    sizes.index += 1;
+    askNextSize();
+  }
+  function applySizes(f, fields) {
+    const caps = Object.keys(sizes.drafts);
+    for (let i = 0; i < caps.length; i++) {
+      const field = fields.filter(function(x){ return x.cap === caps[i]; })[0];
+      const fresh = sizesFacts(host.readPanel());
+      const verdict = sizeWriteVerdict({
+        panelOpen: host.readPanel().open, ready: fresh.ready, selectionReadable: fresh.sel.selectionReadable,
+        selectedEntityId: fresh.sel.selectedEntityId, fieldDisabled: !field || field.disabled,
+      });
+      if (!verdict.ok) { status(verdict.message); openSizesChoice(); return; }
+      const write = planSizeWrite(sizes.drafts[caps[i]], field.optionValues);
+      logAction('sizes', 'set ' + field.role + ' to ' + formatSize(sizes.drafts[caps[i]]) + '"');
+      if (!host.writePortSize(field.cap, write).ok) { unlogLast(); status('port sizes: could not change ' + field.role); openSizesChoice(); return; }
+    }
+    // Native focuses its custom box when "Custom" is picked: take the keyboard back once, and guard the keys.
+    labelGuardUntil = Date.now() + LABEL_GUARD_MS;
+    setTimeout(refocusBarOnce, 0);
+    confirmSizes(caps.length ? 'set' : 'kept');
+  }
+  function confirmSizes(how) {
+    const snap = host.readPanel();
+    const f = sizesFacts(snap);
+    sizes.stage = 'confirmed'; sizes.key = f.key; sizes.confirmed = f.current; sizes.drafts = {};
+    sizesUi.active = false; sizesUi.header = '';
+    hideMenu();
+    if (inputEl) inputEl.value = '';
+    const shown = Object.keys(f.current).map(function(r){ return r + ' ' + (f.current[r] ? formatSize(f.current[r]) + '"' : '?'); }).join(', ');
+    const v = currentViolations(f);
+    if (v === null) {
+      if (!rulesUnreadableWarned) { rulesUnreadableWarned = true; }
+      status('port sizes ' + how + ' (' + shown + '). Could not read the max-size rules, so the server will check them. Enter finishes');
+    } else if (v.length) {
+      status('port sizes ' + how + ' (' + shown + '). ' + v[0] + '. Enter will not finish until this is fixed');
+    } else {
+      status('port sizes ' + how + ' (' + shown + '). Enter finishes');
+    }
+  }
+
   function finishFacts(e) {
     const snap = host.readPanel();
     const fin = host.readFinish(PIPE_FINISH_BUTTON_ID);
@@ -1891,6 +2336,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
       panelOpen: snap.open, hint: snap.hint, tool: snap.tool,
       allowedTools: PIPE_FINISH_TOOLS, finishPrefix: PIPE_FINISH_HINT_PREFIX,
       latched: finishLatch.clicked,
+      sizesGate: currentSizesGate(snap),
       button: {
         found: fin.found, id: fin.id, expectedId: PIPE_FINISH_BUTTON_ID, visible: fin.visible,
         disabled: fin.disabled, ariaDisabled: fin.ariaDisabled,
@@ -1902,6 +2348,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
   // Returns true when the key was dealt with (so the generic Enter path is skipped).
   function tryFinish(e) {
     const first = finishVerdict(finishFacts(e));
+    if (!first.ok && first.reopen && !sizesUi.active) openSizesChoice();
     if (!first.ok) { if (first.message) status(first.message); return first.reason !== 'not-enter' && first.reason !== 'bar' && first.reason !== 'no-panel' && first.reason !== 'phase'; }
     const second = finishVerdict(finishFacts(e)); // fresh read right before the click
     if (!second.ok) { if (second.message) status(second.message); return true; }
@@ -1918,7 +2365,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
   function refocusBarOnce() {
     // Once, never in a loop; only if native really did take focus into its own panel.
     if (!inputEl || document.activeElement === inputEl) return;
-    if (host.readPanel().open && host.focusInPanel()) inputEl.focus();
+    if (host.readPanel().open && (host.focusInPanel() || host.isPortControl(document.activeElement))) inputEl.focus();
   }
   // Called every 250ms: opens the prompt when native reaches the label phase, closes it when it leaves.
   function promptTick() {
@@ -1929,6 +2376,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
       panelOpen: snap.open, now: Date.now(), expireMs: PIPE_FINISH_LATCH_MS,
     });
     updatePortNote(snap);
+    sizeTick(snap);
     // Safety net: a hint we don't recognise means native changed this step. One line, nothing else.
     const watch = hintWatch({ open: snap.open, hint: snap.hint, prefixes: PIPE_HINT_PREFIXES, lastWarned: unknownHintWarned });
     unknownHintWarned = watch.hint;
@@ -1991,8 +2439,15 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
       // .value fires no input event, so the list stays put and keeps cycling over the same rows.
       if (menuHighlight >= 0 && menuItems[menuHighlight]) {
         const row = menuItems[menuHighlight];
-        inputEl.value = row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
+        inputEl.value = row.size ? '' : row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
       }
+      return;
+    }
+    if (sizesUi.active && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      if (sizes.stage === 'choice') { if (menuHighlight >= 0 && menuItems[menuHighlight]) pickSizeChoice(menuItems[menuHighlight].size); }
+      else if (sizes.stage === 'edit') enterSizeValue();
       return;
     }
     if (prompt.active) {
@@ -2029,6 +2484,15 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
       if (typed && plan.action !== 'status') { if (runEntry(plan.entry)) clearBar(); return; }
       if (menuHighlight >= 0 && menuItems[menuHighlight]) { runAndClear(menuItems[menuHighlight].entry); return; }
       if (typed) status(plan.message);
+      return;
+    }
+    if (e.key === 'Escape' && sizesUi.active) {
+      // Esc steps back: editing -> the two rows; the two rows -> closed (the next Esc reaches native and cancels).
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      if (sizes.stage === 'edit') { openSizesChoice(); return; }
+      sizes.stage = 'dismissed'; sizesUi.active = false; sizesUi.header = ''; hideMenu();
+      if (inputEl) inputEl.value = '';
       return;
     }
     if (e.key === 'Escape') {
@@ -2069,7 +2533,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
     window.addEventListener(type, function(e){
       if (Date.now() > labelGuardUntil) return;
       if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
-      if (!host.isLabelTrigger(e.target)) return;
+      if (!host.isLabelTrigger(e.target) && !host.isPortControl(e.target)) return;
       e.preventDefault(); e.stopImmediatePropagation();
     }, true);
   });
@@ -2150,6 +2614,7 @@ return {appendLog, makeLogEntry, parseRevision, formatLog};
   RW._pipeTable = currentTable;
   RW._pipeTableInfo = function(){ return derive().info; };
   RW._pipeOwn = own;
+  RW._pipeHost = host; // for tests and console diagnosis
   RW._pipePrompt = prompt;
   const first = derive();
   RW._commitStatus && RW._commitStatus('piping command line ready: ' + first.tools.length + ' tools, '

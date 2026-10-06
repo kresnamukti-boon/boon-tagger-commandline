@@ -196,6 +196,8 @@ export function finishVerdict(f) {
   if (!(f.allowedTools ?? []).includes(lower(f.tool))) {
     return no('tool', 'Finish from the bar is only for fitting and fixture: use the mouse for this one');
   }
+  // Step 3b: a fitting with per-port sizes needs its sizes confirmed first (see pipe-size-core.js).
+  if (f.sizesGate && f.sizesGate.ok === false) return { ...no(f.sizesGate.reason, f.sizesGate.message), reopen: !!f.sizesGate.reopen };
   if (f.latched) return no('latched');
   const b = f.button ?? {};
   if (!b.found || b.id !== b.expectedId || b.forbidden || !b.visible) return no('button', 'Finish is not available on this page right now');

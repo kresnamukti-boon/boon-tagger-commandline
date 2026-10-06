@@ -334,6 +334,24 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
   Enter handling; the command line only needs to call it (with the same enabled checks) when the pick came from the bar.
 - Never clicked: the MEC-329 size-mismatch toast's "Resize anyway" (re-submits a rejected command with the check off).
 
+### Step 3b (port sizes)
+
+- `src/core/pipe-size-core.js`: `parseSizeInput`/`formatSize` (copies of native's `parsePipeDiameter`/`formatPipeDiameter`,
+  checked against native's file by `test/pipe-size-core.test.mjs` when the fixture is present), `planSizeWrite`,
+  `roleSizes`, `maxViolations`, `sizeWriteVerdict`, the choice/edit state helpers, `sizesFinishGate`. Host: `readPortFields`,
+  `readFamilyRules` (from `#graph-session-bootstrap` JSON), `writePortSize` (the only writer; re-checks its own guard).
+- **Hazard (user-found):** native's per-port fields also edit an EXISTING selected fitting: there a select change calls
+  `updatePortResizeFacts` (a saved command) and the custom box saves on blur/Enter. During a placement
+  (`usePerPortPlacement`) a change only toggles the custom box (and focuses it); values are read at Finish via
+  `placementPortDiameters()`. So sizes are written only with a new placement open at ready and nothing selected
+  (`__graphDebug.selectedEntityId`, fail closed), checked in the shell and again inside `host.writePortSize`.
+- Choosing "Custom" makes native call `custom.focus()`: the bar takes focus back once and the same 700 ms key guard covers the
+  size controls. Native reseeds only when its seedKey changes (family, box, detected ports, assigned ports); the Finish-time
+  recheck is a backstop. Decisions: "as is" confirms and a second Enter finishes (the user's bracket left this open; the
+  safer reading was taken, one line to change); a max violation blocks OUR Enter-to-Finish (the server stays the real check);
+  an unreadable catalog warns and does not block. Upstream: none of the key/focus plumbing; native can read its own sizes
+  and rules directly, and should keep the "never touch an existing selected fitting" rule if a command line can set sizes.
+
 ### Action log
 
 `src/core/pipe-log-core.js` (`appendLog`, `makeLogEntry`, `parseRevision`, `formatLog`) + `logAction` in the shell:

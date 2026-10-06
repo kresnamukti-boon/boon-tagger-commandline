@@ -4,7 +4,7 @@
 // page and against the Node test harness.
 import { isElementVisible } from '../features/actions.js';
 
-export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unavailable' }) {
+export function createPipeHost({ doc, win, ids, panelIds = {}, sizeIds = {}, unavailableMark = 'unavailable' }) {
   function railButtons() {
     return Array.from(doc.querySelectorAll(ids.toolSelector));
   }
@@ -160,6 +160,92 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
       if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
       el.click();
       return true;
+    },
+
+    // The selection facts used by every guard that must never touch an existing item.
+    readSelection() {
+      const debug = win.__graphDebug;
+      const readable = !!debug && typeof debug === 'object' && 'selectedEntityId' in debug;
+      return { selectionReadable: readable, selectedEntityId: readable ? (debug.selectedEntityId || null) : null };
+    },
+
+    // Native's per-port size fields: [{ cap, label, selectValue, customValue, disabled, customHidden, optionValues }]
+    // in on-screen order. `present` is false when the container is missing or hidden (a single-size fitting).
+    readPortFields() {
+      const cont = doc.getElementById(sizeIds.container);
+      if (!cont || cont.hidden) return { present: false, fields: [] };
+      const fields = [];
+      for (const lab of cont.querySelectorAll('label')) {
+        const select = lab.querySelectorAll('select')[0];
+        const custom = lab.querySelectorAll('input')[0];
+        if (!select) continue;
+        const cap = select.getAttribute('data-capture-control-id') || '';
+        fields.push({
+          cap, role: cap.indexOf(sizeIds.capturePrefix) === 0 ? cap.slice(sizeIds.capturePrefix.length) : cap,
+          label: text(lab.querySelectorAll('span')[0]),
+          selectValue: select.value, customValue: custom ? custom.value : '',
+          disabled: !!select.disabled, customHidden: custom ? !!custom.hidden : true,
+          optionValues: Array.from(select.options || []).map((o) => o.value),
+        });
+      }
+      return { present: fields.length > 1, fields };
+    },
+
+    // The family id currently chosen in native's label menu (the aria-selected option), or null.
+    readChosenFamilyId() {
+      const menu = doc.getElementById(panelIds.menu);
+      if (!menu) return null;
+      const hit = Array.from(menu.querySelectorAll(panelIds.optionSelector)).find((b) => b.getAttribute('aria-selected') === 'true');
+      return hit ? hit.getAttribute('data-family-id') : null;
+    },
+
+    // profileCompatibility of one family from the page's own catalog JSON, or { readable: false }.
+    readFamilyRules(familyId) {
+      try {
+        const el = doc.getElementById(sizeIds.bootstrap);
+        const data = JSON.parse(el.textContent);
+        const fam = data.catalogSupportedUi.fittingFamilies.find((f) => f.id === familyId);
+        if (!fam) return { readable: false };
+        return { readable: true, maximumProfileByPort: (fam.profileCompatibility && fam.profileCompatibility.maximumProfileByPort) || {} };
+      } catch (err) {
+        return { readable: false };
+      }
+    },
+
+    // Put one size into one port's select + custom pair (what a person's edit does). The ONLY place sizes
+    // are written. It re-checks the guard itself: panel open, nothing selected, the field not locked.
+    // During a placement a change only toggles the custom box (values are read at Finish); on an existing
+    // selected fitting the same change would be a saved command, hence the selection check.
+    writePortSize(cap, plan) {
+      const panel = doc.getElementById(panelIds.panel);
+      const sel = this.readSelection();
+      if (!panel || panel.hidden || !sel.selectionReadable || sel.selectedEntityId) return { ok: false };
+      const cont = doc.getElementById(sizeIds.container);
+      if (!cont || cont.hidden) return { ok: false };
+      let select = null, custom = null;
+      for (const lab of cont.querySelectorAll('label')) {
+        const s = lab.querySelectorAll('select')[0];
+        if (s && s.getAttribute('data-capture-control-id') === cap) { select = s; custom = lab.querySelectorAll('input')[0] || null; }
+      }
+      if (!select || select.disabled) return { ok: false };
+      const fire = (el, type) => el.dispatchEvent(new win.Event(type, { bubbles: true }));
+      if (plan.mode === 'select') {
+        select.value = plan.selectValue;
+        fire(select, 'change');
+      } else {
+        if (!custom) return { ok: false };
+        select.value = 'custom';
+        fire(select, 'change');
+        custom.value = plan.customText;
+        fire(custom, 'input'); fire(custom, 'change');
+      }
+      return { ok: true, selectValue: select.value, customValue: custom ? custom.value : '' };
+    },
+
+    // Is this one of native's per-port size controls (a select or custom box)?
+    isPortControl(el) {
+      const c = el && String(el.getAttribute && el.getAttribute('data-capture-control-id') || '');
+      return !!c && c.indexOf(sizeIds.capturePrefix) === 0;
     },
 
     // Which of these element ids are not on the page right now?

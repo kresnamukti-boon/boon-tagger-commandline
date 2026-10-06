@@ -44,7 +44,9 @@
       "graph-cancel-route",
       "graph-pipe-bbox-op-panel",
       "graph-system-select",
-      "graph-toast-stack"
+      "graph-toast-stack",
+      "graph-pipe-port-diameters",
+      "graph-session-bootstrap"
     ],
     "strings": [
       "data-trade=\"piping\"",
@@ -92,7 +94,16 @@
       "Enter the new diameter above, then Finish.",
       "→ to ",
       "label: 'Resize anyway'",
-      "bboxHint.textContent = operation.phase === 'box'"
+      "bboxHint.textContent = operation.phase === 'box'",
+      "document.getElementById('graph-pipe-port-diameters')",
+      "select.setAttribute('data-capture-control-id', `pipe-diameter-${group[0]}`)",
+      "custom.setAttribute('data-capture-control-id', `pipe-diameter-${group[0]}-custom`)",
+      "return 'Choose diameter'",
+      "if (select.value === 'custom') custom.focus?.();",
+      "select.addEventListener('change', toggleCustom);",
+      "const groups = family.profileCompatibility.sameProfileGroups ?? [];",
+      "Decimal or fraction. Range 3/8 to 48 inches.",
+      "const contract = bootstrap.catalogSupportedUi;"
     ]
   },
   "tradePackValues": {
@@ -159,7 +170,8 @@
       "this.update({ ...op, phase: 'submitting' });",
       "phase: 'ready' }",
       "missingPorts()",
-      "chooseFamily(id) {"
+      "chooseFamily(id) {",
+      "maximumProfileByPort"
     ]
   }
 }
