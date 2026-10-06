@@ -180,7 +180,7 @@ export function targetForbidden(target, { forbiddenTexts = [], forbiddenContaine
   return forbiddenContainerIds.some((id) => ancestors.includes(id));
 }
 
-// May Enter in the bar click Finish right now? Every condition is re-read by the caller at the moment
+// May Enter (or Space, per `finishKeys`) in the bar click Finish right now? Every condition is re-read by the caller at the moment
 // of the click and this runs again. Returns { ok: true } or { ok: false, reason, message } where
 // `message` is null when the key should just do nothing (the bar says something only where the
 // person could be confused).
@@ -188,7 +188,7 @@ export function targetForbidden(target, { forbiddenTexts = [], forbiddenContaine
 //       latched, button: { found, id, expectedId, visible, disabled, ariaDisabled, forbidden } }
 export function finishVerdict(f) {
   const no = (reason, message = null) => ({ ok: false, reason, message });
-  if (f?.key !== 'Enter') return no('not-enter');
+  if (!(f?.finishKeys ?? ['Enter']).includes(f?.key)) return no('not-enter');
   if (f.repeat) return no('repeat');
   if (!f.barFocused || !f.barEmpty) return no('bar');
   if (!f.panelOpen) return no('no-panel');
@@ -196,6 +196,8 @@ export function finishVerdict(f) {
   if (!(f.allowedTools ?? []).includes(lower(f.tool))) {
     return no('tool', 'Finish from the bar is only for fitting and fixture: use the mouse for this one');
   }
+  // Step 3b: a fitting with per-port sizes needs its sizes confirmed first (see pipe-size-core.js).
+  if (f.sizesGate && f.sizesGate.ok === false) return { ...no(f.sizesGate.reason, f.sizesGate.message), reopen: !!f.sizesGate.reopen };
   if (f.latched) return no('latched');
   const b = f.button ?? {};
   if (!b.found || b.id !== b.expectedId || b.forbidden || !b.visible) return no('button', 'Finish is not available on this page right now');
@@ -220,4 +222,46 @@ export function finishLatchStep({ latch, phase, panelOpen, now, expireMs }) {
   if (latch.leftReady) return FINISH_LATCH_OFF;
   if (now - latch.at > expireMs) return FINISH_LATCH_OFF;
   return latch;
+}
+
+/* ---------- Step 3c: Adjust ports ---------- */
+
+// "branch_a" -> "branch A", "inlet" -> "inlet". Display only: native's own role names are unchanged.
+export function roleDisplayName(role) {
+  const r = String(role ?? '');
+  const m = r.match(/^(.*)_([a-z])$/);
+  return m ? `${m[1].replace(/_/g, ' ')} ${m[2].toUpperCase()}` : r.replace(/_/g, ' ');
+}
+
+// Where `role` sits in the family's port list: { n, N, done } (n is 1-based; done = the roles before it),
+// or null when the role is not in the list. Exact only while Adjust ports is on, because Adjust asks for
+// every role from scratch, in catalog order.
+export function portProgress(role, portContract) {
+  const list = portContract ?? [];
+  const i = list.indexOf(role);
+  return i === -1 ? null : { n: i + 1, N: list.length, done: list.slice(0, i) };
+}
+
+// The line shown while native asks for a port. `adjustOn` is whether native's Adjust ports box is ticked.
+// With Adjust on and the roles known: "click: outlet (2 of 4)  done: inlet  (click an assigned port again to undo)".
+// Otherwise role only (native skips the ports it already detected, so a count there would be a guess).
+export function portLine({ role, adjustOn, portContract }) {
+  const name = roleDisplayName(role);
+  const prog = adjustOn ? portProgress(role, portContract) : null;
+  if (!prog) return 'click: ' + name;
+  const done = prog.done.length ? '  done: ' + prog.done.map(roleDisplayName).join(', ') : '';
+  return `click: ${name} (${prog.n} of ${prog.N})${done}  (click an assigned port again to undo)`;
+}
+
+// May the bar tick or untick Adjust ports right now? Only while a placement panel is open in the ready or
+// ports phase and native's own checkbox is there, visible and enabled. It saves nothing (native keeps it as
+// placement state), but it does reset which port is which, so it is never done by accident.
+//   f { panelOpen, phase, found, visible, disabled }
+export function adjustVerdict(f) {
+  const no = (reason, message) => ({ ok: false, reason, message });
+  if (!f?.panelOpen) return no('no-panel', 'adjust ports: no fitting is being placed');
+  if (f.phase !== 'ready' && f.phase !== 'ports') return no('phase', 'adjust ports: choose the fitting label first');
+  if (!f.found || !f.visible) return no('no-checkbox', 'adjust ports: the app shows no Adjust ports option here (it needs detected pipe intersections and a chosen fitting)');
+  if (f.disabled) return no('disabled', 'adjust ports: the app has it disabled right now');
+  return { ok: true };
 }

@@ -105,11 +105,13 @@ the same way as above, on a **piping** page.
   - **Port prompt:** while the app asks for a port ("Click the detected intersection for <role>."), the
     bar shows `click: <role>`. Display only: it takes no focus and clicks nothing, so Esc and your
     mouse behave as normal. It shows no "n of N", because the app skips ports it already detected.
-  - **Enter finishes (the one thing that saves).** With the bar focused and empty, **Enter** presses the
+  - **Enter or Space finishes (the one thing that saves).** With the bar focused and empty, **Enter or Space** presses the
     app's own Finish button, and only when: the panel is open, its hint starts with "Finish inserts this
     fitting.", the tool is `fitting` or `fixture`, and Finish is visible and not disabled (the app
-    disables it for an incomplete port form). Space never finishes, a held-down Enter never finishes, and
-    typed words (`finish`, `save`) are unknown commands. After one click the bar ignores Enter until the app
+    disables it for an incomplete port form). A held-down key never finishes, text typed in the bar means the key
+    confirms that command instead, and typed words (`finish`, `save`) are unknown commands. Space pressed while
+    the keyboard is NOT in the bar does not save: it moves the keyboard to the bar and asks you to press again.
+    After one click the bar ignores Enter and Space until the app
     has shown "Saving pipe and fitting…" and come back (a failed save), closed the panel, or 1.5 s passed
     with no sign it started. Other tools (valve, equipment, cut, transition) are finished with the mouse.
   - **Never clicked, ever:** the size-mismatch toast's **Resize anyway** button (refused by its text and
@@ -121,6 +123,35 @@ the same way as above, on a **piping** page.
   revision before and 2 s after. Only the newest 50 are kept, in memory only (nothing is written to the page,
   browser storage or any server). Read it from the console: `__RW._pipeLogPrint()` (one line each) or `__RW._pipeLog`.
   It lets you tell the bar's saves from your own (mouse, the app's own Enter, undo).
+- **Port sizes for reducing fittings (Step 3b).** When the fitting you placed has separate size fields per port
+  (reducing tee/wye, reducers, reducing elbow) and the app says "Finish inserts this fitting.", the bar opens two
+  rows by itself: **Use port sizes as is** or **Edit port sizes** (Enter or Space picks the highlighted one).
+  - *As is* keeps whatever the app seeded. The bar then says "Enter finishes"; a **second Enter** finishes (the
+    first one only confirms, so a saving Enter is always its own press).
+  - *Edit* asks for each unlocked port in the app's order: type a size (`2`, `2-1/2`, `3/4`, `1.75`; a space would
+    confirm, so write 2-1/2 with a hyphen) and Enter, or just Enter to keep it. Sizes run 3/8" to 48". Esc goes
+    back to the two rows, and the next Esc closes them (then the app's own Esc cancels the placement). After the
+    last port the values are written into the app's own size fields (a standard size on the dropdown, anything
+    else as Custom + text); Enter then finishes.
+  - **Max rule:** if outlet or branch is larger than inlet (read live from the page's own catalog), the bar says the
+    server will reject it, and Enter-to-Finish stays blocked until it is fixed. If the catalog can't be read, the
+    bar warns once and does not block.
+  - **It never edits an existing fitting.** The app's size fields also edit a selected fitting, where a change is a
+    saved command. The bar writes sizes only while a NEW placement is open and ready and nothing is selected on the
+    drawing (or it can't tell): then it refuses and says why. Sizes confirmed earlier are re-checked right before
+    Finish (a changed size means "confirm again").
+- **Adjust ports (choose which intersection is the inlet, outlet, branch).** The app's "Adjust ports" box is only
+  there when it has detected pipe intersections and a fitting is chosen. From the bar:
+  - type **`adjust`** (or `ports`, `adj`) + Enter/Space while the fitting panel is open (at ready, or while it asks
+    for a port): the bar ticks the app's box once. Type it again to untick (back to automatic). For a reducing
+    fitting the same thing is the third row, "Adjust ports (click each port)". It is listed only when it can be used.
+  - the bar then guides the clicks, with an exact count because Adjust asks for every port from scratch, e.g.
+    `click: outlet (2 of 4)  done: inlet  (click an assigned port again to undo)`. A cross has four ports:
+    inlet, outlet, **branch A**, **branch B**. Outside Adjust mode the line is just `click: <role>`.
+  - **You still click the intersections with the mouse** (the app assigns each role from a canvas click). The keyboard
+    starts it and shows the order; nothing is saved by ticking the box.
+  - Assigning ports reseeds the sizes, so after the last click the size rows ask again (an old confirmation is
+    forgotten, even if you ticked the box with the mouse).
 - **If native changes under us** (safety net). Two checks make the bar stop instead of guess:
   - if the fitting panel is open but its hint sentence is one we don't recognise, the bar shows one
     line, "Native changed: use the mouse for this step", and does nothing else for that step (no

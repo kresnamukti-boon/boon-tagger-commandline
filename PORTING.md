@@ -320,8 +320,10 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
 - `finishVerdict` / `finishLatchStep` / `portRoleFromHint` / `targetForbidden` in `src/core/pipe-placement-core.js`;
   `PIPE_FINISH_*`, `PIPE_FORBIDDEN_BUTTON_TEXTS` (`resize anyway`) and `PIPE_FORBIDDEN_CONTAINER_IDS`
   (`graph-toast-stack`) in `src/pipe/pipe-tables.js`.
-- Enter in the bar clicks `#graph-finish-route` only for `fitting`/`fixture` in the ready phase (hint starts with
-  "Finish inserts this fitting."), never Space, never on repeat, never with text typed. Finish stays in
+- Enter or Space (`PIPE_FINISH_KEYS`; Space was added at the user's request, the same rules as Enter) in the bar clicks
+  `#graph-finish-route` only for `fitting`/`fixture` in the ready phase (hint starts with
+  "Finish inserts this fitting."), never on repeat, never with text typed, never when the bar lacks focus (Space elsewhere
+  just focuses the bar). Finish stays in
   `PIPE_FORBIDDEN_BUTTON_IDS` for every other path; the one deliberate click goes through `host.clickFinish`,
   which re-checks the button right before clicking. Native disables Finish for an incomplete port form, a
   missing transition size, or a phase other than ready; we only obey that.
@@ -333,6 +335,38 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
 - Upstream: none of the key/focus plumbing is needed. Native already has `pipeBboxController.finish()` and its own
   Enter handling; the command line only needs to call it (with the same enabled checks) when the pick came from the bar.
 - Never clicked: the MEC-329 size-mismatch toast's "Resize anyway" (re-submits a rejected command with the check off).
+
+### Step 3c (Adjust ports)
+
+- `adjustVerdict`, `portProgress`, `portLine`, `roleDisplayName` in `src/core/pipe-placement-core.js`; `PIPE_ADJUST` and
+  `PIPE_ADJUST_ENTRY` (a typed entry with no button; listed only while usable) in `src/pipe/pipe-tables.js`; host
+  `readAdjustPorts` / `clickAdjustPorts` (finds the checkbox by its label text " Adjust ports": it has no id) and
+  `readFamilyRules` now also returns `portContract`; `sizeChoiceRows` adds the third row.
+- Native: the box is hidden unless `operation.detectedPorts?.length && operation.familyId`; its `change` calls
+  `toggleAdjustPorts` (placement state, no command). Ticking resets `ports` and starts the ports phase, asking every role
+  in catalog order (so "n of N" is exact only then; without Adjust native skips detected ports and a count would be a guess).
+  Roles: 1 port [inlet]; 2 [inlet, outlet]; 3 [inlet, outlet, branch]; cross [inlet, outlet, branch_a, branch_b].
+- The sizes step forgets its confirmation whenever the phase leaves ready (assigning ports reseeds sizes), whether the box
+  was ticked from the bar or the mouse. Upstream: native already owns the controller; none of the key/focus plumbing is
+  needed. Keyboard-only picking of the intersections themselves (numbered markers) is Step 3d, deliberately not built.
+
+### Step 3b (port sizes)
+
+- `src/core/pipe-size-core.js`: `parseSizeInput`/`formatSize` (copies of native's `parsePipeDiameter`/`formatPipeDiameter`,
+  checked against native's file by `test/pipe-size-core.test.mjs` when the fixture is present), `planSizeWrite`,
+  `roleSizes`, `maxViolations`, `sizeWriteVerdict`, the choice/edit state helpers, `sizesFinishGate`. Host: `readPortFields`,
+  `readFamilyRules` (from `#graph-session-bootstrap` JSON), `writePortSize` (the only writer; re-checks its own guard).
+- **Hazard (user-found):** native's per-port fields also edit an EXISTING selected fitting: there a select change calls
+  `updatePortResizeFacts` (a saved command) and the custom box saves on blur/Enter. During a placement
+  (`usePerPortPlacement`) a change only toggles the custom box (and focuses it); values are read at Finish via
+  `placementPortDiameters()`. So sizes are written only with a new placement open at ready and nothing selected
+  (`__graphDebug.selectedEntityId`, fail closed), checked in the shell and again inside `host.writePortSize`.
+- Choosing "Custom" makes native call `custom.focus()`: the bar takes focus back once and the same 700 ms key guard covers the
+  size controls. Native reseeds only when its seedKey changes (family, box, detected ports, assigned ports); the Finish-time
+  recheck is a backstop. Decisions: "as is" confirms and a second Enter finishes (the user's bracket left this open; the
+  safer reading was taken, one line to change); a max violation blocks OUR Enter-to-Finish (the server stays the real check);
+  an unreadable catalog warns and does not block. Upstream: none of the key/focus plumbing; native can read its own sizes
+  and rules directly, and should keep the "never touch an existing selected fitting" rule if a command line can set sizes.
 
 ### Action log
 

@@ -274,3 +274,10 @@ test('entryState: anything with a forbidden text or inside a forbidden container
   assert.equal(entryState({ kind: 'action', name: 'x', btn: 'b' }, { ...target, text: 'Zoom', ancestorIds: ['graph-toast-stack'] }, cfg).forbidden, true);
   assert.equal(entryState({ kind: 'action', name: 'x', btn: 'b' }, { ...target, text: 'Zoom' }, cfg).usable, true);
 });
+
+test('listEntries: the adjust command is listed only while it can be used (like an action)', () => {
+  const table = buildTable(derive().tools, PIPE_GRAPH_ACTIONS).concat([{ id: 'adjust', name: 'adjust', label: 'Adjust ports', aliases: ['ports', 'adj'], kind: 'adjust' }]);
+  const rows = (usable) => listEntries(table, (e) => (e.kind === 'adjust' ? { usable, forbidden: false, reason: 'no' } : { usable: true, forbidden: false, reason: null })).map((r) => r.entry.name);
+  assert.ok(!rows(false).includes('adjust'));
+  assert.ok(rows(true).includes('adjust'));
+});

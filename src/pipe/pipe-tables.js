@@ -97,7 +97,7 @@ export const PIPE_FORBIDDEN_CONTAINER_IDS = ['graph-toast-stack'];
 // Command names that stay reachable while a placement panel is open. Shipped now as data;
 // enforced from the placement step onward (Step 1 has no panel state to isolate).
 export const PIPE_ISOLATION_ALLOWED = [
-  'select', 'undo', 'redo', 'zoomfit', 'zoomin', 'zoomout',
+  'select', 'undo', 'redo', 'zoomfit', 'zoomin', 'zoomout', 'adjust',
 ];
 
 // ---- Placement panel (Step 2: choose the fitting label) ----
@@ -133,9 +133,26 @@ export const PIPE_UNAVAILABLE_MARK = 'unavailable';
 export const PIPE_LOG_MAX = 50;
 // How long after an action the log re-reads the revision to fill in "after".
 export const PIPE_LOG_AFTER_MS = 2000;
+// Step 3b: native's per-port size fields (reducing fittings) and the page's own catalog JSON.
+export const PIPE_SIZE_IDS = {
+  container: 'graph-pipe-port-diameters',
+  capturePrefix: 'pipe-diameter-',
+  customSuffix: '-custom',
+  bootstrap: 'graph-session-bootstrap',
+};
+// Only this tool places fittings that have per-port sizes (reducing tees/wyes, reducers, ...).
+export const PIPE_SIZE_TOOLS = ['fitting'];
+// Step 3c: native's "Adjust ports" checkbox (no id: a checkbox inside a label of the placement panel).
+export const PIPE_ADJUST = { labelText: 'Adjust ports' };
+// The typed command for it. Not a button entry: it is handled by the shell, listed only when usable.
+export const PIPE_ADJUST_ENTRY = {
+  id: 'adjust', name: 'adjust', label: 'Adjust ports', aliases: ['ports', 'adj'], kind: 'adjust',
+};
 export const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 // Strictly this opening, not the looser 'ready' variants the transition tool uses.
 export const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
+// The keys that finish (with the bar focused and empty): Enter, and Space (the same as Enter everywhere else).
+export const PIPE_FINISH_KEYS = ['Enter', ' '];
 // Only these tools may be finished from the bar (valves, equipment, cut, transition stay manual).
 export const PIPE_FINISH_TOOLS = ['fitting', 'fixture'];
 // How long a Finish click holds the latch if native never shows "Saving..." (e.g. the click was ignored).

@@ -2,12 +2,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, missingIds, hintWatch, portRoleFromHint, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict,
+  panelPhase, autoMatchedDiameter, aliasesFor, displayNameFor, missingIds, hintWatch, portRoleFromHint, roleDisplayName, portProgress, portLine, adjustVerdict, targetForbidden, finishVerdict, finishLatchClick, finishLatchStep, FINISH_LATCH_OFF, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict,
 } from '../src/core/pipe-placement-core.js';
 import {
   PIPE_HINT_PREFIXES, PIPE_AUTOMATCH_PATTERN, PIPE_FITTING_ALIASES, PIPE_FIXTURE_ID_PREFIXES,
   PIPE_FIXTURE_TOOL, PIPE_FIXTURE_DISPLAY_NAMES, PIPE_PORT_ROLE_PATTERN, PIPE_FINISH_HINT_PREFIX, PIPE_FINISH_TOOLS, PIPE_FINISH_BUTTON_ID,
-  PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_LATCH_MS, PIPE_ISOLATION_ALLOWED, PIPE_GRAPH_ACTIONS,
+  PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_FINISH_LATCH_MS, PIPE_FINISH_KEYS, PIPE_ISOLATION_ALLOWED, PIPE_GRAPH_ACTIONS,
 } from '../src/pipe/pipe-tables.js';
 
 // The fitting menu as read live on 2026-10-06 (ports, then ids).
@@ -238,7 +238,7 @@ test('targetForbidden: the "Resize anyway" toast button, by text and by containe
 });
 
 const FACTS = () => ({
-  key: 'Enter', repeat: false, barFocused: true, barEmpty: true, panelOpen: true,
+  key: 'Enter', finishKeys: PIPE_FINISH_KEYS, repeat: false, barFocused: true, barEmpty: true, panelOpen: true,
   hint: 'Finish inserts this fitting. The connected pipe resumes from its outlet.', tool: 'fixture',
   allowedTools: PIPE_FINISH_TOOLS, finishPrefix: PIPE_FINISH_HINT_PREFIX, latched: false,
   button: { found: true, id: PIPE_FINISH_BUTTON_ID, expectedId: PIPE_FINISH_BUTTON_ID, visible: true, disabled: false, ariaDisabled: 'false', forbidden: false },
@@ -251,7 +251,7 @@ test('finishVerdict: ok only when every condition holds', () => {
 
 test('finishVerdict: each condition on its own blocks it (and says nothing unless the person could be confused)', () => {
   const cases = [
-    ['key', { key: ' ' }, 'not-enter', false], ['key Tab', { key: 'Tab' }, 'not-enter', false],
+    ['key Tab', { key: 'Tab' }, 'not-enter', false], ['key a', { key: 'a' }, 'not-enter', false],
     ['repeat', { repeat: true }, 'repeat', false], ['bar not focused', { barFocused: false }, 'bar', false],
     ['bar has text', { barEmpty: false }, 'bar', false], ['panel closed', { panelOpen: false }, 'no-panel', false],
     ['hint box', { hint: 'Click two opposite corners around the fitting on the drawing.' }, 'phase', false],
@@ -300,4 +300,67 @@ test('finishLatch: held until native has been through "saving" and is back, clos
   assert.equal(step(stuck, 'ready', true, 1000 + PIPE_FINISH_LATCH_MS).clicked, true, 'exactly at the timeout: still held');
   assert.equal(step(stuck, 'ready', true, 1001 + PIPE_FINISH_LATCH_MS).clicked, false, 'ignored click: released after the timeout');
   assert.equal(step(finishLatchClick(0), 'unknown', true, 10).leftReady, true, 'an unknown hint also counts as having left ready');
+});
+
+test('finishVerdict: a sizes gate that is not ok blocks Finish and passes its reason/message/reopen through', () => {
+  const gate = { ok: false, reason: 'sizes-unconfirmed', message: 'port sizes: choose first', reopen: true };
+  const v = finishVerdict({ ...FACTS(), sizesGate: gate });
+  assert.deepEqual([v.ok, v.reason, v.message, v.reopen], [false, 'sizes-unconfirmed', 'port sizes: choose first', true]);
+  assert.equal(finishVerdict({ ...FACTS(), sizesGate: { ok: true } }).ok, true);
+  assert.equal(finishVerdict({ ...FACTS(), sizesGate: { ok: false, reason: 'sizes-max', message: 'm' } }).reopen, false);
+  assert.equal(finishVerdict({ ...FACTS(), sizesGate: gate, key: 'Tab' }).reason, 'not-enter', 'the key checks still come first');
+});
+
+test('roleDisplayName: display only; branch_a -> "branch A"', () => {
+  assert.equal(roleDisplayName('branch_a'), 'branch A');
+  assert.equal(roleDisplayName('branch_b'), 'branch B');
+  assert.equal(roleDisplayName('inlet'), 'inlet');
+  assert.equal(roleDisplayName('outlet'), 'outlet');
+  assert.equal(roleDisplayName('side_port'), 'side port');
+  assert.equal(roleDisplayName(undefined), '');
+});
+
+test('portProgress: where a role sits in the family\'s port list (exact in Adjust mode)', () => {
+  const cross = ['inlet', 'outlet', 'branch_a', 'branch_b'];
+  assert.deepEqual(portProgress('inlet', cross), { n: 1, N: 4, done: [] });
+  assert.deepEqual(portProgress('branch_a', cross), { n: 3, N: 4, done: ['inlet', 'outlet'] });
+  assert.deepEqual(portProgress('branch_b', cross), { n: 4, N: 4, done: ['inlet', 'outlet', 'branch_a'] });
+  assert.equal(portProgress('nope', cross), null);
+  assert.equal(portProgress('inlet', null), null);
+  assert.deepEqual(portProgress('inlet', ['inlet']), { n: 1, N: 1, done: [] });
+});
+
+test('portLine: count and done-list only with Adjust on and the roles known; role only otherwise', () => {
+  const cross = ['inlet', 'outlet', 'branch_a', 'branch_b'];
+  assert.equal(portLine({ role: 'inlet', adjustOn: true, portContract: cross }), 'click: inlet (1 of 4)  (click an assigned port again to undo)');
+  assert.equal(portLine({ role: 'branch_b', adjustOn: true, portContract: cross }), 'click: branch B (4 of 4)  done: inlet, outlet, branch A  (click an assigned port again to undo)');
+  assert.equal(portLine({ role: 'branch_b', adjustOn: false, portContract: cross }), 'click: branch B', 'not adjusting: no count');
+  assert.equal(portLine({ role: 'outlet', adjustOn: true, portContract: null }), 'click: outlet', 'catalog unreadable: role only');
+  assert.equal(portLine({ role: 'zzz', adjustOn: true, portContract: cross }), 'click: zzz', 'role not in the list: role only');
+});
+
+test('adjustVerdict: only a placement panel in the ready or ports phase with native\'s box visible and enabled', () => {
+  const ok = { panelOpen: true, phase: 'ready', found: true, visible: true, disabled: false };
+  assert.deepEqual(adjustVerdict(ok), { ok: true });
+  assert.equal(adjustVerdict({ ...ok, phase: 'ports' }).ok, true);
+  assert.equal(adjustVerdict({ ...ok, panelOpen: false }).reason, 'no-panel');
+  for (const phase of ['box', 'label', 'submitting', 'unknown', 'closed']) assert.equal(adjustVerdict({ ...ok, phase }).reason, 'phase', phase);
+  assert.equal(adjustVerdict({ ...ok, found: false }).reason, 'no-checkbox');
+  assert.equal(adjustVerdict({ ...ok, visible: false }).reason, 'no-checkbox');
+  assert.equal(adjustVerdict({ ...ok, disabled: true }).reason, 'disabled');
+  assert.equal(adjustVerdict(undefined).ok, false, 'no facts: fail closed');
+  assert.equal(adjustVerdict({}).ok, false);
+  assert.ok(adjustVerdict({ ...ok, found: false }).message);
+});
+
+test('finishVerdict: Space finishes like Enter (it is in PIPE_FINISH_KEYS), and only the listed keys do', () => {
+  assert.deepEqual(PIPE_FINISH_KEYS, ['Enter', ' ']);
+  assert.deepEqual(finishVerdict({ ...FACTS(), key: ' ' }), { ok: true });
+  assert.equal(finishVerdict({ ...FACTS(), key: ' ', repeat: true }).reason, 'repeat', 'a held Space never finishes');
+  assert.equal(finishVerdict({ ...FACTS(), key: ' ', barEmpty: false }).reason, 'bar');
+  assert.equal(finishVerdict({ ...FACTS(), key: ' ', latched: true }).reason, 'latched');
+  assert.equal(finishVerdict({ ...FACTS(), key: ' ', hint: 'Click the detected intersection for inlet.' }).reason, 'phase');
+  assert.equal(finishVerdict({ ...FACTS(), key: ' ', finishKeys: ['Enter'] }).reason, 'not-enter', 'a key that is not listed does not finish');
+  assert.equal(finishVerdict({ ...FACTS(), key: ' ', finishKeys: undefined }).reason, 'not-enter', 'no list given: Enter only (fail safe)');
+  assert.equal(finishVerdict({ ...FACTS(), key: 'Enter', finishKeys: undefined }).ok, true);
 });

@@ -29,7 +29,7 @@ test('the duct bundle contains nothing from the piping build', () => {
 test('the piping bundle is exactly the piping modules plus their shared pure helpers', () => {
   const { modules } = pipe.buildPipeDist();
   assert.deepEqual(modules.map((m) => path.basename(m, '.js')).sort(),
-    ['actions', 'command-line-core', 'pipe-host', 'pipe-log-core', 'pipe-placement-core', 'pipe-system-core', 'pipe-table-core', 'pipe-tables', 'search-core', 'table-core']);
+    ['actions', 'command-line-core', 'pipe-host', 'pipe-log-core', 'pipe-placement-core', 'pipe-size-core', 'pipe-system-core', 'pipe-table-core', 'pipe-tables', 'search-core', 'table-core']);
 });
 
 test('the piping bundle pulls in nothing duct-only (walk, settings, isolation, auto-select)', () => {
