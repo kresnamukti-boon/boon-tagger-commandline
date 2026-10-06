@@ -92,5 +92,60 @@
   "tradePackValues": {
     "piping": "confirmed live (data-trade=\"piping\")",
     "ductwork": "given by native's TradePack (\"ductwork\" | \"piping\"); NOT yet seen on a live duct page - confirm once before merging"
-  }
+  },
+  "families": {
+    "fitting": [
+      "pipe-tee-eq",
+      "pipe-tee-reducing",
+      "pipe-wye",
+      "pipe-sanitary-tee",
+      "pipe-wye-reducer",
+      "pipe-cross",
+      "pipe-elbow-90-vertical",
+      "pipe-cap",
+      "pipe-plug",
+      "pipe-cleanout",
+      "pipe-floor-drain",
+      "pipe-hose-bibb",
+      "pipe-hydrant",
+      "pipe-nozzle",
+      "pipe-elbow-45",
+      "pipe-elbow-90",
+      "pipe-elbow-lr-45",
+      "pipe-elbow-lr-90",
+      "pipe-elbow-sr-45",
+      "pipe-elbow-sr-90",
+      "pipe-elbow-90-reducing",
+      "pipe-tee-eq-vertical",
+      "pipe-tee-reducing-vertical",
+      "pipe-wye-vertical",
+      "pipe-wye-reducer-vertical",
+      "pipe-reducer-concentric",
+      "pipe-reducer-eccentric",
+      "pipe-union",
+      "pipe-coupling",
+      "pipe-strainer-y",
+      "pipe-strainer-t",
+      "pipe-trap-p",
+      "pipe-trap-s",
+      "pipe-trap-steam-ft",
+      "pipe-trap-steam-tt",
+      "pipe-trap-steam-st",
+      "pipe-trap-steam-td",
+      "pipe-expansion-joint-bellows",
+      "pipe-expansion-joint-slip"
+    ],
+    "fixture": [
+      "pipe-wc",
+      "pipe-lav",
+      "pipe-sh",
+      "pipe-ur",
+      "pipe-ks",
+      "pipe-ms",
+      "pipe-hb",
+      "pipe-fd",
+      "pipe-rd"
+    ]
+  },
+  "familiesNote": "Observed on the test page's open menus (fitting tool, fixture tool), 2026-10-06. Families come from the server contract, not from the JS files; scripts/check-native-drift.js --menu compares a fresh dump to this list."
 }
