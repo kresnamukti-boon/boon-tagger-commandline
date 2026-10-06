@@ -336,6 +336,18 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
   Enter handling; the command line only needs to call it (with the same enabled checks) when the pick came from the bar.
 - Never clicked: the MEC-329 size-mismatch toast's "Resize anyway" (re-submits a rejected command with the check off).
 
+### Live verification status (test page, 2026-10-06)
+
+Verified by hand on a real piping page (offline harness passes for all of it; live is the only proof against the real page):
+- Tools/actions, label pick (`tee` + Enter / Space), `#` system search, fixture display names, port line (`click: <role>`).
+- Enter and Space as Finish: one placement = exactly one `/commands/` request each (fixture and fitting); undo through the bar.
+- Port sizes (3b): edit prompts, the max-size warning ("outlet 3" is larger than inlet 2"").
+- Adjust ports (3c) on a reducing tee: `adjust` ticked the box, `click: inlet (1 of 3)` stepped through the roles as the
+  intersections were clicked with the mouse, and the size rows reopened; Esc before Finish left the revision unchanged.
+
+Not verified live: the cross (no four-way crossing on the test page), vertical-variant fittings, and the
+"Native changed: use the mouse for this step" line (needs native to change a hint).
+
 ### Step 3c (Adjust ports)
 
 - `adjustVerdict`, `portProgress`, `portLine`, `roleDisplayName` in `src/core/pipe-placement-core.js`; `PIPE_ADJUST` and
