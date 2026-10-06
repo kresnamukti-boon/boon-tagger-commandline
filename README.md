@@ -101,6 +101,21 @@ the same way as above, on a **piping** page.
     refuses and tells you to deselect first. It also refuses when it can't tell whether something is
     selected, while a fitting is being placed, and when the dropdown is disabled. It never presses
     Create, Rename, Import or Assign network.
+- **If native changes under us** (safety net). Two checks make the bar stop instead of guess:
+  - if the fitting panel is open but its hint sentence is one we don't recognise, the bar shows one
+    line, "Native changed: use the mouse for this step", and does nothing else for that step (no
+    prompt, no clicks). It shows the line once per new sentence, and goes back to normal as soon as
+    the app says something we know. The transition tool's own sentences are known.
+  - if an element we depend on is missing when the loader runs (the list is `PIPE_REQUIRED_IDS`,
+    all in `test/native-ids.json`), the loader installs nothing, shows the same line in the panel and
+    names the missing ids in the console.
+- **Drift check** (read-only, writes nothing): `node scripts/check-native-drift.js` fetches the app's
+  public `pipe-*.js` files and compares them with what this repo recorded: which files changed (by
+  hash), tools added/removed/renamed or with a new key, element ids and strings that disappeared (with a
+  "similar now" guess), and hint sentences that are new or reworded. Add `--html <saved page>` to also
+  check the page's element ids, and `--menu <file>` to compare the fitting/fixture families
+  (`--menu-snippet` prints the console snippet that makes that file). `--from-dir <folder>` reads files
+  from disk instead of the network. Exit code 0 = no drift, 1 = drift, 2 = could not read.
 - **What it will never click**, enforced in code and not only by leaving them out of the list: Save,
   the recording controls, the top-bar **Submit**, "Submit anyway", Finish and Cancel, and the system
   create/rename/import/assign buttons.
