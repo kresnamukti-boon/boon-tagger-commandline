@@ -16,7 +16,9 @@ const DIST = path.join(ROOT, 'dist', 'rw_pipe_cmdline.js');
 const OUT = path.join(ROOT, 'console_loader_pipe.js');
 const SHELL_MARKER = '// ===== src/pipe/pipe-shell.js =====';
 
-const dist = fs.readFileSync(DIST, 'utf8');
+// Pure: takes the text of dist/rw_pipe_cmdline.js, returns the text of console_loader_pipe.js (so the freshness
+// check in verify_pipe_cmdline.js can rebuild it in memory and compare, with no file writes).
+function buildPipeLoader(dist) {
 const at = dist.indexOf(SHELL_MARKER);
 if (at === -1) throw new Error('dist/rw_pipe_cmdline.js has no shell marker; rebuild it with scripts/build-pipe-dist.js');
 const modulesPart = dist.slice(0, at).trimEnd();
@@ -63,6 +65,13 @@ for (const name of ['rw_host.js', 'rw_panelux.js', 'rw_core.js']) {
 }
 parts.push(';\n', shellPart, FOOTER);
 
-const out = parts.join('');
-fs.writeFileSync(OUT, out);
-console.log(`built console_loader_pipe.js (${out.length} bytes)`);
+return parts.join('');
+}
+
+if (require.main === module) {
+  const out = buildPipeLoader(fs.readFileSync(DIST, 'utf8'));
+  fs.writeFileSync(OUT, out);
+  console.log(`built console_loader_pipe.js (${out.length} bytes)`);
+}
+
+module.exports = { buildPipeLoader, DIST, OUT };
