@@ -23,6 +23,7 @@ export const PIPE_PAGE_IDS = {
   toolLabelClass: 'graph-tool-label',
   nativeBarToggle: 'graph-command-line-toggle',
   nativeBarWindow: 'graph-command-window',
+  systemSelect: 'graph-system-select',
 };
 
 // Native's own PIPE_TOOL_KEYS (pipe-session-ui.js). Used only as a fallback when a rail button

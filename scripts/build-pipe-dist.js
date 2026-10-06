@@ -17,6 +17,7 @@ const ENTRY_MODULES = [
   'src/pipe/pipe-host.js',
   'src/core/pipe-table-core.js',
   'src/core/pipe-placement-core.js',
+  'src/core/pipe-system-core.js',
 ];
 const SEARCH_DIRS = ['src/core', 'src/features', 'src/pipe'];
 const SHELL_PATH = 'src/pipe/pipe-shell.js';

@@ -26,6 +26,7 @@
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict,
   } = __m_pipe_placement_core;
+  const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
   } = __m_pipe_table_core;
@@ -107,7 +108,7 @@
   // The label prompt for native's Place Fitting panel (Step 2).
   const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
-  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', disabled: '#888' };
+  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
 
   function ensureMenu() {
     if (menuEl) return;
@@ -158,7 +159,9 @@
       const el = document.createElement('div');
       el.className = 'rw-pipe-item';
       let usable, color, label;
-      if (row.prompt) {
+      if (row.system) {
+        usable = true; color = COLORS.system; label = row.system.name;
+      } else if (row.prompt) {
         usable = row.prompt.kind === 'category' ? row.prompt.usable : row.prompt.entry.usable;
         color = usable ? COLORS.tool : COLORS.disabled;
         label = promptLabel(row.prompt);
@@ -174,7 +177,7 @@
       el.textContent = label;
       if (i === menuHighlight) highlighted = el;
       el.addEventListener('mousedown', function(ev){ ev.preventDefault(); }); // keep focus through the click
-      el.addEventListener('click', function(){ if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
+      el.addEventListener('click', function(){ if (row.system) pickSystem(row.system); else if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
       menuEl.appendChild(el);
     });
     positionMenu();
@@ -190,9 +193,37 @@
   }
   function openMenu(query) {
     if (prompt.active) { refreshPrompt(); return; }
+    const sq = systemQuery(query);
+    if (sq !== null) { openSystemMenu(sq); return; }
     menuItems = rowsFor(query);
     menuHighlight = menuItems.length ? 0 : -1;
     renderMenu();
+  }
+
+  /* ---------- `#` system search: choose the system the next route will use ---------- */
+  function currentSystems() { return systemsFromOptions(host.readSystems().options); }
+  function openSystemMenu(sq) {
+    if (host.readPanel().open) { status('system: finish or cancel the fitting first (Esc cancels it)'); hideMenu(); return; }
+    menuItems = matchSystems(currentSystems(), sq).map(function(s){ return { system: s }; });
+    menuHighlight = menuItems.length ? 0 : -1;
+    if (!menuItems.length) status('system: nothing matches "' + sq + '"');
+    renderMenu();
+  }
+  function pickSystem(system) {
+    if (host.readPanel().open) { status('system: finish or cancel the fitting first (Esc cancels it)'); return false; }
+    const facts = host.readSystems();
+    const verdict = systemPickVerdict(facts);
+    if (!verdict.ok) { status(verdict.message); hideMenu(); return false; }
+    const after = host.writeSystem(system.id);
+    own.lastCmdAt = Date.now();
+    const shown = host.readSystems();
+    const now = systemsFromOptions(shown.options).find(function(s){ return s.id === shown.currentValue; });
+    status(after === system.id
+      ? 'system: ' + system.name + ' (the page now shows: ' + (now ? now.name : shown.currentValue) + ')'
+      : 'system: asked for ' + system.name + ' but the page shows ' + (now ? now.name : shown.currentValue));
+    clearBar();
+    if (inputEl) inputEl.blur();
+    return true;
   }
 
   /* ---------- label prompt: choose the fitting in native's Place Fitting panel ---------- */
@@ -335,7 +366,7 @@
       // .value fires no input event, so the list stays put and keeps cycling over the same rows.
       if (menuHighlight >= 0 && menuItems[menuHighlight]) {
         const row = menuItems[menuHighlight];
-        inputEl.value = row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
+        inputEl.value = row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
       }
       return;
     }
@@ -361,6 +392,11 @@
       e.preventDefault(); e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       const typed = inputEl.value.trim();
+      if (systemQuery(typed) !== null) {
+        if (menuHighlight >= 0 && menuItems[menuHighlight] && menuItems[menuHighlight].system) pickSystem(menuItems[menuHighlight].system);
+        else status('system: nothing matches "' + typed.slice(1) + '"');
+        return;
+      }
       // An exact name/label/alias always wins; otherwise run the highlighted completion.
       const plan = planQuery(currentTable(), typed, stateFor);
       if (typed && plan.action !== 'status') { if (runEntry(plan.entry)) clearBar(); return; }

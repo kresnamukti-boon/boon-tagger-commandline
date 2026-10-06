@@ -40,7 +40,7 @@ test('native-ids.json records its source commit and the live check date', () => 
 
 test('every element id the tables and host depend on is listed in native-ids.json', () => {
   const needed = [
-    PIPE_PANEL_IDS.panel,
+    PIPE_PANEL_IDS.panel, PIPE_PAGE_IDS.systemSelect,
     PIPE_PAGE_IDS.root, PIPE_PAGE_IDS.stage, PIPE_PAGE_IDS.nativeBarToggle, PIPE_PAGE_IDS.nativeBarWindow,
     ...PIPE_GRAPH_ACTIONS.map((a) => a.btn),
     ...PIPE_FORBIDDEN_BUTTON_IDS,

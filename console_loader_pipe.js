@@ -42,6 +42,7 @@ const PIPE_PAGE_IDS = {
   toolLabelClass: 'graph-tool-label',
   nativeBarToggle: 'graph-command-line-toggle',
   nativeBarWindow: 'graph-command-window',
+  systemSelect: 'graph-system-select',
 };
 
 // Native's own PIPE_TOOL_KEYS (pipe-session-ui.js). Used only as a fallback when a rail button
@@ -372,6 +373,32 @@ function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark = 'unava
       if (!btn || btn.disabled) return false;
       btn.click();
       return true;
+    },
+
+    // Plain snapshot of the system dropdown for `#` search (see pipe-system-core.js).
+    readSystems() {
+      const el = doc.getElementById(ids.systemSelect);
+      const debug = win.__graphDebug;
+      const readable = !!debug && typeof debug === 'object' && 'selectedEntityId' in debug;
+      return {
+        found: !!el,
+        disabled: !!(el && el.disabled),
+        options: el ? Array.from(el.options || []).map((o) => ({ value: o.value, text: o.text })) : [],
+        selectionReadable: readable,
+        selectedEntityId: readable ? (debug.selectedEntityId || null) : null,
+        currentValue: el ? el.value : null,
+      };
+    },
+
+    // Choose a system the way a person does: set the value, then the change events. Returns the
+    // dropdown's own value afterwards so the caller can report what the page actually took.
+    writeSystem(id) {
+      const el = doc.getElementById(ids.systemSelect);
+      if (!el) return null;
+      el.value = id;
+      el.dispatchEvent(new win.Event('input', { bubbles: true }));
+      el.dispatchEvent(new win.Event('change', { bubbles: true }));
+      return el.value;
     },
 
     anyDialogOpen() {
@@ -912,6 +939,90 @@ function isolationVerdict({ panelOpen, name, allowed }) {
 return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, labelStep, planPick, isolationVerdict};
 })();
 
+// ===== src/core/search-core.js =====
+const __m_search_core = (function(){
+// Pure ranking behind `#` tag/system search — no DOM, no host globals. Live
+// detection of the real tag/system list (RW._cmdDetectTags) stays in
+// shell.js/src/features, since it reads annotationState/the DOM; only
+// ranking an already-known list against a query is pure.
+//
+// Ranking: empty query keeps every tag in its own original order (rank 2
+// for all, a stable sort — so `#` alone lists the full detected list, not a
+// re-sorted one); otherwise exact name=0, name-prefix=1, name-substring=2.
+function matchTags(list, query) {
+  const q = (query ?? '').trim().toLowerCase();
+  const ranked = [];
+  list.forEach((tag, idx) => {
+    const name = (tag.name ?? '').toLowerCase();
+    let rank = -1;
+    if (!q) rank = 2;
+    else if (name === q) rank = 0;
+    else if (name.indexOf(q) === 0) rank = 1;
+    else if (name.indexOf(q) !== -1) rank = 2;
+    if (rank !== -1) ranked.push({ tag, idx, rank });
+  });
+  ranked.sort((a, b) => a.rank - b.rank);
+  return ranked.map((r) => ({ tag: r.tag, idx: r.idx }));
+}
+
+return {matchTags};
+})();
+
+// ===== src/core/pipe-system-core.js =====
+const __m_pipe_system_core = (function(){
+// Pure logic for `#` system search on the piping page: turn the page's system dropdown into a list,
+// and decide whether choosing one is safe right now. No DOM, no clicks.
+//
+// Why a safety decision exists at all: native's change handler on #graph-system-select
+// (graph-session-entry.js) does two different things. With NOTHING selected on the drawing it only
+// sets the system the next route will use (no save). With a pipe selected it REASSIGNS that pipe
+// to the chosen system, which submits a real command to the autosave journal. So choosing a system
+// is only allowed when nothing is selected, and fails closed when that can't be read.
+const { matchTags } = __m_search_core;
+
+// [{ value, text }] from the dropdown's options -> [{ id, name }], skipping the blank placeholder.
+function systemsFromOptions(options) {
+  const list = [];
+  for (const o of options ?? []) {
+    const id = String(o?.value ?? '');
+    if (!id) continue;
+    list.push({ id, name: String(o?.text ?? '').trim() || id });
+  }
+  return list;
+}
+
+// Ranked list for what was typed after the `#` (empty = every system, in the page's own order).
+function matchSystems(systems, query) {
+  return matchTags(systems, query).map((r) => r.tag);
+}
+
+// May this system be chosen right now?
+//   facts { found, disabled, selectionReadable, selectedEntityId }
+// Returns { ok } or { ok: false, message }.
+function systemPickVerdict(facts) {
+  if (!facts?.found) return { ok: false, message: 'system: the system dropdown was not found on this page' };
+  if (facts.disabled) return { ok: false, message: 'system: the system dropdown is disabled right now (view only?)' };
+  if (!facts.selectionReadable) {
+    return { ok: false, message: 'system: could not tell whether something is selected on the drawing, so nothing was changed' };
+  }
+  if (facts.selectedEntityId) {
+    return {
+      ok: false,
+      message: 'system: something is selected on the drawing, and choosing a system now would reassign it (that saves). Deselect it first, then try again',
+    };
+  }
+  return { ok: true };
+}
+
+// Typed text -> is this a system query? Returns the part after `#`, or null.
+function systemQuery(text) {
+  const t = String(text ?? '');
+  return t.startsWith('#') ? t.slice(1) : null;
+}
+
+return {systemsFromOptions, matchSystems, systemPickVerdict, systemQuery};
+})();
+
   // ===== loader guard (src/core/pipe-table-core.js loaderGuard) =====
   const __guard = __m_pipe_table_core.loaderGuard(
     __m_pipe_host.createPipeHost({ doc: document, win: window, ids: __m_pipe_tables.PIPE_PAGE_IDS }).readPageFacts()
@@ -1220,6 +1331,7 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
   const {
     panelPhase, autoMatchedDiameter, menuEntries, labelStep, planPick, isolationVerdict,
   } = __m_pipe_placement_core;
+  const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const {
     deriveTools, buildTable, entryState, planEntry, planQuery, listEntries, reconcileArmed, loaderGuard,
   } = __m_pipe_table_core;
@@ -1301,7 +1413,7 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
   // The label prompt for native's Place Fitting panel (Step 2).
   const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
-  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', disabled: '#888' };
+  const COLORS = { tool: '#a8e6a3', action: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
 
   function ensureMenu() {
     if (menuEl) return;
@@ -1352,7 +1464,9 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
       const el = document.createElement('div');
       el.className = 'rw-pipe-item';
       let usable, color, label;
-      if (row.prompt) {
+      if (row.system) {
+        usable = true; color = COLORS.system; label = row.system.name;
+      } else if (row.prompt) {
         usable = row.prompt.kind === 'category' ? row.prompt.usable : row.prompt.entry.usable;
         color = usable ? COLORS.tool : COLORS.disabled;
         label = promptLabel(row.prompt);
@@ -1368,7 +1482,7 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
       el.textContent = label;
       if (i === menuHighlight) highlighted = el;
       el.addEventListener('mousedown', function(ev){ ev.preventDefault(); }); // keep focus through the click
-      el.addEventListener('click', function(){ if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
+      el.addEventListener('click', function(){ if (row.system) pickSystem(row.system); else if (row.prompt) pickPrompt(row.prompt); else runAndClear(row.entry); });
       menuEl.appendChild(el);
     });
     positionMenu();
@@ -1384,9 +1498,37 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
   }
   function openMenu(query) {
     if (prompt.active) { refreshPrompt(); return; }
+    const sq = systemQuery(query);
+    if (sq !== null) { openSystemMenu(sq); return; }
     menuItems = rowsFor(query);
     menuHighlight = menuItems.length ? 0 : -1;
     renderMenu();
+  }
+
+  /* ---------- `#` system search: choose the system the next route will use ---------- */
+  function currentSystems() { return systemsFromOptions(host.readSystems().options); }
+  function openSystemMenu(sq) {
+    if (host.readPanel().open) { status('system: finish or cancel the fitting first (Esc cancels it)'); hideMenu(); return; }
+    menuItems = matchSystems(currentSystems(), sq).map(function(s){ return { system: s }; });
+    menuHighlight = menuItems.length ? 0 : -1;
+    if (!menuItems.length) status('system: nothing matches "' + sq + '"');
+    renderMenu();
+  }
+  function pickSystem(system) {
+    if (host.readPanel().open) { status('system: finish or cancel the fitting first (Esc cancels it)'); return false; }
+    const facts = host.readSystems();
+    const verdict = systemPickVerdict(facts);
+    if (!verdict.ok) { status(verdict.message); hideMenu(); return false; }
+    const after = host.writeSystem(system.id);
+    own.lastCmdAt = Date.now();
+    const shown = host.readSystems();
+    const now = systemsFromOptions(shown.options).find(function(s){ return s.id === shown.currentValue; });
+    status(after === system.id
+      ? 'system: ' + system.name + ' (the page now shows: ' + (now ? now.name : shown.currentValue) + ')'
+      : 'system: asked for ' + system.name + ' but the page shows ' + (now ? now.name : shown.currentValue));
+    clearBar();
+    if (inputEl) inputEl.blur();
+    return true;
   }
 
   /* ---------- label prompt: choose the fitting in native's Place Fitting panel ---------- */
@@ -1529,7 +1671,7 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
       // .value fires no input event, so the list stays put and keeps cycling over the same rows.
       if (menuHighlight >= 0 && menuItems[menuHighlight]) {
         const row = menuItems[menuHighlight];
-        inputEl.value = row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
+        inputEl.value = row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
       }
       return;
     }
@@ -1555,6 +1697,11 @@ return {panelPhase, autoMatchedDiameter, aliasesFor, menuEntries, categoriesOf, 
       e.preventDefault(); e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       const typed = inputEl.value.trim();
+      if (systemQuery(typed) !== null) {
+        if (menuHighlight >= 0 && menuItems[menuHighlight] && menuItems[menuHighlight].system) pickSystem(menuItems[menuHighlight].system);
+        else status('system: nothing matches "' + typed.slice(1) + '"');
+        return;
+      }
       // An exact name/label/alias always wins; otherwise run the highlighted completion.
       const plan = planQuery(currentTable(), typed, stateFor);
       if (typed && plan.action !== 'status') { if (runEntry(plan.entry)) clearBar(); return; }

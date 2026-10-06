@@ -45,11 +45,11 @@ function eq(actual, expected, name) {
 }
 
 /* ---------- a small fake page ---------- */
-function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRail = true } = {}) {
+function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRail = true, selected = null, selectionReadable = true, systemDisabled = false } = {}) {
   const byId = {};
   const listeners = { window: {}, document: {} };
   const warnings = [];
-  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [] };
+  const state = { activeElement: null, activeTool: 'select', clicks: [], statuses: [], timers: [], systemChanges: [], selectedEntityId: selected };
 
   function el(tag) {
     const own = {};
@@ -78,6 +78,7 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
         this.dispatch({ type: 'click', target: this });
       },
       setSelectionRange() {},
+      dispatchEvent(evt) { this.dispatch(evt); return true; },
       querySelectorAll(sel) {
         const out = [];
         if (sel === 'button[data-family-id]') walk(this, (n) => { if (n.tagName === 'BUTTON' && 'data-family-id' in n.attrs) out.push(n); });
@@ -108,7 +109,8 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   Object.defineProperty(doc, 'activeElement', { get: () => state.activeElement });
 
   const win = {
-    innerHeight: 800, innerWidth: 1200, __graphDebug: { get activeTool() { return state.activeTool; } },
+    innerHeight: 800, innerWidth: 1200, Event: class { constructor(type, init) { this.type = type; Object.assign(this, init || {}); } },
+    __graphDebug: Object.defineProperties({}, Object.assign({ activeTool: { get() { return state.activeTool; }, enumerable: true } }, selectionReadable ? { selectedEntityId: { get() { return state.selectedEntityId; }, enumerable: true } } : {})),
     addEventListener(type, fn, capture) { (listeners.window[type] = listeners.window[type] || []).push({ fn, capture: !!capture }); },
   };
 
@@ -118,6 +120,11 @@ function makePage({ trade = 'piping', nativeBarOn = false, disabled = {}, withRa
   const toggle = el('button'); toggle.id = 'graph-command-line-toggle'; toggle.setAttribute('aria-pressed', nativeBarOn ? 'true' : 'false'); doc.body.appendChild(toggle);
   const nativeWin = el('div'); nativeWin.id = 'graph-command-window'; nativeWin.hidden = !nativeBarOn; doc.body.appendChild(nativeWin);
   const panel = el('div'); panel.id = 'rw-panel'; const list = el('div'); list.id = 'rw-list'; panel.appendChild(list); doc.body.appendChild(panel);
+
+  const sysSel = el('select'); sysSel.id = 'graph-system-select'; sysSel.disabled = systemDisabled; sysSel.value = '';
+  sysSel.options = [['', 'Choose a system'], ['s1', '1 - Cold Water (domestic)'], ['s2', '2 - Sanitary (waste)'], ['s3', '3 - Cold Water Riser (domestic)']].map(([value, text]) => ({ value, text }));
+  sysSel.addEventListener('change', () => { state.systemChanges.push(sysSel.value); });
+  doc.body.appendChild(sysSel);
 
   const RAIL = [
     ['select', 'S', 'Select'], ['route', 'R', 'Route pipe'], ['extend', 'X', 'Extend pipe'], ['terminate', 'P', 'Terminate end'],
@@ -678,6 +685,64 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     eq(page.RW._pipePrompt.category, 3, 'in the label prompt, Space picks the category like Enter');
     typeText(page, 'wye'); page.press(input(page), ' ');
     eq(page.state.chosen, 'pipe-wye', 'and Space picks the fitting like Enter');
+  }
+
+  /* ----- `#` system search (chooses the system for the next route) ----- */
+  {
+    const page = makePage(); loadShell(page);
+    typeText(page, '#');
+    eq(menuRows(page), ['1 - Cold Water (domestic)', '2 - Sanitary (waste)', '3 - Cold Water Riser (domestic)'], '# lists the page\'s systems in its own order, without the blank placeholder');
+    typeText(page, 'san');
+    eq(menuRows(page), ['2 - Sanitary (waste)'], '#san narrows to the match');
+    page.press(input(page), 'Enter');
+    eq(page.state.systemChanges, ['s2'], 'Enter writes the dropdown (one change event, value s2)');
+    ok(/system: 2 - Sanitary \(waste\) \(the page now shows: 2 - Sanitary \(waste\)\)/.test(lastStatus(page)), 'and reports what the page now shows');
+    ok(!page.state.clicks.some((c) => /assign|create|rename|import|save|finish/.test(c)), 'no button was clicked');
+  }
+  {
+    const page = makePage(); loadShell(page);
+    typeText(page, '#cold'); page.press(input(page), ' ');
+    eq(page.state.systemChanges, ['s1'], 'Space picks the highlighted system like Enter');
+  }
+  {
+    // a pipe is selected: choosing would reassign it (a save), so nothing is written
+    const page = makePage({ selected: 'pipe-123' }); loadShell(page);
+    typeText(page, '#san'); page.press(input(page), 'Enter');
+    eq(page.state.systemChanges, [], 'something selected on the drawing: the dropdown is NOT touched');
+    ok(/something is selected/.test(lastStatus(page)), 'and the bar says why');
+  }
+  {
+    const page = makePage({ selectionReadable: false }); loadShell(page);
+    typeText(page, '#san'); page.press(input(page), 'Enter');
+    eq(page.state.systemChanges, [], 'selection can\'t be read: fails closed, nothing written');
+    ok(/could not tell/.test(lastStatus(page)), 'and says so');
+  }
+  {
+    const page = makePage({ systemDisabled: true }); loadShell(page);
+    typeText(page, '#san'); page.press(input(page), 'Enter');
+    eq(page.state.systemChanges, [], 'a disabled dropdown is left alone');
+  }
+  {
+    const page = makePage(); loadShell(page);
+    page.openPanel({ hint: 'Finish inserts this fitting.', groups: FITTING_GROUPS });
+    typeText(page, '#san'); page.press(input(page), 'Enter');
+    eq(page.state.systemChanges, [], 'while a fitting is being placed, # does nothing');
+  }
+  {
+    // a fitting panel opening after the list was shown still blocks the write
+    const page = makePage(); loadShell(page);
+    typeText(page, '#san');
+    page.openPanel({ hint: 'Finish inserts this fitting.', groups: FITTING_GROUPS });
+    page.press(input(page), 'Enter');
+    eq(page.state.systemChanges, [], 'a fitting opened after the list was shown still blocks the write');
+  }
+  {
+    // the check happens at pick time too: selection appearing between listing and Enter
+    const page = makePage(); loadShell(page);
+    typeText(page, '#san');
+    page.state.selectedEntityId = 'pipe-9';
+    page.press(input(page), 'Enter');
+    eq(page.state.systemChanges, [], 'a selection made after the list was shown still blocks the write');
   }
 
   /* ----- native moves focus onto its label button after a pick: the same keypress must not open its menu ----- */

@@ -94,6 +94,13 @@ the same way as above, on a **piping** page.
     close).
   - Like on duct, the bar captures printable keys first, so typing `g` starts a command instead of
     pressing the app's own `G` hotkey. A bare digit and `m` (the app's ruler key) are left to the app.
+  - **`#` + part of a system name** (e.g. `#sanitary`, then Enter or Space) chooses that system in the
+    page's own "System / network" dropdown, for the next route you draw. It only changes that
+    dropdown. **Safety rule:** if something is selected on the drawing, the app treats a change of
+    that dropdown as "reassign the selected pipe to this system" (a real, saved command), so the bar
+    refuses and tells you to deselect first. It also refuses when it can't tell whether something is
+    selected, while a fitting is being placed, and when the dropdown is disabled. It never presses
+    Create, Rename, Import or Assign network.
 - **What it will never click**, enforced in code and not only by leaving them out of the list: Save,
   the recording controls, the top-bar **Submit**, "Submit anyway", Finish and Cancel, and the system
   create/rename/import/assign buttons.

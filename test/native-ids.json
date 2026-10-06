@@ -42,11 +42,13 @@
       "graph-assign-network",
       "graph-finish-route",
       "graph-cancel-route",
-      "graph-pipe-bbox-op-panel"
+      "graph-pipe-bbox-op-panel",
+      "graph-system-select"
     ],
     "strings": [
       "data-trade=\"piping\"",
-      "data-capture-control-id=\"submit-graph\""
+      "data-capture-control-id=\"submit-graph\"",
+      "data-capture-control-id=\"inspector-system\""
     ]
   },
   "entryBundle": {
@@ -58,7 +60,10 @@
       "aria-disabled",
       "__graphDebug",
       "activeTool",
-      "tradePack === \"piping\""
+      "tradePack === \"piping\"",
+      "get selectedEntityId()",
+      "if (selId) { void assignPipeService(selId, elements.systemSelect.value); return; }",
+      "elements.systemSelect.addEventListener(\"change\""
     ]
   },
   "pipeSessionUi": {

@@ -135,6 +135,32 @@ export function createPipeHost({ doc, win, ids, panelIds = {}, unavailableMark =
       return true;
     },
 
+    // Plain snapshot of the system dropdown for `#` search (see pipe-system-core.js).
+    readSystems() {
+      const el = doc.getElementById(ids.systemSelect);
+      const debug = win.__graphDebug;
+      const readable = !!debug && typeof debug === 'object' && 'selectedEntityId' in debug;
+      return {
+        found: !!el,
+        disabled: !!(el && el.disabled),
+        options: el ? Array.from(el.options || []).map((o) => ({ value: o.value, text: o.text })) : [],
+        selectionReadable: readable,
+        selectedEntityId: readable ? (debug.selectedEntityId || null) : null,
+        currentValue: el ? el.value : null,
+      };
+    },
+
+    // Choose a system the way a person does: set the value, then the change events. Returns the
+    // dropdown's own value afterwards so the caller can report what the page actually took.
+    writeSystem(id) {
+      const el = doc.getElementById(ids.systemSelect);
+      if (!el) return null;
+      el.value = id;
+      el.dispatchEvent(new win.Event('input', { bubbles: true }));
+      el.dispatchEvent(new win.Event('change', { bubbles: true }));
+      return el.value;
+    },
+
     anyDialogOpen() {
       return !!doc.querySelector('dialog[open]');
     },
