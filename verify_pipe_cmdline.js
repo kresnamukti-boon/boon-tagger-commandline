@@ -403,7 +403,9 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     page.press(input(page), 'Enter');
     eq(page.state.clicks, [], 'an unknown command clicks nothing');
     ok(/unknown command: zzzz/.test(lastStatus(page)), 'and says so');
-    eq(input(page).value, 'zzzz', 'and keeps the text so it can be fixed');
+    eq([input(page).value, page.doc.activeElement === input(page), menuShown(page)], ['', true, false], 'and empties the bar, keeps the keyboard in it, closes the list');
+    typeText(page, 'route'); page.press(input(page), 'Enter');
+    eq(page.state.activeTool, 'route', 'so the next command can be typed straight away');
   }
 
   /* ----- disabled tools: listed with native's reason, never clicked ----- */
@@ -416,7 +418,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     page.press(input(page), 'Enter');
     eq(page.state.clicks, [], 'Enter on a disabled tool clicks nothing');
     ok(lastStatus(page).includes(reason), 'and reports native\'s reason');
-    eq(input(page).value, 'fitting', 'and keeps the text');
+    eq([input(page).value, page.doc.activeElement === input(page)], ['', true], 'and empties the bar, keeping the keyboard in it');
     eq(page.RW._pipeOwn.armed, false, 'and does not mark anything armed');
   }
 
@@ -1443,6 +1445,16 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     ok(menuShown(page), 'the rows come back');
   }
 
+  {
+    // refused by the placement isolation (a fitting is being placed): same, the bar is ready for the next command
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); page.tick();
+    focusBar(page); typeText(page, 'route'); page.press(mountedBar(page), 'Enter');
+    ok(/finish or cancel the fitting first/.test(lastStatus(page)), 'a tool refused during a placement says why');
+    eq([mountedBar(page).value, page.doc.activeElement === mountedBar(page)], ['', true], 'and the bar is empty and focused');
+    typeText(page, 'zoomi'); page.press(mountedBar(page), 'Enter');
+    ok(page.state.clicks.includes('graph-zoom-in'), 'so the next command runs');
+  }
   /* ----- Step 5: setting commands (diameter, dsource, material, msource) ----- */
   const cmd = (page, text) => { focusBar(page); mountedBar(page).value = ''; typeText(page, text); page.press(mountedBar(page), 'Enter'); };
   const prompt5 = (page) => menuRows(page)[0] || '';

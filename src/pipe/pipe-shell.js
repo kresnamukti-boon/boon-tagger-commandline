@@ -793,7 +793,16 @@
   function reopenPrompt() { prompt.dismissed = false; startPrompt(); }
 
   function clearBar() { if (settingUi.active) return; if (inputEl) inputEl.value = ''; hideMenu(); }
-  function runAndClear(entry) { if (runEntry(entry)) clearBar(); else hideMenu(); }
+  // A command that can't run (unknown, not usable now, refused): say why, empty the bar and keep the keyboard
+  // in it, so the next command can be typed straight away.
+  function rejectBar(message) {
+    if (message) status(message);
+    if (!inputEl || settingUi.active) return;
+    inputEl.value = '';
+    hideMenu();
+    inputEl.focus();
+  }
+  function runAndClear(entry) { if (runEntry(entry)) clearBar(); else rejectBar(); }
 
   /* ---------- the bar ---------- */
   function mountBar() {
@@ -898,11 +907,11 @@
       }
       // An exact name/label/alias always wins; otherwise run the highlighted completion.
       const plan = planQuery(currentTable(), typed, stateFor);
-      if (typed && plan.action !== 'status') { if (runEntry(plan.entry)) clearBar(); return; }
+      if (typed && plan.action !== 'status') { if (runEntry(plan.entry)) clearBar(); else rejectBar(); return; }
       // An exact name that is not usable right now says why; it never runs some other highlighted row instead.
-      if (typed && plan.entry) { status(plan.message); return; }
+      if (typed && plan.entry) { rejectBar(plan.message); return; }
       if (menuHighlight >= 0 && menuItems[menuHighlight]) { runAndClear(menuItems[menuHighlight].entry); return; }
-      if (typed) status(plan.message);
+      if (typed) rejectBar(plan.message);
       return;
     }
     if (e.key === 'Escape' && sizesUi.active) {
