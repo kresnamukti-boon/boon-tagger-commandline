@@ -159,15 +159,17 @@ test('sizeChoiceRows: the third row appears only when Adjust ports can be used',
   assert.deepEqual(sizeChoiceRows({ adjustUsable: false }).map((c) => c.id), ['asis', 'edit'], 'per-port rows unchanged');
 });
 
-test('escStepPlan: one step back at ready, then native cancels', () => {
-  const a = (o) => escStepPlan({ ready: true, mode: 'sizes', stage: 'confirmed', lastCall: false, ...o }).action;
+test('escStepPlan: rows, then the label list, then native cancels', () => {
+  const a = (o) => escStepPlan({ boxTool: true, phase: 'ready', mode: 'sizes', stage: 'confirmed', relabel: false, ...o }).action;
   assert.equal(a({}), 'reopen', 'per-port, confirmed: the rows come back');
-  for (const stage of ['idle', 'choice', 'edit', 'dismissed']) assert.equal(a({ stage }), 'pass', 'per-port ' + stage);
-  assert.equal(a({ mode: 'ports' }), 'lastcall', 'one size, confirmed: warn first');
-  for (const stage of ['idle', 'choice', 'dismissed']) assert.equal(a({ mode: 'ports', stage }), 'pass', 'one size ' + stage);
-  assert.equal(a({ mode: null, stage: 'idle' }), 'lastcall', 'no step at all: warn first');
-  assert.equal(a({ mode: null, lastCall: true }), 'leave', 'second Esc: native cancels');
-  assert.equal(a({ lastCall: true }), 'leave');
-  assert.equal(a({ ready: false }), 'pass', 'not at ready');
-  assert.equal(a({ ready: false, lastCall: true }), 'pass', 'not at ready, even with a stale flag');
+  for (const stage of ['idle', 'dismissed']) assert.equal(a({ stage }), 'relabel', 'per-port ' + stage + ': the label list');
+  for (const stage of ['choice', 'edit']) assert.equal(a({ stage }), 'pass', 'rows open: the bar handles its own Esc');
+  for (const stage of ['confirmed', 'idle', 'dismissed']) assert.equal(a({ mode: 'ports', stage }), 'relabel', 'one size ' + stage);
+  assert.equal(a({ mode: null, stage: 'idle' }), 'relabel', 'no step at all: the label list');
+  assert.equal(a({ phase: 'ports', mode: null, stage: 'idle' }), 'relabel', 'ports phase: the label list');
+  assert.equal(a({ relabel: true }), 'leave', 'label list already open: native cancels');
+  assert.equal(a({ phase: 'ports', relabel: true }), 'leave');
+  for (const phase of ['label', 'box', 'submitting', 'unknown', 'closed']) assert.equal(a({ phase }), 'pass', phase);
+  assert.equal(a({ boxTool: false }), 'pass', 'transition / cut / terminal');
+  assert.equal(a({ boxTool: false, relabel: true }), 'pass');
 });

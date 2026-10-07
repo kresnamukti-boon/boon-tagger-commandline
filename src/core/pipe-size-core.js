@@ -129,19 +129,22 @@ export function sizeChoiceRows({ adjustUsable, singleSize = false, adjustOn = fa
   return adjustUsable ? SIZE_CHOICES.concat([adjustRow]) : SIZE_CHOICES.slice();
 }
 
-// Esc at the ready phase steps back one level before native's Esc is allowed to cancel the placement.
-//   ready     the panel is at the ready phase of a size tool (box tools only)
-//   mode      'sizes' (per-port fields) | 'ports' (one size, Adjust ports offered) | null (no step at all)
+// Esc during a box-tool placement whose label is already chosen steps back one level before native's Esc may
+// cancel it. At the end of the chain it goes back to the label list for the same box.
+//   boxTool   the panel is open for fitting / fixture / valve / equipment
+//   phase     native's phase from its hint: 'ports' | 'ready' | anything else
+//   mode      'sizes' (per-port fields) | 'ports' (one size, Adjust ports offered) | null (no step at all); ready only
 //   stage     the sizes step's stage for this placement
-//   lastCall  our "Esc again cancels the placement" line is already showing
-// Returns { action }: 'reopen' (show the choice rows again), 'lastcall' (show the warning, plus the Adjust row
-// when usable), 'leave' (close ours and let native cancel), 'pass' (not ours: native's Esc as before).
-export function escStepPlan({ ready, mode, stage, lastCall }) {
-  if (!ready) return { action: 'pass' };
-  if (lastCall) return { action: 'leave' };
-  if (mode === 'sizes') return stage === 'confirmed' ? { action: 'reopen' } : { action: 'pass' };
-  if (mode === 'ports') return stage === 'confirmed' ? { action: 'lastcall' } : { action: 'pass' };
-  return { action: 'lastcall' };
+//   relabel   our label list was already reopened this way
+// Returns { action }: 'reopen' (the size choice rows again), 'relabel' (the label list), 'leave' (close ours and let
+// native cancel), 'pass' (not ours: native's Esc as before; the rows' own Esc is handled by the bar).
+export function escStepPlan({ boxTool, phase, mode, stage, relabel }) {
+  if (!boxTool || (phase !== 'ports' && phase !== 'ready')) return { action: 'pass' };
+  if (relabel) return { action: 'leave' };
+  if (phase === 'ports') return { action: 'relabel' };
+  if (stage === 'choice' || stage === 'edit') return { action: 'pass' };
+  if (mode === 'sizes' && stage === 'confirmed') return { action: 'reopen' };
+  return { action: 'relabel' };
 }
 
 // Which fields the edit step asks about, in order: the ones that are not locked.

@@ -385,21 +385,24 @@ Not verified live: the cross (no four-way crossing on the test page), vertical-v
   an unreadable catalog warns and does not block. Upstream: none of the key/focus plumbing; native can read its own sizes
   and rules directly, and should keep the "never touch an existing selected fitting" rule if a command line can set sizes.
 
-### Esc at ready steps back first (Step 3b/3c)
+### Esc steps back, then to the label list (Step 3b/3c)
 
-- Before: after "Use port sizes as is", an edit or "Continue as is" the rows were closed, so Esc fell through and native's
-  window-level Esc (`pipeEscapeVerdict` -> `cancelActiveRoute`) cancelled the whole placement. Now `escStepPlan` (pure, in
-  `pipe-size-core.js`) gives one step back first, at the ready phase of a box tool only:
-  | at ready | first Esc |
+- Before: native's window-level Esc (`pipeEscapeVerdict` -> `cancelActiveRoute`) cancelled the whole placement and switched
+  the tool to route. Now `escStepPlan` (pure, `pipe-size-core.js`) gives steps first, for fitting / fixture / valve /
+  equipment once a label is chosen (phase ports or ready):
+  | state | Esc |
   |---|---|
-  | per-port, confirmed | reopens the rows (as is / edit / adjust), writes nothing |
-  | one size (Adjust ports offered), confirmed | "Esc again cancels the placement" + the Adjust row ("again" if ticked) |
-  | no step at all (no Adjust box) | the same line alone; Enter still finishes as before |
-  | rows open / editing | as before (edit -> rows -> closed) |
-  Then the next Esc is left alone and native cancels. Typing, picking a row or losing the menu clears the "last call".
-  Esc is handled whether or not the bar has focus (a document capture listener), except in a form field outside the bar.
-  Not at ready (label phase, ports phase), transition/cut/terminal, no placement: native's Esc as before.
-  Cancelling is placement state only; nothing is saved. Upstream: none, it exists only because the bar adds a step.
+  | per-port sizes confirmed | the size rows again (writes nothing) |
+  | rows open / editing | the bar's own: edit -> rows -> closed (from the page body: native's) |
+  | rows closed, one size, no step, or the ports phase | the **label list** for the same box |
+  | the label list opened this way | typed text cleared first; with nothing typed: native's Esc (cancels) |
+  Not at ports/ready (box, label, saving), transition/cut/terminal, no placement, a form field outside the bar: native's.
+- Why this works: native has no "back to label" phase, but `chooseFamily(id)` is accepted at ports and ready (only
+  refused while submitting) and the label button stays enabled (`subtype.disabled = !bbox || submitting`). The list is the
+  same prompt as at the label phase; a pick clicks native's own menu button (placement state only, nothing saved; native
+  resets ports and Adjust ports), then our sizes step starts over for the new label. `promptTick` keeps this list open while
+  the phase is ports/ready. Esc is handled with or without bar focus (document capture), the on-screen port line does not
+  count as something to close. Upstream: none; it exists because the bar adds the steps.
 
 ### Step 5 (setting commands)
 
