@@ -166,8 +166,10 @@ the same way as above, on a **piping** page.
     forgotten, even if you ticked the box with the mouse).
 - **Pipe settings (diameter, diameter source, material, material source).** Four typed commands set what the NEXT
   pipe will use, the same four fields as the app's "Pipe properties" block:
-  - **`diameter`** (`dia`): type a size (`2`, `2-1/2`, `1.75`, same rules as port sizes, 3/8" to 48"). A standard size
-    picks the app's option; any other size picks "Custom" and fills the box. Use `2-1/2`, not `2 1/2`.
+  - **`diameter`** (`dia`): the app's own standard sizes are listed (read live, the current one marked). Arrow to a row and
+    press Enter, click one, or type a size (`2`, `2-1/2`, `1.75`, same rules as port sizes, 3/8" to 48") to filter the
+    list. A size that is not in the list becomes a **custom** size (the header says so before you press Enter, and the
+    bar fills the app's Custom box). Use `2-1/2`, not `2 1/2`. Enter on the size already set changes nothing.
   - **`dsource`**, **`material`** (`mat`), **`msource`**: the app's own options are listed (read live); type to
     filter, type a row number, or arrow to a row. Enter or Space applies, Esc cancels.
   - After writing, the bar reads the value back and says what the app now shows ("Diameter set to 2-1/2″ (next pipe)"),
