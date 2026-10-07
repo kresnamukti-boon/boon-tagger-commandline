@@ -969,13 +969,13 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     eq(page.state.finishClicks, 0, 'and clicks nothing');
   }
   {
-    // tools: fitting and fixture only
-    for (const [tool, expected] of [['fitting', 1], ['fixture', 1], ['valve', 0], ['equipment', 0], ['transition', 0], ['cut', 0], ['terminal', 0]]) {
+    // tools: fitting, fixture, valve and equipment only
+    for (const [tool, expected] of [['fitting', 1], ['fixture', 1], ['valve', 1], ['equipment', 1], ['transition', 0], ['cut', 0], ['terminal', 0]]) {
       const page = makePage(); loadShell(page);
       page.openPanel({ tool, hint: READY, groups: FITTING_GROUPS }); page.tick(); focusBar(page);
       pressEnter(page);
       eq(page.state.finishClicks, expected, 'tool ' + tool + ': ' + (expected ? 'Finish clicked' : 'not clicked'));
-      if (!expected) ok(/only for fitting and fixture/.test(lastStatus(page)), 'tool ' + tool + ': the bar says to use the mouse');
+      if (!expected) ok(/only for fitting, fixture, valve and equipment/.test(lastStatus(page)), 'tool ' + tool + ': the bar says to use the mouse');
     }
   }
   {
@@ -1222,8 +1222,15 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     ok(!menuShown(page), 'single-size fitting: no rows');
     enter(page);
     eq(page.state.finishClicks, 1, 'Enter finishes at once, as in Step 3');
-    const p2 = makePage(); loadShell(p2); p2.openPanel({ tool: 'fixture', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT() }); p2.tick();
-    ok(!menuShown(p2), 'a fixture never gets the sizes step');
+    // every box tool shares native's panel: fixture, valve and equipment get the sizes step too; transition, cut, terminal never
+    for (const tool of ['fixture', 'valve', 'equipment']) {
+      const p2 = makePage(); loadShell(p2); p2.openPanel({ tool, hint: READY, groups: TEE_GROUPS, perPort: PER_PORT() }); p2.tick();
+      eq(menuRows(p2).slice(1), ['Use port sizes as is', 'Edit port sizes'], tool + ': per-port sizes get the two rows');
+    }
+    for (const tool of ['transition', 'cut', 'terminal']) {
+      const p2 = makePage(); loadShell(p2); p2.openPanel({ tool, hint: READY, groups: TEE_GROUPS, perPort: PER_PORT() }); p2.tick();
+      ok(!menuShown(p2), tool + ': no sizes step');
+    }
   }
 
   {
@@ -1251,6 +1258,8 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
   /* ----- Step 3c: Adjust ports (tick native's box from the bar, guide the clicks) ----- */
   const CROSS_GROUPS = [{ ports: 4, ids: [['pipe-cross', 'Cross']] }];
   const UNDO_NOTE = '(click an assigned port again to undo)';
+  const TWO_ROWS = ['Continue as is', 'Adjust ports (click each port)'];
+  const AGAIN_ROWS = ['Continue as is', 'Adjust ports again (click each port)'];
   const adjPanel = (page, over = {}) => {
     const h = page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet', 'branch'] }, ...over });
     page.tick(); return h;
@@ -1278,7 +1287,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     const page = makePage(); loadShell(page);
     const h = adjPanel(page, { groups: CROSS_GROUPS, chosen: 'pipe-cross', adjust: { roles: ['inlet', 'outlet', 'branch_a', 'branch_b'] } });
     page.byId['rw-pipe-input'].focus();
-    ok(!menuShown(page), 'a cross has one size: no rows, Enter-to-Finish stays one press');
+    eq(menuRows(page).slice(1), ['Continue as is', 'Adjust ports (click each port)'], 'a cross has one size: only the two choices, no size rows');
     typeText(page, 'ports'); page.press(page.byId['rw-pipe-input'], 'Enter');
     page.tick(); eq(menuRows(page), ['click: inlet (1 of 4)  ' + UNDO_NOTE], 'cross: 1 of 4');
     h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
@@ -1288,7 +1297,9 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     h.ctl.clickPort(); page.tick();
     eq([h.ctl.assigned, page.state.finishClicks], [4, 0], 'all four assigned, nothing finished');
     page.byId['rw-pipe-input'].focus(); page.press(page.byId['rw-pipe-input'], 'Enter');
-    eq(page.state.finishClicks, 1, 'the cross then finishes with one Enter (single size group: no sizes step)');
+    eq(page.state.finishClicks, 0, 'the cross: the choices come back after the last port; "continue as is" finishes nothing');
+    page.press(page.byId['rw-pipe-input'], 'Enter');
+    eq(page.state.finishClicks, 1, 'and the next Enter finishes');
   }
   {
     // typing `adjust` again unticks it (back to the automatic assignment); aliases; Space = Enter
@@ -1329,7 +1340,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     eq(h.ctl.box.checked, true, 'then adjust (the command works while ready)');
     page.tick();
     h.ctl.clickPort(); h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
-    eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports (click each port)'], 'back at ready the rows reopen: the old confirmation is forgotten');
+    eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports again (click each port)'], 'back at ready the rows reopen: the old confirmation is forgotten, and the third row offers to adjust again');
     page.press(page.byId['rw-pipe-input'], 'Escape'); page.byId['rw-pipe-input'].focus(); enter(page);
     eq(page.state.finishClicks, 0, 'and Enter does not finish on the old confirmation');
   }
@@ -1371,7 +1382,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     enter(page);
     h.ctl.box.click(); page.tick();
     h.ctl.clickPort(); h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
-    eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports (click each port)'], 'a mouse-ticked Adjust ports also makes the rows ask again');
+    eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports again (click each port)'], 'a mouse-ticked Adjust ports also makes the rows ask again');
     page.press(page.byId['rw-pipe-input'], 'Escape'); page.byId['rw-pipe-input'].focus(); enter(page);
     eq(page.state.finishClicks, 0, 'and the old confirmation does not let Enter finish');
   }
@@ -1403,7 +1414,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
       ['phase box', (p) => p.openPanel({ tool: 'fixture', hint: 'Click two opposite corners around the fitting on the drawing.', groups: FITTING_GROUPS })],
       ['phase ports', (p) => p.openPanel({ tool: 'fixture', hint: 'Click the detected intersection for inlet.', groups: FITTING_GROUPS })],
       ['unknown hint', (p) => p.openPanel({ tool: 'fixture', hint: 'Something new', groups: FITTING_GROUPS })],
-      ['tool valve', (p) => p.openPanel({ tool: 'valve', hint: READY, groups: FITTING_GROUPS })],
+      ['tool terminal', (p) => p.openPanel({ tool: 'terminal', hint: READY, groups: FITTING_GROUPS })],
       ['tool transition', (p) => p.openPanel({ tool: 'transition', hint: READY, groups: FITTING_GROUPS })],
     ]) {
       const page = makePage(); loadShell(page); make(page); page.tick(); focusBar(page);
@@ -1595,6 +1606,234 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     // Step 5 never touches the other commands' behaviour
     const page = fresh5(); cmd(page, 'route');
     ok(page.state.activeTool === 'route', 'tools still arm normally');
+  }
+
+  /* ----- every box tool: Adjust ports (typed + third row), sizes, and Finish ----- */
+  for (const tool of ['fitting', 'fixture', 'valve', 'equipment']) {
+    {
+      // typed `adjust` ticks the app's box and the bar guides each click, for any box tool (single-size and per-port)
+      const page = makePage(); loadShell(page);
+      const h = page.openPanel({ tool, hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+      focusBar(page); typeText(page, 'adjust'); page.press(mountedBar(page), 'Enter');
+      eq([h.ctl.box.checked, page.state.adjustClicks, page.state.finishClicks, page.state.clicks.includes('graph-finish-route')], [true, 1, 0, false], tool + ': `adjust` ticks the box, nothing is finished');
+      page.tick();
+      ok(/click: inlet \(1 of 3\)/.test(menuRows(page).join(' ')), tool + ': the bar shows the first port to click');
+    }
+    {
+      // per-port placement: the third row, then it ticks the box
+      const page = makePage(); loadShell(page);
+      const h = page.openPanel({ tool, hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+      eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports (click each port)'], tool + ': three rows when the app offers Adjust ports');
+      page.press(mountedBar(page), 'ArrowDown'); page.press(mountedBar(page), 'ArrowDown'); page.press(mountedBar(page), 'Enter');
+      eq([h.ctl.box.checked, page.state.finishClicks], [true, 0], tool + ': the third row ticks the box and finishes nothing');
+    }
+    {
+      // "as is" confirms, then Enter finishes: one Finish click, for all four tools
+      const page = makePage(); loadShell(page);
+      page.openPanel({ tool, hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing' }); page.tick();
+      page.press(mountedBar(page), 'Enter');
+      eq(page.state.finishClicks, 0, tool + ': confirming the sizes does not finish');
+      page.press(mountedBar(page), 'Enter');
+      eq(page.state.finishClicks, 1, tool + ': then Enter finishes once');
+    }
+  }
+  /* ----- a single-size placement (valve, equipment, fixture, equal tee, cross): two choices at ready when Adjust ports is offered ----- */
+  for (const tool of ['fitting', 'fixture', 'valve', 'equipment']) {
+    {
+      // the two rows open by themselves; "continue as is" confirms, then Enter finishes (two Enters, like the reducing tee)
+      const page = makePage(); loadShell(page);
+      page.openPanel({ tool, hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); page.tick();
+      eq(menuRows(page), ['Ports: pick one (Enter or Space)', ...TWO_ROWS], tool + ': two choices open by themselves');
+      page.press(mountedBar(page), 'Enter');
+      eq([page.state.finishClicks, page.state.adjustClicks || 0, lastStatus(page)], [0, 0, 'ports kept as detected. Enter finishes'], tool + ': "continue as is" confirms and finishes nothing');
+      page.press(mountedBar(page), 'Enter');
+      eq(page.state.finishClicks, 1, tool + ': the next Enter finishes once');
+    }
+    {
+      // Enter before choosing does not finish: it brings the choices back
+      const page = makePage(); loadShell(page);
+      page.openPanel({ tool, hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); page.tick();
+      page.press(mountedBar(page), 'Escape'); page.press(mountedBar(page), 'Enter');
+      eq([page.state.finishClicks, menuRows(page).slice(1)], [0, TWO_ROWS], tool + ': after Esc, Enter does not finish: the choices come back');
+    }
+    {
+      // the second row ticks the app's box, the bar guides each click, and afterwards one Enter finishes
+      const page = makePage(); loadShell(page);
+      const h = page.openPanel({ tool, hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); page.tick();
+      page.press(mountedBar(page), 'ArrowDown'); page.press(mountedBar(page), 'Enter');
+      eq([h.ctl.box.checked, page.state.adjustClicks, page.state.finishClicks], [true, 1, 0], tool + ': the second row ticks Adjust ports, nothing finished');
+      page.tick();
+      eq(menuRows(page), ['click: inlet (1 of 3)  ' + UNDO_NOTE], tool + ': the bar guides the first click');
+      h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
+      eq(menuRows(page).slice(1), AGAIN_ROWS, tool + ': after the last port the choices come back, now with "Adjust ports again"');
+      page.press(mountedBar(page), 'Enter');
+      eq(page.state.finishClicks, 0, tool + ': "continue as is" finishes nothing');
+      page.press(mountedBar(page), 'Enter');
+      eq(page.state.finishClicks, 1, tool + ': then one Enter finishes');
+    }
+  }
+  {
+    // not shown when it would mislead
+    const none = makePage(); loadShell(none); none.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); none.tick();
+    ok(!menuShown(none), 'the app shows no Adjust ports box: no choices, Enter finishes at once');
+    focusBar(none); none.press(mountedBar(none), 'Enter'); eq(none.state.finishClicks, 1, 'and one Enter finishes');
+    const hidden = makePage(); loadShell(hidden); hidden.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'], detected: false } }); hidden.tick();
+    ok(!menuShown(hidden), 'the app hides the box (no detected ports): no choices');
+    const on = makePage(); loadShell(on); const ho = on.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); on.tick();
+    ho.ctl.box.click(); on.tick(); ho.ctl.clickPort(); ho.ctl.clickPort(); on.tick();
+    ok(ho.ctl.box.checked && menuShown(on) && menuRows(on).slice(1).join('|') === AGAIN_ROWS.join('|'), 'ticked with the mouse and back at ready: the choices offer to adjust again');
+    for (const tool of ['transition', 'cut']) {
+      const p = makePage(); loadShell(p); p.openPanel({ tool, hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
+      ok(!menuShown(p), tool + ': no choices');
+    }
+    const lab = makePage(); loadShell(lab); lab.openPanel({ tool: 'valve', hint: 'Choose the fitting subtype.', groups: TEE_GROUPS, adjust: { roles: ['inlet', 'outlet'] } }); lab.tick();
+    ok(!menuRows(lab).includes(TWO_ROWS[0]), 'label phase: no choices');
+    const closed = makePage(); loadShell(closed); closed.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); closed.tick();
+    closed.closePanel(); closed.tick();
+    ok(!menuShown(closed), 'panel closed: the choices go away');
+    // a selection does not block a ports-only step (it writes no sizes)
+    const sel = makePage({ selected: 'pipe-9' }); loadShell(sel); sel.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); sel.tick();
+    eq(menuRows(sel).slice(1), TWO_ROWS, 'something selected: the ports choices still show');
+    // the typed word still works while the choices are open
+    const typed = makePage(); loadShell(typed); const ht = typed.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); typed.tick();
+    typeText(typed, 'adju'); typed.press(mountedBar(typed), 'Enter');
+    eq([ht.ctl.box.checked, typed.state.finishClicks], [false, 0], 'a partial word is not the command (it just takes the highlighted row)');
+  }
+  {
+    const typed = makePage(); loadShell(typed); const ht = typed.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); typed.tick();
+    typeText(typed, 'adjust'); typed.press(mountedBar(typed), 'Enter');
+    eq([ht.ctl.box.checked, typed.state.finishClicks], [true, 0], 'typing `adjust` while the choices are open ticks the box');
+  }
+
+  /* ----- adjusting ports again ----- */
+  for (const [label, perPort] of [['single size', false], ['reducing tee', true]]) {
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, perPort: perPort ? PER_PORT() : null, chosen: perPort ? 'pipe-tee-reducing' : 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+    const adjustRow = perPort ? 2 : 1;
+    for (let i = 0; i < adjustRow; i++) page.press(mountedBar(page), 'ArrowDown');
+    page.press(mountedBar(page), 'Enter'); // first adjust
+    h.ctl.clickPort(); h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
+    eq(menuRows(page).slice(-1), ['Adjust ports again (click each port)'], label + ': after adjusting, the last choice is "Adjust ports again"');
+    const before = page.state.adjustClicks;
+    for (let i = 0; i < adjustRow; i++) page.press(mountedBar(page), 'ArrowDown');
+    page.press(mountedBar(page), 'Enter'); // adjust again
+    eq([page.state.adjustClicks - before, h.ctl.box.checked, h.ctl.assigned, page.state.finishClicks], [2, true, 0, 0], label + ': "again" unticks and ticks the box (two clicks), the app asks from the start, nothing finished');
+    page.tick();
+    eq(menuRows(page), ['click: inlet (1 of 3)  ' + UNDO_NOTE], label + ': the guide starts again at the first port');
+    ok(page.RW._pipeLog.some((x) => x.kind === 'adjust' && /again/.test(x.what)), label + ': logged as adjusting again');
+    h.ctl.clickPort(); h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
+    eq(menuRows(page).slice(-1), ['Adjust ports again (click each port)'], label + ': and it can be done again');
+  }
+  {
+    // if the first click does not untick the box, the bar does not click a second time
+    const page = makePage(); loadShell(page);
+    const h = page.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+    page.press(mountedBar(page), 'ArrowDown'); page.press(mountedBar(page), 'Enter');
+    h.ctl.clickPort(); h.ctl.clickPort(); h.ctl.clickPort(); page.tick();
+    const real = h.ctl.box.click; h.ctl.box.click = () => { page.state.adjustClicks += 1; }; // the app ignores the click
+    const before = page.state.adjustClicks;
+    page.press(mountedBar(page), 'ArrowDown'); page.press(mountedBar(page), 'Enter');
+    eq(page.state.adjustClicks - before, 1, 'the first click had no effect: only one click is made');
+    ok(/could not change/.test(lastStatus(page)), 'and the bar says so');
+    h.ctl.box.click = real;
+  }
+
+  /* ----- Esc at ready steps back one level before native's Esc cancels the placement ----- */
+  {
+    const LAST = 'Esc again cancels the placement';
+    const esc = (page, el) => page.press(el || mountedBar(page), 'Escape');
+    // per-port family: confirmed -> Esc reopens the three rows, writes nothing; Esc closes; Esc reaches native
+    const page = makePage(); loadShell(page);
+    page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
+    page.press(mountedBar(page), 'Enter'); // as is
+    ok(!menuShown(page), 'confirmed: the rows are closed');
+    const e1 = esc(page);
+    ok(e1.propagationStopped && e1.defaultPrevented, 'per-port, confirmed: the first Esc is ours');
+    eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports (click each port)'], 'and the three rows are back');
+    eq([page.state.sizeChanges, page.state.finishClicks, page.state.adjustClicks || 0], [0, 0, 0], 'nothing was written, finished or ticked');
+    const e2 = esc(page);
+    ok(e2.propagationStopped && !menuShown(page), 'Esc closes the rows (still ours)');
+    const e3 = esc(page);
+    ok(!e3.propagationStopped, 'the next Esc is left for native, which cancels');
+    // from the page body as well (the bar does not have the keyboard)
+    const pb = makePage(); loadShell(pb);
+    pb.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing' }); pb.tick();
+    pb.press(mountedBar(pb), 'Enter'); pb.doc.body.focus && pb.doc.body.focus();
+    const b1 = pb.press(pb.doc.body, 'Escape');
+    ok(b1.propagationStopped && menuShown(pb), 'confirmed, keyboard on the page: Esc still steps back first');
+    // an edit that was made is kept when the rows come back: sizes are not touched by Esc
+    // single size (valve): first Esc shows the adjust row and the line; second reaches native
+    for (const tool of ['fitting', 'fixture', 'valve', 'equipment']) {
+      const p = makePage(); loadShell(p);
+      p.openPanel({ tool, hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
+      p.press(mountedBar(p), 'Enter'); // continue as is
+      const s1 = esc(p);
+      ok(s1.propagationStopped, tool + ': single size, confirmed: first Esc is ours');
+      eq(menuRows(p), [LAST, 'Adjust ports (click each port)'], tool + ': the line and the Adjust row');
+      eq(lastStatus(p), LAST, tool + ': the status says it too');
+      const s2 = esc(p);
+      ok(!s2.propagationStopped && !menuShown(p), tool + ': the second Esc is left for native');
+      eq([p.state.finishClicks, p.state.adjustClicks || 0], [0, 0], tool + ': nothing finished or ticked');
+    }
+    {
+      // Enter on the Adjust row during the last call starts adjusting
+      const p = makePage(); loadShell(p);
+      const h = p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
+      p.press(mountedBar(p), 'Enter'); esc(p); p.press(mountedBar(p), 'Enter');
+      eq([h.ctl.box.checked, p.state.finishClicks], [true, 0], 'Enter on the Adjust row ticks the box and finishes nothing');
+    }
+    {
+      // already ticked: the row reads "again"
+      const p = makePage(); loadShell(p);
+      const h = p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
+      p.press(mountedBar(p), 'ArrowDown'); p.press(mountedBar(p), 'Enter');
+      h.ctl.clickPort(); h.ctl.clickPort(); p.tick();
+      p.press(mountedBar(p), 'Enter'); // continue as is
+      esc(p);
+      eq(menuRows(p), [LAST, 'Adjust ports again (click each port)'], 'ticked box: the row says again');
+    }
+    {
+      // no Adjust ports box: only the line, and Enter still finishes
+      const p = makePage(); loadShell(p);
+      p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); p.tick();
+      const bar = mountedBar(p); bar.focus();
+      const n1 = esc(p);
+      ok(n1.propagationStopped, 'no Adjust box: the first Esc is still ours');
+      eq(menuRows(p), [LAST], 'only the line');
+      p.press(mountedBar(p), 'Enter');
+      eq(p.state.finishClicks, 1, 'Enter finishes exactly as before (the line is not a block)');
+      const q = makePage(); loadShell(q);
+      q.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); q.tick();
+      esc(q); const n2 = esc(q);
+      ok(!n2.propagationStopped, 'no Adjust box: the second Esc reaches native');
+    }
+    {
+      // typing clears the last call: the next Esc is the ordinary clear, then the step-back starts over
+      const p = makePage(); loadShell(p);
+      p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
+      p.press(mountedBar(p), 'Enter'); esc(p);
+      typeText(p, 'und');
+      ok(menuShown(p) && menuRows(p)[0] !== LAST, 'typing replaces the last-call line with the matching commands');
+      const t1 = esc(p);
+      ok(t1.propagationStopped, 'typed text is cleared by Esc (ours)');
+      const t2 = esc(p);
+      ok(t2.propagationStopped && menuRows(p)[0] === LAST, 'then the step-back begins again');
+    }
+    {
+      // not ours: transition (no box tool), not at ready, panel closed, focus in a port size box
+      const p = makePage(); loadShell(p);
+      p.openPanel({ tool: 'transition', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
+      ok(!p.press(p.doc.body, 'Escape').propagationStopped, 'transition: Esc is native\'s');
+      const l = makePage(); loadShell(l);
+      l.openPanel({ tool: 'valve', hint: 'Choose the fitting subtype.', groups: TEE_GROUPS, adjust: { roles: ['inlet', 'outlet'] } }); l.tick();
+      ok(!l.press(l.doc.body, 'Escape').propagationStopped, 'label phase: Esc is native\'s');
+      const c = makePage(); loadShell(c);
+      ok(!c.press(c.doc.body, 'Escape').propagationStopped, 'no placement: Esc is native\'s');
+      const f = makePage(); loadShell(f);
+      f.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); f.tick();
+      const field = f.doc.createElement ? f.doc.createElement('input') : null;
+      if (field) { f.doc.body.appendChild && f.doc.body.appendChild(field); const r = f.press(field, 'Escape'); ok(!r.propagationStopped, 'a form field outside the bar keeps native\'s own Esc'); }
+    }
   }
 
   console.log(`${pass} passed, ${fail} failed`);

@@ -140,8 +140,9 @@ export const PIPE_SIZE_IDS = {
   customSuffix: '-custom',
   bootstrap: 'graph-session-bootstrap',
 };
-// Only this tool places fittings that have per-port sizes (reducing tees/wyes, reducers, ...).
-export const PIPE_SIZE_TOOLS = ['fitting'];
+// Every box tool shares native's one placement panel, so the per-port size fields (reducing tees/wyes, reducers,
+// and any valve, equipment or fixture whose family has several size groups) can appear for all four.
+export const PIPE_SIZE_TOOLS = ['fitting', 'fixture', 'valve', 'equipment'];
 // Step 3c: native's "Adjust ports" checkbox (no id: a checkbox inside a label of the placement panel).
 export const PIPE_ADJUST = { labelText: 'Adjust ports' };
 // The typed command for it. Not a button entry: it is handled by the shell, listed only when usable.
@@ -171,8 +172,8 @@ export const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 export const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
 // The keys that finish (with the bar focused and empty): Enter, and Space (the same as Enter everywhere else).
 export const PIPE_FINISH_KEYS = ['Enter', ' '];
-// Only these tools may be finished from the bar (valves, equipment, cut, transition stay manual).
-export const PIPE_FINISH_TOOLS = ['fitting', 'fixture'];
+// Only these tools may be finished from the bar (cut, transition stay manual).
+export const PIPE_FINISH_TOOLS = ['fitting', 'fixture', 'valve', 'equipment'];
 // How long a Finish click holds the latch if native never shows "Saving..." (e.g. the click was ignored).
 export const PIPE_FINISH_LATCH_MS = 1500;
 // "Click the detected intersection for <role>." -> role

@@ -159,8 +159,9 @@ const PIPE_SIZE_IDS = {
   customSuffix: '-custom',
   bootstrap: 'graph-session-bootstrap',
 };
-// Only this tool places fittings that have per-port sizes (reducing tees/wyes, reducers, ...).
-const PIPE_SIZE_TOOLS = ['fitting'];
+// Every box tool shares native's one placement panel, so the per-port size fields (reducing tees/wyes, reducers,
+// and any valve, equipment or fixture whose family has several size groups) can appear for all four.
+const PIPE_SIZE_TOOLS = ['fitting', 'fixture', 'valve', 'equipment'];
 // Step 3c: native's "Adjust ports" checkbox (no id: a checkbox inside a label of the placement panel).
 const PIPE_ADJUST = { labelText: 'Adjust ports' };
 // The typed command for it. Not a button entry: it is handled by the shell, listed only when usable.
@@ -190,8 +191,8 @@ const PIPE_FINISH_BUTTON_ID = 'graph-finish-route';
 const PIPE_FINISH_HINT_PREFIX = 'Finish inserts this fitting.';
 // The keys that finish (with the bar focused and empty): Enter, and Space (the same as Enter everywhere else).
 const PIPE_FINISH_KEYS = ['Enter', ' '];
-// Only these tools may be finished from the bar (valves, equipment, cut, transition stay manual).
-const PIPE_FINISH_TOOLS = ['fitting', 'fixture'];
+// Only these tools may be finished from the bar (cut, transition stay manual).
+const PIPE_FINISH_TOOLS = ['fitting', 'fixture', 'valve', 'equipment'];
 // How long a Finish click holds the latch if native never shows "Saving..." (e.g. the click was ignored).
 const PIPE_FINISH_LATCH_MS = 1500;
 // "Click the detected intersection for <role>." -> role
@@ -1110,7 +1111,7 @@ function finishVerdict(f) {
   if (!f.panelOpen) return no('no-panel');
   if (!String(f.hint ?? '').trim().startsWith(f.finishPrefix ?? '\u0000')) return no('phase');
   if (!(f.allowedTools ?? []).includes(lower(f.tool))) {
-    return no('tool', 'Finish from the bar is only for fitting and fixture: use the mouse for this one');
+    return no('tool', 'Finish from the bar is only for fitting, fixture, valve and equipment: use the mouse for this one');
   }
   // Step 3b: a fitting with per-port sizes needs its sizes confirmed first (see pipe-size-core.js).
   if (f.sizesGate && f.sizesGate.ok === false) return { ...no(f.sizesGate.reason, f.sizesGate.message), reopen: !!f.sizesGate.reopen };
@@ -1614,8 +1615,30 @@ const SIZE_CHOICES = [
 ];
 // A third row when native's Adjust ports box can be used right now.
 const SIZE_CHOICE_ADJUST = { id: 'adjust', text: 'Adjust ports (click each port)' };
-function sizeChoiceRows({ adjustUsable }) {
-  return adjustUsable ? SIZE_CHOICES.concat([SIZE_CHOICE_ADJUST]) : SIZE_CHOICES.slice();
+// The same row once the app's box is already ticked and the ports are assigned: choosing it starts the clicks over.
+const SIZE_CHOICE_READJUST = { id: 'adjust', text: 'Adjust ports again (click each port)' };
+// A placement with ONE size (valve, equipment, fixture, an equal tee, a cross) has nothing to edit: when the app offers
+// Adjust ports the choice is just "continue as is" or "adjust".
+const SIZE_CHOICE_CONTINUE = { id: 'asis', text: 'Continue as is' };
+function sizeChoiceRows({ adjustUsable, singleSize = false, adjustOn = false }) {
+  const adjustRow = adjustOn ? SIZE_CHOICE_READJUST : SIZE_CHOICE_ADJUST;
+  if (singleSize) return [SIZE_CHOICE_CONTINUE, adjustRow];
+  return adjustUsable ? SIZE_CHOICES.concat([adjustRow]) : SIZE_CHOICES.slice();
+}
+
+// Esc at the ready phase steps back one level before native's Esc is allowed to cancel the placement.
+//   ready     the panel is at the ready phase of a size tool (box tools only)
+//   mode      'sizes' (per-port fields) | 'ports' (one size, Adjust ports offered) | null (no step at all)
+//   stage     the sizes step's stage for this placement
+//   lastCall  our "Esc again cancels the placement" line is already showing
+// Returns { action }: 'reopen' (show the choice rows again), 'lastcall' (show the warning, plus the Adjust row
+// when usable), 'leave' (close ours and let native cancel), 'pass' (not ours: native's Esc as before).
+function escStepPlan({ ready, mode, stage, lastCall }) {
+  if (!ready) return { action: 'pass' };
+  if (lastCall) return { action: 'leave' };
+  if (mode === 'sizes') return stage === 'confirmed' ? { action: 'reopen' } : { action: 'pass' };
+  if (mode === 'ports') return stage === 'confirmed' ? { action: 'lastcall' } : { action: 'pass' };
+  return { action: 'lastcall' };
 }
 
 // Which fields the edit step asks about, in order: the ones that are not locked.
@@ -1634,9 +1657,9 @@ function sizesKey({ placement, familyId, roles }) {
 }
 
 // What the sizes step needs from the page this tick. Returns { action }:
-//   'none'    nothing to do (no per-port fitting, or not at ready)
-//   'open'    show the two rows
-//   'blocked' per-port fitting at ready, but something is selected (say so once)
+//   'none'    nothing to do (no step for this placement, or not at ready)
+//   'open'    show the rows
+//   'blocked' a sizes step at ready, but something is selected (say so once)
 function sizesTickPlan({ state, key, perPort, ready, selectedEntityId, selectionReadable }) {
   if (!perPort || !ready) return { action: 'none' };
   if (!selectionReadable || selectedEntityId) return { action: 'blocked' };
@@ -1671,7 +1694,7 @@ function sizesFinishGate({ perPort, stage, confirmed, current, violations, selec
   return { ok: true };
 }
 
-return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, planSizeInput, planSizeWrite, effectiveSize, rolesFromLabel, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, SIZE_CHOICE_ADJUST, sizeChoiceRows, editableFields, SIZES_IDLE, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate};
+return {SIZE_MIN_IN, SIZE_MAX_IN, NOMINAL_SIZES_IN, parseSizeInput, formatSize, planSizeInput, planSizeWrite, effectiveSize, rolesFromLabel, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, SIZE_CHOICE_ADJUST, SIZE_CHOICE_READJUST, SIZE_CHOICE_CONTINUE, sizeChoiceRows, escStepPlan, editableFields, SIZES_IDLE, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate};
 })();
 
 // ===== src/core/pipe-setting-core.js =====
@@ -2073,7 +2096,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
   const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const {
     planSizeInput, planSizeWrite, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields,
-    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows,
+    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows, escStepPlan, SIZE_CHOICE_ADJUST, SIZE_CHOICE_READJUST,
   } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const { settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowText } = __m_pipe_setting_core;
@@ -2245,7 +2268,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       menuEl.style.maxHeight = Math.max(MENU_MIN_H, Math.min(MENU_MAX_H, below)) + 'px';
     }
   }
-  function hideMenu() { if (menuEl) menuEl.style.display = 'none'; menuItems = []; menuHighlight = -1; }
+  function hideMenu() { lastCall.on = false; if (menuEl) menuEl.style.display = 'none'; menuItems = []; menuHighlight = -1; }
   function scrollRowIntoView(row) {
     if (!row || !menuEl) return;
     const top = row.offsetTop, h = row.offsetHeight, view = menuEl.clientHeight;
@@ -2262,6 +2285,12 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       const head = document.createElement('div');
       head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
       head.textContent = sizesUi.header;
+      menuEl.appendChild(head);
+    }
+    if (lastCall.on) {
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
+      head.textContent = LAST_CALL_TEXT;
       menuEl.appendChild(head);
     }
     if (settingUi.active && settingUi.header) {
@@ -2447,7 +2476,8 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     if (line === portNoteRole) return;
     portNoteRole = line;
     if (!line) {
-      if (portNoteShown) { portNoteShown = false; if (!prompt.active && document.activeElement !== inputEl) hideMenu(); }
+      // The note goes away unless the person has typed something into the bar (then the list is theirs).
+      if (portNoteShown) { portNoteShown = false; if (!prompt.active && !sizesUi.active && (document.activeElement !== inputEl || !inputEl.value)) hideMenu(); }
       return;
     }
     mountBar();
@@ -2471,7 +2501,9 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
   // pair only when a NEW placement is open and ready and nothing is selected (on an existing selected
   // fitting, native saves a size change). Nothing here finishes: Enter-to-Finish stays its own press.
   const sizesUi = { active: false, header: '' };
-  let sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null };
+  const LAST_CALL_TEXT = 'Esc again cancels the placement';
+  const lastCall = { on: false };
+  let sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null, mode: null };
   let placementCount = 0, panelWasOpen = false, sizesBlockedWarned = false, rulesUnreadableWarned = false;
 
   function sizesFacts(snap) {
@@ -2480,7 +2512,17 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     const famId = host.readChosenFamilyId();
     const ready = snap.open && String(snap.hint || '').trim().startsWith(PIPE_FINISH_HINT_PREFIX) && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1;
     const key = sizesKey({ placement: placementCount, familyId: famId, roles: pf.fields.map(function(f){ return f.role; }) });
-    return { pf: pf, sel: sel, famId: famId, ready: ready, key: key, current: roleSizes(pf.fields) };
+    // Which step does this placement get at ready? 'sizes' = per-port fields (use as is / edit / adjust);
+    // 'ports' = one size, but the app offers Adjust ports and it is not ticked yet (continue as is / adjust);
+    // null = nothing: Enter finishes at once.
+    let mode = null;
+    if (ready) {
+      if (pf.present) mode = 'sizes';
+      else if (adjustVerdict(adjustFacts()).ok) mode = 'ports';
+    }
+    // The selection rules guard SIZE writes. A ports-only step writes nothing, so a selection is not its concern.
+    const stepSel = mode === 'ports' ? { selectionReadable: true, selectedEntityId: null } : sel;
+    return { pf: pf, sel: sel, stepSel: stepSel, famId: famId, ready: ready, key: key, current: roleSizes(pf.fields), mode: mode, step: mode !== null };
   }
   function currentViolations(f) {
     if (!f.pf.present || !f.famId) return [];
@@ -2493,20 +2535,22 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     const f = sizesFacts(snap);
     const v = currentViolations(f);
     return sizesFinishGate({
-      perPort: f.pf.present && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1,
+      perPort: f.step && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1,
       stage: sizes.key === f.key ? sizes.stage : 'idle', confirmed: sizes.confirmed, current: f.current,
-      violations: v || [], selectedEntityId: f.sel.selectedEntityId, selectionReadable: f.sel.selectionReadable,
+      violations: v || [], selectedEntityId: f.stepSel.selectedEntityId, selectionReadable: f.stepSel.selectionReadable,
     });
   }
   function resetSizes() {
-    sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null };
+    sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null, mode: null };
     sizesBlockedWarned = false; rulesUnreadableWarned = false;
+    if (lastCall.on) hideMenu();
     if (sizesUi.active) { sizesUi.active = false; sizesUi.header = ''; hideMenu(); }
   }
   function renderSizesChoice() {
     sizesUi.active = true;
-    sizesUi.header = 'Port sizes: pick one (Enter or Space)';
-    menuItems = sizeChoiceRows({ adjustUsable: adjustVerdict(adjustFacts()).ok }).map(function(c){ return { size: c }; });
+    const single = sizes.mode === 'ports';
+    sizesUi.header = (single ? 'Ports: pick one' : 'Port sizes: pick one') + ' (Enter or Space)';
+    menuItems = sizeChoiceRows({ adjustUsable: adjustVerdict(adjustFacts()).ok, singleSize: single, adjustOn: host.readAdjustPorts().checked === true }).map(function(c){ return { size: c }; });
     menuHighlight = 0;
     ensureMenu(); renderMenu();
   }
@@ -2526,7 +2570,8 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
   }
   function openSizesChoice() {
     sizes.stage = 'choice'; sizes.index = 0; sizes.drafts = {};
-    sizes.key = sizesFacts(host.readPanel()).key;
+    const opened = sizesFacts(host.readPanel());
+    sizes.key = opened.key; sizes.mode = opened.mode || sizes.mode;
     mountBar();
     if (!inputEl) return;
     inputEl.value = '';
@@ -2534,12 +2579,19 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     renderSizesChoice();
   }
   // Tick or untick native's Adjust ports box (placement state only; nothing is saved).
-  function runAdjust() {
+  // again: from the choices, "Adjust ports again" when the box is already ticked: untick (the app goes back to its
+  // automatic assignment), then tick (it asks for every port from scratch). Typed `adjust` just toggles.
+  function runAdjust(again) {
     const v = adjustVerdict(adjustFacts());
     if (!v.ok) { status(v.message); return false; }
     const wasOn = host.readAdjustPorts().checked === true;
-    logAction('adjust', (wasOn ? 'unticked' : 'ticked') + ' Adjust ports');
-    const r = host.clickAdjustPorts();
+    const redo = !!again && wasOn;
+    logAction('adjust', redo ? 'adjusted ports again (unticked, ticked Adjust ports)' : (wasOn ? 'unticked' : 'ticked') + ' Adjust ports');
+    let r = host.clickAdjustPorts();
+    if (r.ok && redo) {
+      // the first click must have unticked it; only then tick it again (never click blindly twice)
+      r = r.checked === false ? host.clickAdjustPorts() : { ok: false };
+    }
     if (!r.ok) { unlogLast(); status('adjust ports: could not change it'); return false; }
     own.lastCmdAt = Date.now();
     const keep = placementCount; resetSizes(); placementCount = keep;
@@ -2557,8 +2609,8 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     // assigning ports reseeds the sizes, so the rows ask again when ready returns.
     if (!f.ready) { const keep = placementCount; resetSizes(); placementCount = keep; return; }
     const plan = sizesTickPlan({
-      state: sizes, key: f.key, perPort: f.pf.present, ready: f.ready,
-      selectedEntityId: f.sel.selectedEntityId, selectionReadable: f.sel.selectionReadable,
+      state: sizes, key: f.key, perPort: f.step, ready: f.ready,
+      selectedEntityId: f.stepSel.selectedEntityId, selectionReadable: f.stepSel.selectionReadable,
     });
     if (plan.action === 'blocked') {
       if (!sizesBlockedWarned) { sizesBlockedWarned = true; status(sizeWriteVerdict({ panelOpen: true, ready: true, selectionReadable: f.sel.selectionReadable, selectedEntityId: f.sel.selectedEntityId }).message); }
@@ -2572,7 +2624,8 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     }
   }
   function pickSizeChoice(choice) {
-    if (choice.id === 'adjust') { sizesUi.active = false; sizesUi.header = ''; hideMenu(); runAdjust(); return; }
+    lastCall.on = false;
+    if (choice.id === 'adjust') { sizesUi.active = false; sizesUi.header = ''; hideMenu(); runAdjust(true); return; }
     if (choice.id === 'asis') { confirmSizes('kept'); return; }
     // edit: ask for each editable port in on-screen order
     sizes.stage = 'edit'; sizes.index = 0; sizes.drafts = {};
@@ -2627,6 +2680,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     sizesUi.active = false; sizesUi.header = '';
     hideMenu();
     if (inputEl) inputEl.value = '';
+    if (f.mode === 'ports') { status('ports kept as detected. Enter finishes'); return; }
     const shown = Object.keys(f.current).map(function(r){ return r + ' ' + (f.current[r] ? formatSize(f.current[r]) + '"' : '?'); }).join(', ');
     const v = currentViolations(f);
     if (v === null) {
@@ -2840,6 +2894,43 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     hideMenu();
     inputEl.focus();
   }
+  // Esc at the ready phase steps back one level before native's Esc may cancel the placement (escStepPlan).
+  // Returns true when the key was ours (the caller swallows it).
+  function escStepBack() {
+    const snap = host.readPanel();
+    const f = sizesFacts(snap);
+    const plan = escStepPlan({ ready: f.ready, mode: f.mode, stage: sizes.key === f.key ? sizes.stage : 'idle', lastCall: lastCall.on });
+    if (plan.action === 'reopen') {
+      openSizesChoice();
+      status('port sizes: pick again. Esc closes this, Esc again cancels the placement');
+      return true;
+    }
+    if (plan.action === 'lastcall') {
+      mountBar();
+      if (!inputEl) return false;
+      inputEl.value = '';
+      inputEl.focus();
+      menuItems = adjustVerdict(adjustFacts()).ok
+        ? [{ size: host.readAdjustPorts().checked === true ? SIZE_CHOICE_READJUST : SIZE_CHOICE_ADJUST }] : [];
+      menuHighlight = menuItems.length ? 0 : -1;
+      lastCall.on = true;
+      if (menuItems.length) renderMenu();
+      else {
+        ensureMenu();
+        menuEl.innerHTML = '';
+        const head = document.createElement('div');
+        head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+        head.textContent = LAST_CALL_TEXT;
+        menuEl.appendChild(head);
+        positionMenu();
+        menuEl.style.display = 'block';
+      }
+      status(LAST_CALL_TEXT);
+      return true;
+    }
+    if (plan.action === 'leave') hideMenu();
+    return false;
+  }
   function runAndClear(entry) { if (runEntry(entry)) clearBar(); else rejectBar(); }
 
   /* ---------- the bar ---------- */
@@ -2865,7 +2956,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       + 'border:1px solid #555;border-radius:3px;color-scheme:dark;';
     row.appendChild(inputEl);
     hostEl.insertBefore(row, list);
-    inputEl.addEventListener('input', function(){ openMenu(inputEl.value); });
+    inputEl.addEventListener('input', function(){ lastCall.on = false; openMenu(inputEl.value); });
     inputEl.addEventListener('keydown', onInputKeydown);
     inputEl.addEventListener('blur', function(){
       setTimeout(function(){ if (document.activeElement !== inputEl) { if (settingUi.active) endSetting('cancelled'); hideMenu(); } }, 150);
@@ -2910,8 +3001,21 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     if (sizesUi.active && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault(); e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-      if (sizes.stage === 'choice') { if (menuHighlight >= 0 && menuItems[menuHighlight]) pickSizeChoice(menuItems[menuHighlight].size); }
+      if (sizes.stage === 'choice') {
+        // The typed word `adjust` (or its aliases) still works while the rows are open.
+        const typedWord = inputEl.value.trim().toLowerCase();
+        if (typedWord && [PIPE_ADJUST_ENTRY.name].concat(PIPE_ADJUST_ENTRY.aliases).indexOf(typedWord) !== -1) {
+          inputEl.value = '';
+          pickSizeChoice({ id: 'adjust' });
+        } else if (menuHighlight >= 0 && menuItems[menuHighlight]) pickSizeChoice(menuItems[menuHighlight].size);
+      }
       else if (sizes.stage === 'edit') enterSizeValue();
+      return;
+    }
+    if (lastCall.on && menuItems.length && menuHighlight >= 0 && !inputEl.value && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      pickSizeChoice(menuItems[menuHighlight].size);
       return;
     }
     if (prompt.active) {
@@ -2959,6 +3063,11 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       if (sizes.stage === 'edit') { openSizesChoice(); return; }
       sizes.stage = 'dismissed'; sizesUi.active = false; sizesUi.header = ''; hideMenu();
       if (inputEl) inputEl.value = '';
+      return;
+    }
+    if (e.key === 'Escape' && !inputEl.value && (lastCall.on || !menuEl || menuEl.style.display === 'none') && escStepBack()) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       return;
     }
     if (e.key === 'Escape') {
@@ -3019,6 +3128,10 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       // except while the label prompt is open (1-4 pick a port-count category, 45/90 name an elbow).
       digitPassthrough: barEmpty && !prompt.active,
     });
+    if (e.key === 'Escape' && !typingInFormField && RW.enabled && !settingUi.active && !host.anyDialogOpen() && escStepBack()) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      return;
+    }
     if (!shouldCapture) return;
 
     // AutoCAD's Space: nothing typed -> close the armed tool to select, else repeat the last tool,

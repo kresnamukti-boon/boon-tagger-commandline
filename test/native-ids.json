@@ -124,7 +124,9 @@
       "controls['diameter-custom'].addEventListener('blur', () => {",
       "if (e.key === 'Enter' && pipeResizeCommand(selectedEntity()?.fields)) void updateResizeFacts();",
       "controls['diameter-source'].addEventListener('change', () => {",
-      "void ((portGroups && portGroups.length > 1) ? updatePortResizeFacts() : updateResizeFacts());"
+      "void ((portGroups && portGroups.length > 1) ? updatePortResizeFacts() : updateResizeFacts());",
+      "const placementOperation = operation && !['transition', 'cut'].includes(operation.tool) ? operation : null;",
+      "const readyHint = ['transition', 'cut'].includes(operation.tool) ? 'Finish inserts this fitting.' : 'Finish inserts this fitting. The connected pipe resumes from its outlet.';"
     ]
   },
   "tradePackValues": {

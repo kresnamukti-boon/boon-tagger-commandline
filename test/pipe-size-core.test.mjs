@@ -7,7 +7,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import {
   parseSizeInput, formatSize, planSizeInput, planSizeWrite, effectiveSize, rolesFromLabel, roleSizes, maxViolations,
-  sizeWriteVerdict, SIZE_CHOICES, editableFields, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate, NOMINAL_SIZES_IN, sizeChoiceRows, SIZE_CHOICE_ADJUST,
+  sizeWriteVerdict, SIZE_CHOICES, editableFields, sizesKey, sizesTickPlan, sizesChanged, sizesFinishGate, NOMINAL_SIZES_IN, sizeChoiceRows, SIZE_CHOICE_ADJUST, SIZE_CHOICE_CONTINUE, SIZE_CHOICE_READJUST, escStepPlan,
 } from '../src/core/pipe-size-core.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -146,4 +146,28 @@ test('sizeChoiceRows: the third row appears only when Adjust ports can be used',
   assert.deepEqual(sizeChoiceRows({ adjustUsable: true }).map((c) => c.id), ['asis', 'edit', 'adjust']);
   assert.equal(SIZE_CHOICE_ADJUST.text, 'Adjust ports (click each port)');
   assert.equal(SIZE_CHOICES.length, 2, 'the base list is not mutated');
+  // a placement with one size has nothing to edit: just continue or adjust
+  assert.deepEqual(sizeChoiceRows({ adjustUsable: true, singleSize: true }).map((c) => c.id), ['asis', 'adjust']);
+  assert.deepEqual(sizeChoiceRows({ adjustUsable: true, singleSize: true }).map((c) => c.text), ['Continue as is', 'Adjust ports (click each port)']);
+  assert.equal(SIZE_CHOICE_CONTINUE.text, 'Continue as is');
+  // once the box is ticked the adjust row offers to start over
+  assert.equal(SIZE_CHOICE_READJUST.text, 'Adjust ports again (click each port)');
+  assert.equal(SIZE_CHOICE_READJUST.id, 'adjust', 'same action id, different wording');
+  assert.deepEqual(sizeChoiceRows({ adjustUsable: true, singleSize: true, adjustOn: true }).map((c) => c.text), ['Continue as is', 'Adjust ports again (click each port)']);
+  assert.deepEqual(sizeChoiceRows({ adjustUsable: true, adjustOn: true }).map((c) => c.text), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports again (click each port)']);
+  assert.equal(sizeChoiceRows({ adjustUsable: false, adjustOn: true }).length, 2, 'no adjust row when it cannot be used');
+  assert.deepEqual(sizeChoiceRows({ adjustUsable: false }).map((c) => c.id), ['asis', 'edit'], 'per-port rows unchanged');
+});
+
+test('escStepPlan: one step back at ready, then native cancels', () => {
+  const a = (o) => escStepPlan({ ready: true, mode: 'sizes', stage: 'confirmed', lastCall: false, ...o }).action;
+  assert.equal(a({}), 'reopen', 'per-port, confirmed: the rows come back');
+  for (const stage of ['idle', 'choice', 'edit', 'dismissed']) assert.equal(a({ stage }), 'pass', 'per-port ' + stage);
+  assert.equal(a({ mode: 'ports' }), 'lastcall', 'one size, confirmed: warn first');
+  for (const stage of ['idle', 'choice', 'dismissed']) assert.equal(a({ mode: 'ports', stage }), 'pass', 'one size ' + stage);
+  assert.equal(a({ mode: null, stage: 'idle' }), 'lastcall', 'no step at all: warn first');
+  assert.equal(a({ mode: null, lastCall: true }), 'leave', 'second Esc: native cancels');
+  assert.equal(a({ lastCall: true }), 'leave');
+  assert.equal(a({ ready: false }), 'pass', 'not at ready');
+  assert.equal(a({ ready: false, lastCall: true }), 'pass', 'not at ready, even with a stale flag');
 });

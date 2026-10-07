@@ -35,7 +35,7 @@
   const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const {
     planSizeInput, planSizeWrite, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields,
-    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows,
+    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows, escStepPlan, SIZE_CHOICE_ADJUST, SIZE_CHOICE_READJUST,
   } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const { settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowText } = __m_pipe_setting_core;
@@ -207,7 +207,7 @@
       menuEl.style.maxHeight = Math.max(MENU_MIN_H, Math.min(MENU_MAX_H, below)) + 'px';
     }
   }
-  function hideMenu() { if (menuEl) menuEl.style.display = 'none'; menuItems = []; menuHighlight = -1; }
+  function hideMenu() { lastCall.on = false; if (menuEl) menuEl.style.display = 'none'; menuItems = []; menuHighlight = -1; }
   function scrollRowIntoView(row) {
     if (!row || !menuEl) return;
     const top = row.offsetTop, h = row.offsetHeight, view = menuEl.clientHeight;
@@ -224,6 +224,12 @@
       const head = document.createElement('div');
       head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
       head.textContent = sizesUi.header;
+      menuEl.appendChild(head);
+    }
+    if (lastCall.on) {
+      const head = document.createElement('div');
+      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
+      head.textContent = LAST_CALL_TEXT;
       menuEl.appendChild(head);
     }
     if (settingUi.active && settingUi.header) {
@@ -409,7 +415,8 @@
     if (line === portNoteRole) return;
     portNoteRole = line;
     if (!line) {
-      if (portNoteShown) { portNoteShown = false; if (!prompt.active && document.activeElement !== inputEl) hideMenu(); }
+      // The note goes away unless the person has typed something into the bar (then the list is theirs).
+      if (portNoteShown) { portNoteShown = false; if (!prompt.active && !sizesUi.active && (document.activeElement !== inputEl || !inputEl.value)) hideMenu(); }
       return;
     }
     mountBar();
@@ -433,7 +440,9 @@
   // pair only when a NEW placement is open and ready and nothing is selected (on an existing selected
   // fitting, native saves a size change). Nothing here finishes: Enter-to-Finish stays its own press.
   const sizesUi = { active: false, header: '' };
-  let sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null };
+  const LAST_CALL_TEXT = 'Esc again cancels the placement';
+  const lastCall = { on: false };
+  let sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null, mode: null };
   let placementCount = 0, panelWasOpen = false, sizesBlockedWarned = false, rulesUnreadableWarned = false;
 
   function sizesFacts(snap) {
@@ -442,7 +451,17 @@
     const famId = host.readChosenFamilyId();
     const ready = snap.open && String(snap.hint || '').trim().startsWith(PIPE_FINISH_HINT_PREFIX) && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1;
     const key = sizesKey({ placement: placementCount, familyId: famId, roles: pf.fields.map(function(f){ return f.role; }) });
-    return { pf: pf, sel: sel, famId: famId, ready: ready, key: key, current: roleSizes(pf.fields) };
+    // Which step does this placement get at ready? 'sizes' = per-port fields (use as is / edit / adjust);
+    // 'ports' = one size, but the app offers Adjust ports and it is not ticked yet (continue as is / adjust);
+    // null = nothing: Enter finishes at once.
+    let mode = null;
+    if (ready) {
+      if (pf.present) mode = 'sizes';
+      else if (adjustVerdict(adjustFacts()).ok) mode = 'ports';
+    }
+    // The selection rules guard SIZE writes. A ports-only step writes nothing, so a selection is not its concern.
+    const stepSel = mode === 'ports' ? { selectionReadable: true, selectedEntityId: null } : sel;
+    return { pf: pf, sel: sel, stepSel: stepSel, famId: famId, ready: ready, key: key, current: roleSizes(pf.fields), mode: mode, step: mode !== null };
   }
   function currentViolations(f) {
     if (!f.pf.present || !f.famId) return [];
@@ -455,20 +474,22 @@
     const f = sizesFacts(snap);
     const v = currentViolations(f);
     return sizesFinishGate({
-      perPort: f.pf.present && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1,
+      perPort: f.step && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1,
       stage: sizes.key === f.key ? sizes.stage : 'idle', confirmed: sizes.confirmed, current: f.current,
-      violations: v || [], selectedEntityId: f.sel.selectedEntityId, selectionReadable: f.sel.selectionReadable,
+      violations: v || [], selectedEntityId: f.stepSel.selectedEntityId, selectionReadable: f.stepSel.selectionReadable,
     });
   }
   function resetSizes() {
-    sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null };
+    sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null, mode: null };
     sizesBlockedWarned = false; rulesUnreadableWarned = false;
+    if (lastCall.on) hideMenu();
     if (sizesUi.active) { sizesUi.active = false; sizesUi.header = ''; hideMenu(); }
   }
   function renderSizesChoice() {
     sizesUi.active = true;
-    sizesUi.header = 'Port sizes: pick one (Enter or Space)';
-    menuItems = sizeChoiceRows({ adjustUsable: adjustVerdict(adjustFacts()).ok }).map(function(c){ return { size: c }; });
+    const single = sizes.mode === 'ports';
+    sizesUi.header = (single ? 'Ports: pick one' : 'Port sizes: pick one') + ' (Enter or Space)';
+    menuItems = sizeChoiceRows({ adjustUsable: adjustVerdict(adjustFacts()).ok, singleSize: single, adjustOn: host.readAdjustPorts().checked === true }).map(function(c){ return { size: c }; });
     menuHighlight = 0;
     ensureMenu(); renderMenu();
   }
@@ -488,7 +509,8 @@
   }
   function openSizesChoice() {
     sizes.stage = 'choice'; sizes.index = 0; sizes.drafts = {};
-    sizes.key = sizesFacts(host.readPanel()).key;
+    const opened = sizesFacts(host.readPanel());
+    sizes.key = opened.key; sizes.mode = opened.mode || sizes.mode;
     mountBar();
     if (!inputEl) return;
     inputEl.value = '';
@@ -496,12 +518,19 @@
     renderSizesChoice();
   }
   // Tick or untick native's Adjust ports box (placement state only; nothing is saved).
-  function runAdjust() {
+  // again: from the choices, "Adjust ports again" when the box is already ticked: untick (the app goes back to its
+  // automatic assignment), then tick (it asks for every port from scratch). Typed `adjust` just toggles.
+  function runAdjust(again) {
     const v = adjustVerdict(adjustFacts());
     if (!v.ok) { status(v.message); return false; }
     const wasOn = host.readAdjustPorts().checked === true;
-    logAction('adjust', (wasOn ? 'unticked' : 'ticked') + ' Adjust ports');
-    const r = host.clickAdjustPorts();
+    const redo = !!again && wasOn;
+    logAction('adjust', redo ? 'adjusted ports again (unticked, ticked Adjust ports)' : (wasOn ? 'unticked' : 'ticked') + ' Adjust ports');
+    let r = host.clickAdjustPorts();
+    if (r.ok && redo) {
+      // the first click must have unticked it; only then tick it again (never click blindly twice)
+      r = r.checked === false ? host.clickAdjustPorts() : { ok: false };
+    }
     if (!r.ok) { unlogLast(); status('adjust ports: could not change it'); return false; }
     own.lastCmdAt = Date.now();
     const keep = placementCount; resetSizes(); placementCount = keep;
@@ -519,8 +548,8 @@
     // assigning ports reseeds the sizes, so the rows ask again when ready returns.
     if (!f.ready) { const keep = placementCount; resetSizes(); placementCount = keep; return; }
     const plan = sizesTickPlan({
-      state: sizes, key: f.key, perPort: f.pf.present, ready: f.ready,
-      selectedEntityId: f.sel.selectedEntityId, selectionReadable: f.sel.selectionReadable,
+      state: sizes, key: f.key, perPort: f.step, ready: f.ready,
+      selectedEntityId: f.stepSel.selectedEntityId, selectionReadable: f.stepSel.selectionReadable,
     });
     if (plan.action === 'blocked') {
       if (!sizesBlockedWarned) { sizesBlockedWarned = true; status(sizeWriteVerdict({ panelOpen: true, ready: true, selectionReadable: f.sel.selectionReadable, selectedEntityId: f.sel.selectedEntityId }).message); }
@@ -534,7 +563,8 @@
     }
   }
   function pickSizeChoice(choice) {
-    if (choice.id === 'adjust') { sizesUi.active = false; sizesUi.header = ''; hideMenu(); runAdjust(); return; }
+    lastCall.on = false;
+    if (choice.id === 'adjust') { sizesUi.active = false; sizesUi.header = ''; hideMenu(); runAdjust(true); return; }
     if (choice.id === 'asis') { confirmSizes('kept'); return; }
     // edit: ask for each editable port in on-screen order
     sizes.stage = 'edit'; sizes.index = 0; sizes.drafts = {};
@@ -589,6 +619,7 @@
     sizesUi.active = false; sizesUi.header = '';
     hideMenu();
     if (inputEl) inputEl.value = '';
+    if (f.mode === 'ports') { status('ports kept as detected. Enter finishes'); return; }
     const shown = Object.keys(f.current).map(function(r){ return r + ' ' + (f.current[r] ? formatSize(f.current[r]) + '"' : '?'); }).join(', ');
     const v = currentViolations(f);
     if (v === null) {
@@ -802,6 +833,43 @@
     hideMenu();
     inputEl.focus();
   }
+  // Esc at the ready phase steps back one level before native's Esc may cancel the placement (escStepPlan).
+  // Returns true when the key was ours (the caller swallows it).
+  function escStepBack() {
+    const snap = host.readPanel();
+    const f = sizesFacts(snap);
+    const plan = escStepPlan({ ready: f.ready, mode: f.mode, stage: sizes.key === f.key ? sizes.stage : 'idle', lastCall: lastCall.on });
+    if (plan.action === 'reopen') {
+      openSizesChoice();
+      status('port sizes: pick again. Esc closes this, Esc again cancels the placement');
+      return true;
+    }
+    if (plan.action === 'lastcall') {
+      mountBar();
+      if (!inputEl) return false;
+      inputEl.value = '';
+      inputEl.focus();
+      menuItems = adjustVerdict(adjustFacts()).ok
+        ? [{ size: host.readAdjustPorts().checked === true ? SIZE_CHOICE_READJUST : SIZE_CHOICE_ADJUST }] : [];
+      menuHighlight = menuItems.length ? 0 : -1;
+      lastCall.on = true;
+      if (menuItems.length) renderMenu();
+      else {
+        ensureMenu();
+        menuEl.innerHTML = '';
+        const head = document.createElement('div');
+        head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
+        head.textContent = LAST_CALL_TEXT;
+        menuEl.appendChild(head);
+        positionMenu();
+        menuEl.style.display = 'block';
+      }
+      status(LAST_CALL_TEXT);
+      return true;
+    }
+    if (plan.action === 'leave') hideMenu();
+    return false;
+  }
   function runAndClear(entry) { if (runEntry(entry)) clearBar(); else rejectBar(); }
 
   /* ---------- the bar ---------- */
@@ -827,7 +895,7 @@
       + 'border:1px solid #555;border-radius:3px;color-scheme:dark;';
     row.appendChild(inputEl);
     hostEl.insertBefore(row, list);
-    inputEl.addEventListener('input', function(){ openMenu(inputEl.value); });
+    inputEl.addEventListener('input', function(){ lastCall.on = false; openMenu(inputEl.value); });
     inputEl.addEventListener('keydown', onInputKeydown);
     inputEl.addEventListener('blur', function(){
       setTimeout(function(){ if (document.activeElement !== inputEl) { if (settingUi.active) endSetting('cancelled'); hideMenu(); } }, 150);
@@ -872,8 +940,21 @@
     if (sizesUi.active && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault(); e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-      if (sizes.stage === 'choice') { if (menuHighlight >= 0 && menuItems[menuHighlight]) pickSizeChoice(menuItems[menuHighlight].size); }
+      if (sizes.stage === 'choice') {
+        // The typed word `adjust` (or its aliases) still works while the rows are open.
+        const typedWord = inputEl.value.trim().toLowerCase();
+        if (typedWord && [PIPE_ADJUST_ENTRY.name].concat(PIPE_ADJUST_ENTRY.aliases).indexOf(typedWord) !== -1) {
+          inputEl.value = '';
+          pickSizeChoice({ id: 'adjust' });
+        } else if (menuHighlight >= 0 && menuItems[menuHighlight]) pickSizeChoice(menuItems[menuHighlight].size);
+      }
       else if (sizes.stage === 'edit') enterSizeValue();
+      return;
+    }
+    if (lastCall.on && menuItems.length && menuHighlight >= 0 && !inputEl.value && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      pickSizeChoice(menuItems[menuHighlight].size);
       return;
     }
     if (prompt.active) {
@@ -921,6 +1002,11 @@
       if (sizes.stage === 'edit') { openSizesChoice(); return; }
       sizes.stage = 'dismissed'; sizesUi.active = false; sizesUi.header = ''; hideMenu();
       if (inputEl) inputEl.value = '';
+      return;
+    }
+    if (e.key === 'Escape' && !inputEl.value && (lastCall.on || !menuEl || menuEl.style.display === 'none') && escStepBack()) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       return;
     }
     if (e.key === 'Escape') {
@@ -981,6 +1067,10 @@
       // except while the label prompt is open (1-4 pick a port-count category, 45/90 name an elbow).
       digitPassthrough: barEmpty && !prompt.active,
     });
+    if (e.key === 'Escape' && !typingInFormField && RW.enabled && !settingUi.active && !host.anyDialogOpen() && escStepBack()) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      return;
+    }
     if (!shouldCapture) return;
 
     // AutoCAD's Space: nothing typed -> close the armed tool to select, else repeat the last tool,

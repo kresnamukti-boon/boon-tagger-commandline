@@ -194,7 +194,7 @@ export function finishVerdict(f) {
   if (!f.panelOpen) return no('no-panel');
   if (!String(f.hint ?? '').trim().startsWith(f.finishPrefix ?? '\u0000')) return no('phase');
   if (!(f.allowedTools ?? []).includes(lower(f.tool))) {
-    return no('tool', 'Finish from the bar is only for fitting and fixture: use the mouse for this one');
+    return no('tool', 'Finish from the bar is only for fitting, fixture, valve and equipment: use the mouse for this one');
   }
   // Step 3b: a fitting with per-port sizes needs its sizes confirmed first (see pipe-size-core.js).
   if (f.sizesGate && f.sizesGate.ok === false) return { ...no(f.sizesGate.reason, f.sizesGate.message), reopen: !!f.sizesGate.reopen };
