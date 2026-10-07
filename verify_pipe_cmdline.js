@@ -1484,13 +1484,44 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
   {
     // diameter: a standard size picks the option (no custom box), reads back, saves nothing
     const page = fresh5(); cmd(page, 'diameter');
-    ok(/Diameter \(now 2", applies to the next pipe\): type a size/.test(prompt5(page)), 'diameter prompt shows the current size and what it applies to');
+    ok(/Diameter \(now 2", applies to the next pipe\): pick a size, or type one/.test(prompt5(page)), 'diameter prompt shows the current size and what it applies to');
     typeText(page, '2-1/2'); page.press(mountedBar(page), 'Enter');
     eq([page.settings['graph-pipe-diameter'].value, page.settings['graph-pipe-diameter-custom'].value], ['2.5', ''], 'a standard size picks the select option');
     ok(/Diameter set to 2-1\/2" \(next pipe\)/.test(lastStatus(page)), 'and says so');
     eq([page.state.settingSaves, page.state.settingChanges], [0, [['diameter', '2.5']]], 'nothing saved; exactly one change event');
     eq([menuShown(page), page.doc.activeElement], [false, null], 'the prompt closes and the bar lets go of the keyboard');
     const log = page.RW._pipeLog; eq([log.length, log[log.length - 1].kind, log[log.length - 1].what], [1, 'setting', 'set diameter to 2-1/2"'], 'one action-log entry');
+  }
+  {
+    // diameter: the app's own standard sizes are listed (no blank / Custom rows); typing filters; a size outside the list says custom
+    const page = fresh5(); cmd(page, 'diameter');
+    eq(menuRows(page).slice(1), ['1/2', '3/4', '1', '1-1/2', '2  (now)', '2-1/2', '3', '4'], 'the standard sizes from the app\'s own select, the current one marked');
+    typeText(page, '2'); 
+    eq(menuRows(page).slice(1), ['2  (now)', '2-1/2'], 'typing 2 filters to the sizes starting with 2');
+    ok(!/Enter makes a custom/.test(prompt5(page)), 'a standard size: no custom note');
+    mountedBar(page).value = ''; typeText(page, '1.75');
+    ok(/\[not in the list: Enter makes a custom 1-3\/4"/.test(prompt5(page)), 'a size outside the list says it will be custom before Enter');
+    mountedBar(page).value = ''; typeText(page, '100');
+    ok(/3\/8" to 48"/.test(prompt5(page)), 'out of range is flagged in the header too');
+    page.press(mountedBar(page), 'Escape');
+    eq(page.state.settingChanges, [], 'nothing written so far');
+  }
+  {
+    // pick a row with the arrow keys + Enter; Tab fills the size; a click on a row picks it; Enter on the current row cancels
+    const page = fresh5(); cmd(page, 'diameter');
+    page.press(mountedBar(page), 'ArrowDown'); page.press(mountedBar(page), 'ArrowDown'); page.press(mountedBar(page), 'Enter');
+    eq([page.settings['graph-pipe-diameter'].value, page.state.settingChanges], ['3', [['diameter', '3']]], 'arrow to a row + Enter picks that standard size');
+    const p2 = fresh5(); cmd(p2, 'diameter');
+    p2.press(mountedBar(p2), 'Tab');
+    ok(/^\d/.test(mountedBar(p2).value) || mountedBar(p2).value !== '', 'Tab fills the bar with the highlighted size');
+    const p3 = fresh5(); cmd(p3, 'diameter'); p3.press(mountedBar(p3), 'Enter');
+    eq([p3.state.settingChanges.length, lastStatus(p3)], [0, 'Diameter: unchanged'], 'Enter on the row already set changes nothing');
+    const p4 = fresh5(); cmd(p4, 'diameter'); typeText(p4, '3'); p4.press(mountedBar(p4), 'ArrowDown'); p4.press(mountedBar(p4), 'Enter');
+    ok(p4.state.settingChanges.length <= 1, 'typed text plus arrows never writes twice');
+    const p5 = fresh5(); cmd(p5, 'diameter'); typeText(p5, '2'); p5.press(mountedBar(p5), 'ArrowDown'); p5.press(mountedBar(p5), 'Enter');
+    eq(p5.settings['graph-pipe-diameter'].value, '2.5', 'typed 2, arrowed to 2-1/2, Enter: the row picked with the arrows wins');
+    const p6 = fresh5(); cmd(p6, 'diameter'); p6.press(mountedBar(p6), 'ArrowDown'); mountedBar(p6).value = ''; typeText(p6, '1'); p6.press(mountedBar(p6), 'Enter');
+    eq(p6.settings['graph-pipe-diameter'].value, '1', 'arrowed first, then typed 1: the typed size wins (the arrow pick is forgotten)');
   }
   {
     // diameter: a non-standard size picks Custom and fills the box (input + change only, never blur / Enter)

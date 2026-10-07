@@ -34,7 +34,7 @@
   } = __m_pipe_placement_core;
   const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const {
-    planSizeInput, planSizeWrite, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields,
+    parseSizeInput, planSizeInput, planSizeWrite, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields,
     SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows, escStepPlan,
   } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
@@ -245,7 +245,8 @@
       if (row.size) {
         usable = true; color = COLORS.tool; label = row.size.text;
       } else if (row.setting) {
-        usable = true; color = COLORS.tool; label = optionRowText(row.setting.option, row.setting.index) + (row.setting.current ? '  (now)' : '');
+        usable = true; color = COLORS.tool;
+        label = (row.setting.plain ? (row.setting.option.text || row.setting.option.value) : optionRowText(row.setting.option, row.setting.index)) + (row.setting.current ? '  (now)' : '');
       } else if (row.system) {
         usable = true; color = COLORS.system; label = row.system.name;
       } else if (row.prompt) {
@@ -628,7 +629,7 @@
   // Each opens a small prompt in the bar (a size to type, or the select's own options to pick) and writes
   // native's next-draw control only when nothing is selected and no fitting is being placed (with a pipe
   // selected, native's diameter handlers send a saved resize). The host checks again before writing.
-  const settingUi = { active: false, stage: null, entry: null, options: [], header: '' };
+  const settingUi = { active: false, stage: null, entry: null, options: [], header: '', arrowed: false };
   function settingNow(entry, st) {
     const c = st.controls[entry.control] || {};
     if (entry.control === 'diameter') {
@@ -642,7 +643,7 @@
     const st = host.readSettings();
     const entry = settingUi.entry;
     settingUi.header = entry.label + ' (now ' + settingNow(entry, st) + ', applies to the next pipe): '
-      + (settingUi.stage === 'value' ? 'type a size, Enter applies, Esc cancels. Use 2-1/2, not 2 1/2' : 'pick one (type to filter, or a number), Esc cancels');
+      + (settingUi.stage === 'value' ? 'pick a size, or type one (not in the list = custom). Enter applies, Esc cancels. Use 2-1/2, not 2 1/2' : 'pick one (type to filter, or a number), Esc cancels');
   }
   function refreshSettingRows() {
     const st = host.readSettings();
@@ -651,7 +652,24 @@
     renderSettingHeader();
     ensureMenu();
     if (settingUi.stage === 'value') {
-      menuItems = []; menuHighlight = -1;
+      // The app's own standard sizes (never the blank "Unresolved" or "Custom" rows). A size typed that is not
+      // among them becomes a custom size; the header says so before Enter.
+      const q = (inputEl ? inputEl.value : '').trim();
+      const typedSize = q ? parseSizeInput(q) : null;
+      const sizeRows = settingUi.options.map(function(o, i){ return { setting: { option: o, index: i, current: o.value === c.value, plain: true } }; })
+        .filter(function(r){ return r.setting.option.value !== '' && r.setting.option.value !== 'custom'; });
+      menuItems = q ? sizeRows.filter(function(r){
+        const o = r.setting.option;
+        return o.text.toLowerCase().indexOf(q.toLowerCase()) === 0 || (typedSize !== null && Number(o.value) === typedSize);
+      }) : sizeRows;
+      const exact = typedSize !== null && sizeRows.some(function(r){ return Number(r.setting.option.value) === typedSize; });
+      if (typedSize !== null && !exact) {
+        const plan = planSizeInput(q);
+        settingUi.header += plan.ok ? '  [not in the list: Enter makes a custom ' + formatSize(plan.value) + '"]' : '  [' + plan.message + ']';
+      }
+      const cur = menuItems.findIndex(function(r){ return r.setting.current; });
+      menuHighlight = menuItems.length ? (q || cur < 0 ? 0 : cur) : -1;
+      if (menuItems.length) { renderMenu(); return; }
       menuEl.innerHTML = '';
       const head = document.createElement('div');
       head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
@@ -676,7 +694,7 @@
     if (!v.ok) { status(v.message); return false; }
     mountBar();
     if (!inputEl) return false;
-    settingUi.active = true; settingUi.entry = entry; settingUi.stage = entry.valueKind === 'size' ? 'value' : 'pick';
+    settingUi.active = true; settingUi.entry = entry; settingUi.stage = entry.valueKind === 'size' ? 'value' : 'pick'; settingUi.arrowed = false;
     inputEl.value = '';
     inputEl.focus();
     refreshSettingRows();
@@ -694,6 +712,9 @@
     const entry = settingUi.entry;
     const typed = inputEl.value.trim();
     if (settingUi.stage === 'value') {
+      const hit = menuHighlight >= 0 && menuItems[menuHighlight] && menuItems[menuHighlight].setting;
+      // A row chosen with the arrow keys wins over typed text; an empty Enter on the row that is already set cancels.
+      if (hit && (settingUi.arrowed || (!typed && !hit.current))) { applyPickedSetting(hit.option); return; }
       if (!typed) { endSetting('cancelled'); if (inputEl) inputEl.blur(); return; }
       const st = host.readSettings();
       const plan = diameterPlan(typed, ((st.controls.diameter || {}).options || []).map(function(o){ return o.value; }));
@@ -874,7 +895,7 @@
       + 'border:1px solid #555;border-radius:3px;color-scheme:dark;';
     row.appendChild(inputEl);
     hostEl.insertBefore(row, list);
-    inputEl.addEventListener('input', function(){ openMenu(inputEl.value); });
+    inputEl.addEventListener('input', function(){ settingUi.arrowed = false; openMenu(inputEl.value); });
     inputEl.addEventListener('keydown', onInputKeydown);
     inputEl.addEventListener('blur', function(){
       setTimeout(function(){ if (document.activeElement !== inputEl) { if (settingUi.active) endSetting('cancelled'); hideMenu(); } }, 150);
@@ -883,6 +904,7 @@
 
   function cycle(delta) {
     if (!menuItems.length) return;
+    settingUi.arrowed = true;
     menuHighlight = (menuHighlight + delta + menuItems.length) % menuItems.length;
     renderMenu();
   }
@@ -898,7 +920,7 @@
       // .value fires no input event, so the list stays put and keeps cycling over the same rows.
       if (menuHighlight >= 0 && menuItems[menuHighlight]) {
         const row = menuItems[menuHighlight];
-        inputEl.value = row.size ? '' : row.setting ? String(row.setting.index + 1) : row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
+        inputEl.value = row.size ? '' : row.setting ? (row.setting.plain ? (row.setting.option.text || row.setting.option.value) : String(row.setting.index + 1)) : row.system ? '#' + row.system.name : row.prompt ? (row.prompt.kind === 'category' ? String(row.prompt.ports) : row.prompt.entry.id) : row.entry.name;
       }
       return;
     }

@@ -452,6 +452,9 @@ Everything not in the list above is in **[Not verified live](#not-verified-live-
   inside `host.writeSetting`. A non-standard size picks "Custom" and fills the box with `input` + `change` events, never
   blur or Enter (native's commit path). Decisions (user): refuse during a placement; refuse material too with a selection;
   non-standard sizes go to Custom automatically.
+  The `diameter` prompt lists the select's own standard sizes (never the blank or Custom rows); typing filters them, a size
+  not in the list is marked "custom" in the header and written as Custom + text. An arrow-picked row wins over typed text
+  until the next keystroke. Upstream: native already has the select; a command line can offer the same list.
 - Readback right after writing, and again after 400 ms, because native's `sync()` rewrites controls from its stored facts
   (the source select is guarded by `activeElement`, material is not). A write that gets reverted is reported.
 - Side fix in `planQuery` (pipe only): a refused plan now names its entry, and the shell shows its reason instead of running
