@@ -1,5 +1,41 @@
 # Porting guide
 
+## Start here: piping
+
+For whoever ports the **piping** command line into native. (The duct "Start here" further down is separate.) Built by
+Kresna (piping annotator) with an AI assistant; checked against native `bb2935ac` and live deploy `6aadf9a4`. Port from
+`master` of `https://github.com/kresnamukti-boon/boon-tagger-commandline`. What is not proven on the real page is in one
+place: **[Not verified live](#not-verified-live-piping)**. Details per step are under "Piping command line" below.
+
+**Port, in this order**
+1. `src/pipe/pipe-tables.js`: data only (actions, forbidden ids, aliases, isolation list, panel ids). Goes next to
+   `buildPipeCommandTable` in `pipe-command-line.js`, shaped like `duct-command-line.js`'s `DUCT_*` exports.
+2. `src/core/pipe-table-core.js`: `entryState`/`planEntry`/`planQuery`/`listEntries`, the "may this entry run now" verdicts
+   (extends `command-line-core.js`). `deriveTools`, `reconcileArmed`, `loaderGuard` stay out.
+3. `src/core/pipe-placement-core.js`: label menu rows, categories, aliases (`labelStep`, `planPick`), `isolationVerdict`,
+   `finishVerdict` + latch, `adjustVerdict`, `portLine`. Extends the Place Fitting panel in `pipe-session-ui.js`.
+   `panelPhase`/`hintWatch`/`autoMatchedDiameter`/`portRoleFromHint` read hint text: do not port.
+4. `src/core/pipe-size-core.js`: size parsing (a copy of native's `parsePipeDiameter`, so reuse native's), max-size rule,
+   sizes choice/edit steps, `sizesFinishGate`, `escStepPlan`. Extends the per-port size fields in `pipe-session-ui.js`.
+5. `src/core/pipe-setting-core.js`: `diameter`/`dsource`/`material`/`msource` verdicts (the Pipe properties block).
+6. `src/core/pipe-system-core.js`: `#` system search (`#graph-system-select`).
+7. `src/core/pipe-log-core.js`: the in-memory action log. Optional.
+Tests ride along: `test/pipe-*.test.mjs` (`test/purity.test.mjs` is the readiness gate).
+
+**Do not port**: `console_loader_pipe.js`, `dist/rw_pipe_cmdline.js`, the build scripts, `src/pipe/pipe-host.js` and
+`src/pipe/pipe-shell.js` (outside-script wiring), anything that reads hint text or the rail's key badges (native has
+`bboxController().state.phase` and `PIPE_TOOL_KEYS`), and the key/focus guards (the 700 ms label guard, `refocusBarOnce`,
+the focus rules: native does not need them).
+
+**Safety rules that must survive the port**
+- Never change a selected item. Settings (`diameter`, `dsource`, `material`, `msource`), `#` system search and port-size
+  writes happen only with nothing selected (`__graphDebug.selectedEntityId`, fail closed) and are re-checked inside the writer.
+  Native's handlers on those controls send SAVED commands for a selected pipe.
+- Finish only at the ready phase of a box tool, once per press, never with typed text; the rest of `PIPE_FORBIDDEN_BUTTON_IDS`
+  stays refused in code, not just left out of a list.
+- Never click Save, Submit for review, system create/rename/import/assign, or the size-mismatch toast's "Resize anyway".
+- Esc steps back (size rows, then the label list) before native's Esc cancels; it never saves.
+
 How to move this project's own features into the host app's own native command line
 (`project_graph/js/command-line-core.js` + `command-line-ui.js` + `duct-command-line.js`/
 `pipe-command-line.js`, confirmed live via opencli — see `CLAUDE.md`'s "The native command line
@@ -259,7 +295,7 @@ If a future session picks this up with live opencli access to iterate against a 
 page, both are still worth doing — for this project's own maintainability, not because
 either blocks any of the ports listed above.
 
-## Piping command line (separate build, in progress)
+## Piping command line (separate build)
 
 A second command line for the **piping** trade pack, built next to the duct one and sharing none
 of its state. Native's own piping command line (`pipe-command-line.js` + `command-line-ui.js`) only
@@ -281,7 +317,7 @@ every id/class/string we rely on and `test/native-ids.test.mjs` checks them.
 | `src/pipe/pipe-host.js` | none | **no.** Native has its own DOM wiring (`command-line-ui.js`) |
 | `src/pipe/pipe-shell.js` | none | **no** |
 
-Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; that is the portable part.
+Port-size logic (Step 3b) lives in `src/core/pipe-size-core.js`, the setting commands (Step 5) in `src/core/pipe-setting-core.js`, `#` search in `src/core/pipe-system-core.js` and the action log in `src/core/pipe-log-core.js`: all pure and portable (see "Start here: piping" at the top).
 
 ### What must not be ported
 
@@ -303,13 +339,13 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
 - Aliases are matched only against the menu that is open right now. Fitting menu: the curated
   `PIPE_FITTING_ALIASES` (keyed by native family id). Fixture menu: the family id with `pipe-` /
   `fixture-` removed (the user's `wc, lav, sh, ur, ks, ms, rd, fd, hb`); which fixtures exist is
-  never hardcoded. **Unverified live:** the real fixture family ids (read-only check pending).
+  never hardcoded. The real fixture family ids were verified live on 2026-10-06 (all 9 `pipe-*` ids matched).
 - Dropped on purpose: `ft/tt/st/td` (use `trapft`, `traptt`, `trapst`, `traptd`), `rtee`, `rwye`.
 - While a placement panel is open, `PIPE_ISOLATION_ALLOWED` is now enforced in code (`runEntry`).
 - **Focus after a pick (found live by the user, real keyboard):** native's menu-option click handler calls `subtype.focus()`, and the trigger's keydown opens the menu on Enter / Space / ArrowDown, so the same physical keypress could open native's menu and steal focus. Fixed on our side: the consumed key is cancelled and stopped before the click; for 700 ms a window-capture guard cancels Enter/Space/ArrowDown (keydown, keypress, keyup) aimed at the trigger; and focus returns to our bar once on the next tick. **Handover:** the 700 ms keypress guard on native's label trigger is a workaround for the injected bar only. In native, skip `subtype.focus()` after `chooseFamily` when the pick came from the command line, and drop the guard (and our refocus) entirely.
 - **Space = Enter** in the bar (and in the label prompt), like the duct bar. A literal space can no longer be typed, so multi-word labels are reached by id or alias.
 - **System/network:** the `service` ("Assign system") tool is a normal tool in the list (alias `assign`); arming it saves nothing. The system create/rename/import/assign **buttons** stay forbidden. `#<name>` system search is built (`src/core/pipe-system-core.js`): it writes `#graph-system-select` (value + input/change). Native's change handler REASSIGNS the selected pipe when one is selected (`assignPipeService`, a real command), so the write is refused unless `__graphDebug.selectedEntityId` is readable and empty. **Handover:** `#` writes `#graph-system-select`. With a pipe selected, native's change handler calls `assignPipeService` (a saved command), so the bar refuses (`systemPickVerdict`). Native's port should keep that rule: only write the dropdown when nothing is selected; the rest of that function is only needed because we are outside.
-- Valves and equipment get no extra aliases yet (their menus still match by id and label).
+- Valves and equipment have no curated aliases (their menus match by id and label).
 
 ### Step 3 (placing)
 
@@ -317,7 +353,7 @@ Port-size logic (Step 3b) will be added to `src/core/pipe-placement-core.js`; th
   `PIPE_FINISH_*`, `PIPE_FORBIDDEN_BUTTON_TEXTS` (`resize anyway`) and `PIPE_FORBIDDEN_CONTAINER_IDS`
   (`graph-toast-stack`) in `src/pipe/pipe-tables.js`.
 - Enter or Space (`PIPE_FINISH_KEYS`; Space was added at the user's request, the same rules as Enter) in the bar clicks
-  `#graph-finish-route` only for `fitting`/`fixture` in the ready phase (hint starts with
+  `#graph-finish-route` only for `fitting`/`fixture` (since the "All box tools" step: also `valve`/`equipment`) in the ready phase (hint starts with
   "Finish inserts this fitting."), never on repeat, never with text typed, never when the bar lacks focus (Space elsewhere
   just focuses the bar). Finish stays in
   `PIPE_FORBIDDEN_BUTTON_IDS` for every other path; the one deliberate click goes through `host.clickFinish`,
@@ -350,8 +386,7 @@ Verified by hand on a real piping page (offline harness passes for all of it; li
 - Adjust ports (3c) on a reducing tee: `adjust` ticked the box, `click: inlet (1 of 3)` stepped through the roles as the
   intersections were clicked with the mouse, and the size rows reopened; Esc before Finish left the revision unchanged.
 
-Not verified live: the cross (no four-way crossing on the test page), vertical-variant fittings, and the
-"Native changed: use the mouse for this step" line (needs native to change a hint).
+Everything not in the list above is in **[Not verified live](#not-verified-live-piping)**.
 
 ### Step 3c (Adjust ports)
 
@@ -429,8 +464,7 @@ Not verified live: the cross (no four-way crossing on the test page), vertical-v
 - Native uses ONE placement panel for every box tool. The Adjust ports box (`adjustPortsLabel.hidden` depends only on detected
   ports and a chosen label) and the per-port size fields (`placementOperation` is every tool except transition and cut) are
   tool-independent, and so is the ready hint (only transition and cut differ). So `PIPE_SIZE_TOOLS` (the sizes step: rows
-  "as is / edit / Adjust ports") and `PIPE_FINISH_TOOLS` (Enter/Space-to-Finish) now list all four. User decision, replacing
-  the earlier "fitting and fixture only". Transition, cut and terminal stay manual. `adjust` itself never had a tool limit.
+  "as is / edit / Adjust ports") and `PIPE_FINISH_TOOLS` (Enter/Space-to-Finish) list all four (user decision). Transition, cut and terminal stay manual. `adjust` itself never had a tool limit.
 - User-found: on a valve there was no visible Adjust ports option (only reducing fittings had the row). First tried a one-line
   hint; the user asked for two real choices instead. A placement with one size now gets the same step as the reducing
   tee, with two rows ("Continue as is", "Adjust ports (click each port)"), whenever native offers the box and it is not
@@ -440,9 +474,8 @@ Not verified live: the cross (no four-way crossing on the test page), vertical-v
   the second only if the first really unticked it). Native's `toggleAdjustPorts(true)` restarts from `ports: []`, and
   unticking rebuilds the automatic assignment; neither saves. If they do not appear on a valve,
   native is not showing the box (`adjustPortsLabel.hidden`: no detected intersection, or no label chosen).
-- **Not yet verified live:** valve and equipment placements (their label menus, Adjust ports, sizes, and Finish from the bar).
-  Finish saves, so that check is done by the user with a watch on `/commands/`, one placement each, then undo. Valve families
-  are not in `test/native-ids.json` (only fitting and fixture menus were observed).
+- Valve and equipment placements are on the [Not verified live](#not-verified-live-piping) list (valve families are not in
+  `test/native-ids.json`: only fitting and fixture menus were observed).
 
 ### Action log
 
@@ -466,25 +499,21 @@ native knows which path called it.
   `finish()` connector lookup. Nothing we use (hints, label menu, ids) changed. The recorded hash was
   left as it is on purpose; refetch the fixtures and update `native-ids.json` when it is reviewed.
 
-### Open decisions (as of Step 2)
-
-- **Enter after a pick doesn't place anything yet (observed by the user, expected for Step 2).** Native only
-  runs Finish on Enter when `document.activeElement === #pointer-layer` (the window keydown handler in
-  `graph-session-entry.js`, "Enter ... finishActiveRoute()"), and our bar keeps focus after a pick, so the key
-  does nothing until the canvas is clicked. Step 3 plans Enter-in-the-bar -> Finish for the ready phase only.
+### Open decisions
 
 - **Aliases.** `PIPE_TOOL_ALIASES` was proposed, not approved (to be reviewed with the engineer).
   `fit` stays `zoomfit`'s.
-- **Finish / Cancel** (`graph-finish-route`, `graph-cancel-route`) are in `PIPE_FORBIDDEN_BUTTON_IDS`
-  for now. The placement step has to decide how Enter-at-ready reaches Finish deliberately.
-- **Isolation.** `PIPE_ISOLATION_ALLOWED` is enforced while the placement panel is open (Step 2).
-  Finish/Cancel stay forbidden until Step 3 decides how Enter-at-ready reaches Finish.
+- **Finish / Cancel** (`graph-finish-route`, `graph-cancel-route`) stay in `PIPE_FORBIDDEN_BUTTON_IDS` for every path
+  except one: Enter or Space in the bar clicks Finish at the ready phase of a fitting, fixture, valve or equipment placement
+  (Step 3, `host.clickFinish`, checked twice). Cancel is never clicked: Esc is native's own.
+- **Isolation.** `PIPE_ISOLATION_ALLOWED` is enforced while the placement panel is open (`runEntry`); settings and `#`
+  are refused during a placement and with anything selected.
 - **No hardcoded tool table.** Unlike duct, there is no fallback table when the rail can't be read;
   the loader refuses ("no tool rail found"). `PIPE_FALLBACK_KEYS` only supplies a key for a rail
   button with no readable badge. Note native's badge falls back to the tool id's first letter when
   it has no hotkey, which is a label, not a real key.
-- **Native Escape** cancels a placement and then switches to the route tool. Our bar only swallows
-  Escape while it has something to close.
+- **Native Escape** cancels a placement and then switches to the route tool. The bar steps back first (size rows, then the
+  label list; see "Esc steps back") and leaves Esc to native when nothing of ours is open.
 - **Panel dragging** (duct has it) is not copied yet.
 - **Flange is absent from the rail by native's design** (`pipe-session-ui.js`: "insulation/flange:
   intentionally absent - no canvas handler yet"). The rail is read live, so a flange tool shows up
@@ -494,7 +523,20 @@ native knows which path called it.
   It does not record typed text or that the command line did it. Native's own command line behaves the
   same. The engineer may want to tag command-line-driven actions.
 - **`data-trade="ductwork"`** is native's value for duct (`TradePack: "ductwork" | "piping"`) but has
-  not yet been seen on a live duct page; confirm once before merging.
+  not been seen on a live duct page; confirm once before merging.
 - **Repeat-last was dropped (user decision): Space finishes; type the short name to pick again.**
 - **Fixtures** (`test/fixtures/native/`) are deliberately not in git; `test/native-ids.json` is the
   committed record.
+
+### Not verified live (piping)
+
+The one list. The offline harness (`verify_pipe_cmdline.js`) covers all of it; only the real page can prove it.
+What WAS verified live (test page, 2026-10-06 and later) is in "Live verification status" above, plus the Step 5 setting
+commands, the sizes step and the Esc step-back on a reducing tee.
+
+- The cross (4-way): no four-way crossing on the test page.
+- Vertical-variant fittings.
+- Valve and equipment placements: their label menus, Adjust ports, sizes, "Adjust ports again" and Finish from the bar.
+  Finish saves, so do it with a watch on `/commands/`, one placement each, then undo.
+- The "Native changed: use the mouse for this step" line (needs native to change a hint).
+- A full day of real use by a piping annotator.
