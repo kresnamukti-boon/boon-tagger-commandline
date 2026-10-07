@@ -385,6 +385,22 @@ Not verified live: the cross (no four-way crossing on the test page), vertical-v
   an unreadable catalog warns and does not block. Upstream: none of the key/focus plumbing; native can read its own sizes
   and rules directly, and should keep the "never touch an existing selected fitting" rule if a command line can set sizes.
 
+### Esc at ready steps back first (Step 3b/3c)
+
+- Before: after "Use port sizes as is", an edit or "Continue as is" the rows were closed, so Esc fell through and native's
+  window-level Esc (`pipeEscapeVerdict` -> `cancelActiveRoute`) cancelled the whole placement. Now `escStepPlan` (pure, in
+  `pipe-size-core.js`) gives one step back first, at the ready phase of a box tool only:
+  | at ready | first Esc |
+  |---|---|
+  | per-port, confirmed | reopens the rows (as is / edit / adjust), writes nothing |
+  | one size (Adjust ports offered), confirmed | "Esc again cancels the placement" + the Adjust row ("again" if ticked) |
+  | no step at all (no Adjust box) | the same line alone; Enter still finishes as before |
+  | rows open / editing | as before (edit -> rows -> closed) |
+  Then the next Esc is left alone and native cancels. Typing, picking a row or losing the menu clears the "last call".
+  Esc is handled whether or not the bar has focus (a document capture listener), except in a form field outside the bar.
+  Not at ready (label phase, ports phase), transition/cut/terminal, no placement: native's Esc as before.
+  Cancelling is placement state only; nothing is saved. Upstream: none, it exists only because the bar adds a step.
+
 ### Step 5 (setting commands)
 
 - `src/core/pipe-setting-core.js` (`settingVerdict`, `optionMatch`, `diameterPlan`, `readbackVerdict`, `optionRowText`),
@@ -404,6 +420,26 @@ Not verified live: the cross (no four-way crossing on the test page), vertical-v
   some other highlighted row. Before, typing the exact name of an unusable entry could run a different prefix match.
 - Resizing an EXISTING pipe (selected) is deliberately a later step. Upstream: native can set its own next-draw facts
   directly; keep the "never change a selected item by accident" rule if a command line can write these.
+
+### All box tools (fitting, fixture, valve, equipment)
+
+- Native uses ONE placement panel for every box tool. The Adjust ports box (`adjustPortsLabel.hidden` depends only on detected
+  ports and a chosen label) and the per-port size fields (`placementOperation` is every tool except transition and cut) are
+  tool-independent, and so is the ready hint (only transition and cut differ). So `PIPE_SIZE_TOOLS` (the sizes step: rows
+  "as is / edit / Adjust ports") and `PIPE_FINISH_TOOLS` (Enter/Space-to-Finish) now list all four. User decision, replacing
+  the earlier "fitting and fixture only". Transition, cut and terminal stay manual. `adjust` itself never had a tool limit.
+- User-found: on a valve there was no visible Adjust ports option (only reducing fittings had the row). First tried a one-line
+  hint; the user asked for two real choices instead. A placement with one size now gets the same step as the reducing
+  tee, with two rows ("Continue as is", "Adjust ports (click each port)"), whenever native offers the box and it is not
+  offered (`mode: 'ports'` in `sizesFacts`; it writes no sizes, so a selection does not block it). Cost: two Enters to finish
+  there instead of one (the user chose this). Re-adjusting (user request): once the box is ticked and ports are assigned the
+  choices come back and the adjust row reads "Adjust ports again": `runAdjust(true)` clicks the box twice (untick, then tick,
+  the second only if the first really unticked it). Native's `toggleAdjustPorts(true)` restarts from `ports: []`, and
+  unticking rebuilds the automatic assignment; neither saves. If they do not appear on a valve,
+  native is not showing the box (`adjustPortsLabel.hidden`: no detected intersection, or no label chosen).
+- **Not yet verified live:** valve and equipment placements (their label menus, Adjust ports, sizes, and Finish from the bar).
+  Finish saves, so that check is done by the user with a watch on `/commands/`, one placement each, then undo. Valve families
+  are not in `test/native-ids.json` (only fitting and fixture menus were observed).
 
 ### Action log
 

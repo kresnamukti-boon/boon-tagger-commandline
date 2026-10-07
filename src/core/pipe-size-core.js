@@ -118,8 +118,30 @@ export const SIZE_CHOICES = [
 ];
 // A third row when native's Adjust ports box can be used right now.
 export const SIZE_CHOICE_ADJUST = { id: 'adjust', text: 'Adjust ports (click each port)' };
-export function sizeChoiceRows({ adjustUsable }) {
-  return adjustUsable ? SIZE_CHOICES.concat([SIZE_CHOICE_ADJUST]) : SIZE_CHOICES.slice();
+// The same row once the app's box is already ticked and the ports are assigned: choosing it starts the clicks over.
+export const SIZE_CHOICE_READJUST = { id: 'adjust', text: 'Adjust ports again (click each port)' };
+// A placement with ONE size (valve, equipment, fixture, an equal tee, a cross) has nothing to edit: when the app offers
+// Adjust ports the choice is just "continue as is" or "adjust".
+export const SIZE_CHOICE_CONTINUE = { id: 'asis', text: 'Continue as is' };
+export function sizeChoiceRows({ adjustUsable, singleSize = false, adjustOn = false }) {
+  const adjustRow = adjustOn ? SIZE_CHOICE_READJUST : SIZE_CHOICE_ADJUST;
+  if (singleSize) return [SIZE_CHOICE_CONTINUE, adjustRow];
+  return adjustUsable ? SIZE_CHOICES.concat([adjustRow]) : SIZE_CHOICES.slice();
+}
+
+// Esc at the ready phase steps back one level before native's Esc is allowed to cancel the placement.
+//   ready     the panel is at the ready phase of a size tool (box tools only)
+//   mode      'sizes' (per-port fields) | 'ports' (one size, Adjust ports offered) | null (no step at all)
+//   stage     the sizes step's stage for this placement
+//   lastCall  our "Esc again cancels the placement" line is already showing
+// Returns { action }: 'reopen' (show the choice rows again), 'lastcall' (show the warning, plus the Adjust row
+// when usable), 'leave' (close ours and let native cancel), 'pass' (not ours: native's Esc as before).
+export function escStepPlan({ ready, mode, stage, lastCall }) {
+  if (!ready) return { action: 'pass' };
+  if (lastCall) return { action: 'leave' };
+  if (mode === 'sizes') return stage === 'confirmed' ? { action: 'reopen' } : { action: 'pass' };
+  if (mode === 'ports') return stage === 'confirmed' ? { action: 'lastcall' } : { action: 'pass' };
+  return { action: 'lastcall' };
 }
 
 // Which fields the edit step asks about, in order: the ones that are not locked.
@@ -138,9 +160,9 @@ export function sizesKey({ placement, familyId, roles }) {
 }
 
 // What the sizes step needs from the page this tick. Returns { action }:
-//   'none'    nothing to do (no per-port fitting, or not at ready)
-//   'open'    show the two rows
-//   'blocked' per-port fitting at ready, but something is selected (say so once)
+//   'none'    nothing to do (no step for this placement, or not at ready)
+//   'open'    show the rows
+//   'blocked' a sizes step at ready, but something is selected (say so once)
 export function sizesTickPlan({ state, key, perPort, ready, selectedEntityId, selectionReadable }) {
   if (!perPort || !ready) return { action: 'none' };
   if (!selectionReadable || selectedEntityId) return { action: 'blocked' };

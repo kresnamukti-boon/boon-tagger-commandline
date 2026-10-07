@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PIPE_PAGE_IDS, PIPE_FALLBACK_KEYS, PIPE_TOOL_ALIASES, PIPE_GRAPH_ACTIONS,
   PIPE_FORBIDDEN_BUTTON_IDS, PIPE_FORBIDDEN_CAPTURE_IDS, PIPE_TRADE, DUCT_TRADE,
-  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS, PIPE_FINISH_BUTTON_ID, PIPE_SIZE_IDS, PIPE_ADJUST, PIPE_SETTING_IDS, PIPE_SOURCE_UNRESOLVED, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_PORT_ROLE_PATTERN, PIPE_FINISH_HINT_PREFIX,
+  PIPE_PANEL_IDS, PIPE_HINT_PREFIXES, PIPE_UNAVAILABLE_MARK, PIPE_REQUIRED_IDS, PIPE_FINISH_BUTTON_ID, PIPE_SIZE_IDS, PIPE_ADJUST, PIPE_SETTING_IDS, PIPE_SOURCE_UNRESOLVED, PIPE_SIZE_TOOLS, PIPE_FINISH_TOOLS, PIPE_FORBIDDEN_BUTTON_TEXTS, PIPE_FORBIDDEN_CONTAINER_IDS, PIPE_PORT_ROLE_PATTERN, PIPE_FINISH_HINT_PREFIX,
 } from '../src/pipe/pipe-tables.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -192,4 +192,17 @@ test('Step 5 dependencies are listed: the five controls, what native does with a
   assert.ok(ui.includes("fill(controls['material-source']"), 'material source is a plain select');
   assert.ok(ui.includes(": (isInsulation && !isThickness) ? updateInsulationFacts : readFacts,"), 'material and sources go through the local read only');
   for (const id of Object.values(PIPE_SETTING_IDS)) assert.ok(!PIPE_FORBIDDEN_BUTTON_IDS.includes(id), id + ' is not a protected button');
+});
+
+test('every box tool shares native\'s placement panel: size fields and the ready hint are tool-independent except transition and cut', () => {
+  const ui = ids.pipeSessionUi.strings.join('\n');
+  assert.ok(ui.includes("const placementOperation = operation && !['transition', 'cut'].includes(operation.tool) ? operation : null;"), 'per-port placement fields for every tool but transition and cut');
+  assert.ok(ui.includes("const readyHint = ['transition', 'cut'].includes(operation.tool)"), 'the ready hint differs only for transition and cut');
+  for (const tool of ['fitting', 'fixture', 'valve', 'equipment']) {
+    assert.ok(PIPE_SIZE_TOOLS.includes(tool), tool + ' gets the sizes step');
+    assert.ok(PIPE_FINISH_TOOLS.includes(tool), tool + ' can be finished from the bar');
+  }
+  for (const tool of ['transition', 'cut', 'terminal', 'route']) {
+    assert.ok(!PIPE_SIZE_TOOLS.includes(tool) && !PIPE_FINISH_TOOLS.includes(tool), tool + ' stays manual');
+  }
 });

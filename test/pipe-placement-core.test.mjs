@@ -267,7 +267,7 @@ test('finishVerdict: each condition on its own blocks it (and says nothing unles
     assert.equal(v.reason, reason, name);
     assert.equal(v.message !== null, hasMessage, name);
   }
-  for (const tool of ['valve', 'equipment', 'transition', 'cut', 'terminal', '', undefined, 'route']) {
+  for (const tool of ['transition', 'cut', 'terminal', '', undefined, 'route']) {
     const v = finishVerdict({ ...FACTS(), tool });
     assert.equal(v.ok, false, 'tool ' + tool);
     assert.equal(v.reason, 'tool');
