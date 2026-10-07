@@ -1116,7 +1116,7 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     ok(/choose "Use port sizes as is" or edit/.test(lastStatus(page)) && menuShown(page), 'it says why and brings the two rows back');
     const e2 = page.press(page.byId['rw-pipe-input'], 'Escape');
     const e3 = page.press(page.doc.body, 'Escape');
-    ok(e2.propagationStopped && !e3.propagationStopped, 'Esc closes our rows first; the next Esc is left for native to cancel');
+    ok(e2.propagationStopped && e3.propagationStopped && page.RW._pipePrompt.active, 'Esc closes our rows first; the next Esc brings the label list back (native cancels after that)');
   }
   {
     // Space = Enter: it confirms the choice, and a second Space finishes (like a second Enter)
@@ -1738,11 +1738,11 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     h.ctl.box.click = real;
   }
 
-  /* ----- Esc at ready steps back one level before native's Esc cancels the placement ----- */
+  /* ----- Esc after a label is chosen steps back (rows, then the label list); native cancels only after that ----- */
   {
-    const LAST = 'Esc again cancels the placement';
     const esc = (page, el) => page.press(el || mountedBar(page), 'Escape');
-    // per-port family: confirmed -> Esc reopens the three rows, writes nothing; Esc closes; Esc reaches native
+    const LIST_HEAD = (r) => /^Fitting label/.test(r[0]) && /Esc cancels the placement/.test(r[0]);
+    // per-port family: confirmed -> rows -> rows close -> label list -> native
     const page = makePage(); loadShell(page);
     page.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); page.tick();
     page.press(mountedBar(page), 'Enter'); // as is
@@ -1751,88 +1751,104 @@ const lastStatus = (page) => page.state.statuses[page.state.statuses.length - 1]
     ok(e1.propagationStopped && e1.defaultPrevented, 'per-port, confirmed: the first Esc is ours');
     eq(menuRows(page).slice(1), ['Use port sizes as is', 'Edit port sizes', 'Adjust ports (click each port)'], 'and the three rows are back');
     eq([page.state.sizeChanges, page.state.finishClicks, page.state.adjustClicks || 0], [0, 0, 0], 'nothing was written, finished or ticked');
-    const e2 = esc(page);
-    ok(e2.propagationStopped && !menuShown(page), 'Esc closes the rows (still ours)');
+    ok(esc(page).propagationStopped && !menuShown(page), 'Esc closes the rows (still ours)');
     const e3 = esc(page);
-    ok(!e3.propagationStopped, 'the next Esc is left for native, which cancels');
-    // from the page body as well (the bar does not have the keyboard)
+    ok(e3.propagationStopped && LIST_HEAD(menuRows(page)), 'the next Esc brings back the label list for the same box');
+    eq(menuRows(page).slice(1).length, 2, 'with the real labels (Tee Eq, Tee Reducing)');
+    eq([page.state.finishClicks, page.state.chosen], [0, null], 'nothing finished, no label clicked yet');
+    const e4 = esc(page);
+    ok(!e4.propagationStopped && !page.RW._pipePrompt.active, 'Esc on the label list is left for native, which cancels');
+    // from the page body as well
     const pb = makePage(); loadShell(pb);
     pb.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing' }); pb.tick();
-    pb.press(mountedBar(pb), 'Enter'); pb.doc.body.focus && pb.doc.body.focus();
-    const b1 = pb.press(pb.doc.body, 'Escape');
-    ok(b1.propagationStopped && menuShown(pb), 'confirmed, keyboard on the page: Esc still steps back first');
-    // an edit that was made is kept when the rows come back: sizes are not touched by Esc
-    // single size (valve): first Esc shows the adjust row and the line; second reaches native
+    pb.press(mountedBar(pb), 'Enter');
+    ok(pb.press(pb.doc.body, 'Escape').propagationStopped && menuShown(pb), 'keyboard on the page: Esc still steps back first');
     for (const tool of ['fitting', 'fixture', 'valve', 'equipment']) {
       const p = makePage(); loadShell(p);
       p.openPanel({ tool, hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
       p.press(mountedBar(p), 'Enter'); // continue as is
       const s1 = esc(p);
-      ok(s1.propagationStopped, tool + ': single size, confirmed: first Esc is ours');
-      eq(menuRows(p), [LAST, 'Adjust ports (click each port)'], tool + ': the line and the Adjust row');
-      eq(lastStatus(p), LAST, tool + ': the status says it too');
-      const s2 = esc(p);
-      ok(!s2.propagationStopped && !menuShown(p), tool + ': the second Esc is left for native');
+      ok(s1.propagationStopped && LIST_HEAD(menuRows(p)), tool + ': single size, confirmed: the first Esc shows the label list');
       eq([p.state.finishClicks, p.state.adjustClicks || 0], [0, 0], tool + ': nothing finished or ticked');
+      // pick the other label: native's own button is clicked once, and the list closes
+      typeText(p, 'pipe-tee-reducing'); p.press(mountedBar(p), 'Enter');
+      eq(p.state.chosen, 'pipe-tee-reducing', tool + ': picking a label clicks native\'s own button');
+      ok(!p.RW._pipePrompt.active && /Tee Reducing chosen/.test(lastStatus(p)), tool + ': the list closes and says what was chosen');
+      eq(p.state.finishClicks, 0, tool + ': nothing finished');
+      const s2 = makePage(); loadShell(s2);
+      s2.openPanel({ tool, hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); s2.tick();
+      esc(s2); esc(s2);
+      const s3 = esc(s2);
+      ok(!s3.propagationStopped, tool + ': after the list, native cancels');
     }
     {
-      // Enter on the Adjust row during the last call starts adjusting
+      // a new label gets its own rows (per-port): relabel from the confirmed state, pick, the rows appear again
       const p = makePage(); loadShell(p);
-      const h = p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
-      p.press(mountedBar(p), 'Enter'); esc(p); p.press(mountedBar(p), 'Enter');
-      eq([h.ctl.box.checked, p.state.finishClicks], [true, 0], 'Enter on the Adjust row ticks the box and finishes nothing');
+      p.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing' }); p.tick();
+      p.press(mountedBar(p), 'Enter'); esc(p); esc(p); esc(p);
+      typeText(p, 'pipe-tee-reducing'); p.press(mountedBar(p), 'Enter'); p.tick();
+      eq(menuRows(p).slice(1), ['Use port sizes as is', 'Edit port sizes'], 'after a new label the size rows ask again');
     }
     {
-      // already ticked: the row reads "again"
-      const p = makePage(); loadShell(p);
-      const h = p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
-      p.press(mountedBar(p), 'ArrowDown'); p.press(mountedBar(p), 'Enter');
-      h.ctl.clickPort(); h.ctl.clickPort(); p.tick();
-      p.press(mountedBar(p), 'Enter'); // continue as is
-      esc(p);
-      eq(menuRows(p), [LAST, 'Adjust ports again (click each port)'], 'ticked box: the row says again');
-    }
-    {
-      // no Adjust ports box: only the line, and Enter still finishes
+      // no Adjust box: the first Esc is still the label list; Enter on an empty list does not finish
       const p = makePage(); loadShell(p);
       p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); p.tick();
-      const bar = mountedBar(p); bar.focus();
-      const n1 = esc(p);
-      ok(n1.propagationStopped, 'no Adjust box: the first Esc is still ours');
-      eq(menuRows(p), [LAST], 'only the line');
+      mountedBar(p).focus();
+      ok(esc(p).propagationStopped && LIST_HEAD(menuRows(p)), 'no Adjust box: the first Esc is the label list');
       p.press(mountedBar(p), 'Enter');
-      eq(p.state.finishClicks, 1, 'Enter finishes exactly as before (the line is not a block)');
-      const q = makePage(); loadShell(q);
-      q.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); q.tick();
-      esc(q); const n2 = esc(q);
-      ok(!n2.propagationStopped, 'no Adjust box: the second Esc reaches native');
+      eq(p.state.finishClicks, 0, 'Enter on the list never finishes');
     }
     {
-      // typing clears the last call: the next Esc is the ordinary clear, then the step-back starts over
+      // typed text in the list goes first; the list stays
       const p = makePage(); loadShell(p);
-      p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
-      p.press(mountedBar(p), 'Enter'); esc(p);
-      typeText(p, 'und');
-      ok(menuShown(p) && menuRows(p)[0] !== LAST, 'typing replaces the last-call line with the matching commands');
+      p.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); p.tick();
+      mountedBar(p).focus(); esc(p); typeText(p, 'zz');
       const t1 = esc(p);
-      ok(t1.propagationStopped, 'typed text is cleared by Esc (ours)');
-      const t2 = esc(p);
-      ok(t2.propagationStopped && menuRows(p)[0] === LAST, 'then the step-back begins again');
+      ok(t1.propagationStopped && p.RW._pipePrompt.active && mountedBar(p).value === '', 'typed text is cleared first, the list stays');
+      ok(!esc(p).propagationStopped, 'then Esc is native\'s');
     }
     {
-      // not ours: transition (no box tool), not at ready, panel closed, focus in a port size box
+      // ports phase (clicking ports): the first Esc goes straight to the label list
       const p = makePage(); loadShell(p);
-      p.openPanel({ tool: 'transition', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet'] } }); p.tick();
+      p.openPanel({ tool: 'fitting', hint: 'Click the detected intersection for inlet.', groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); p.tick();
+      const r = esc(p, p.doc.body);
+      ok(r.propagationStopped && LIST_HEAD(menuRows(p)), 'ports phase: Esc shows the label list');
+      p.tick();
+      ok(p.RW._pipePrompt.active, 'and the next tick keeps the list open');
+      ok(!esc(p, p.doc.body).propagationStopped, 'the next Esc is native\'s');
+    }
+    {
+      // ports phase with the bar focused: the on-screen port line is not "something of ours to close"
+      const p = makePage(); loadShell(p);
+      p.openPanel({ tool: 'fitting', hint: 'Click the detected intersection for inlet.', groups: TEE_GROUPS, chosen: 'pipe-tee-eq', adjust: { roles: ['inlet', 'outlet', 'branch'] } }); p.tick();
+      mountedBar(p).focus();
+      ok(menuShown(p) && /click: inlet/.test(menuRows(p)[0] || ''), 'the port line is showing');
+      ok(esc(p).propagationStopped && LIST_HEAD(menuRows(p)), 'ports phase, bar focused: the first Esc is the label list');
+    }
+    {
+      // size rows open but the keyboard is on the page: the bar leaves that Esc to native (as before)
+      const p = makePage(); loadShell(p);
+      p.openPanel({ tool: 'fitting', hint: READY, groups: TEE_GROUPS, perPort: PER_PORT(), chosen: 'pipe-tee-reducing' }); p.tick();
+      ok(menuShown(p), 'rows are open');
+      ok(!p.press(p.doc.body, 'Escape').propagationStopped, 'rows open, keyboard on the page: not ours');
+    }
+    {
+      // not ours: transition, label phase, no placement, a form field outside the bar
+      const p = makePage(); loadShell(p);
+      p.openPanel({ tool: 'transition', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); p.tick();
       ok(!p.press(p.doc.body, 'Escape').propagationStopped, 'transition: Esc is native\'s');
       const l = makePage(); loadShell(l);
-      l.openPanel({ tool: 'valve', hint: 'Choose the fitting subtype.', groups: TEE_GROUPS, adjust: { roles: ['inlet', 'outlet'] } }); l.tick();
-      ok(!l.press(l.doc.body, 'Escape').propagationStopped, 'label phase: Esc is native\'s');
+      l.openPanel({ tool: 'valve', hint: 'Choose the fitting subtype.', groups: TEE_GROUPS }); l.tick();
+      ok(!l.press(l.doc.body, 'Escape').propagationStopped || l.RW._pipePrompt.active === false, 'label phase: the ordinary prompt rules apply');
+      const b = makePage(); loadShell(b);
+      b.openPanel({ tool: 'valve', hint: 'Click two opposite corners around the fitting on the drawing.', groups: [] }); b.tick();
+      ok(!b.press(b.doc.body, 'Escape').propagationStopped, 'box phase: Esc is native\'s');
       const c = makePage(); loadShell(c);
       ok(!c.press(c.doc.body, 'Escape').propagationStopped, 'no placement: Esc is native\'s');
       const f = makePage(); loadShell(f);
       f.openPanel({ tool: 'valve', hint: READY, groups: TEE_GROUPS, chosen: 'pipe-tee-eq' }); f.tick();
-      const field = f.doc.createElement ? f.doc.createElement('input') : null;
-      if (field) { f.doc.body.appendChild && f.doc.body.appendChild(field); const r = f.press(field, 'Escape'); ok(!r.propagationStopped, 'a form field outside the bar keeps native\'s own Esc'); }
+      const field = f.doc.createElement('input'); f.doc.body.appendChild && f.doc.body.appendChild(field);
+      ok(!f.press(field, 'Escape').propagationStopped, 'a form field outside the bar keeps native\'s own Esc');
     }
   }
 

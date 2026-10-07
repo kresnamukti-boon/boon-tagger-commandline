@@ -1626,19 +1626,22 @@ function sizeChoiceRows({ adjustUsable, singleSize = false, adjustOn = false }) 
   return adjustUsable ? SIZE_CHOICES.concat([adjustRow]) : SIZE_CHOICES.slice();
 }
 
-// Esc at the ready phase steps back one level before native's Esc is allowed to cancel the placement.
-//   ready     the panel is at the ready phase of a size tool (box tools only)
-//   mode      'sizes' (per-port fields) | 'ports' (one size, Adjust ports offered) | null (no step at all)
+// Esc during a box-tool placement whose label is already chosen steps back one level before native's Esc may
+// cancel it. At the end of the chain it goes back to the label list for the same box.
+//   boxTool   the panel is open for fitting / fixture / valve / equipment
+//   phase     native's phase from its hint: 'ports' | 'ready' | anything else
+//   mode      'sizes' (per-port fields) | 'ports' (one size, Adjust ports offered) | null (no step at all); ready only
 //   stage     the sizes step's stage for this placement
-//   lastCall  our "Esc again cancels the placement" line is already showing
-// Returns { action }: 'reopen' (show the choice rows again), 'lastcall' (show the warning, plus the Adjust row
-// when usable), 'leave' (close ours and let native cancel), 'pass' (not ours: native's Esc as before).
-function escStepPlan({ ready, mode, stage, lastCall }) {
-  if (!ready) return { action: 'pass' };
-  if (lastCall) return { action: 'leave' };
-  if (mode === 'sizes') return stage === 'confirmed' ? { action: 'reopen' } : { action: 'pass' };
-  if (mode === 'ports') return stage === 'confirmed' ? { action: 'lastcall' } : { action: 'pass' };
-  return { action: 'lastcall' };
+//   relabel   our label list was already reopened this way
+// Returns { action }: 'reopen' (the size choice rows again), 'relabel' (the label list), 'leave' (close ours and let
+// native cancel), 'pass' (not ours: native's Esc as before; the rows' own Esc is handled by the bar).
+function escStepPlan({ boxTool, phase, mode, stage, relabel }) {
+  if (!boxTool || (phase !== 'ports' && phase !== 'ready')) return { action: 'pass' };
+  if (relabel) return { action: 'leave' };
+  if (phase === 'ports') return { action: 'relabel' };
+  if (stage === 'choice' || stage === 'edit') return { action: 'pass' };
+  if (mode === 'sizes' && stage === 'confirmed') return { action: 'reopen' };
+  return { action: 'relabel' };
 }
 
 // Which fields the edit step asks about, in order: the ones that are not locked.
@@ -2096,7 +2099,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
   const { appendLog, makeLogEntry, parseRevision, formatLog } = __m_pipe_log_core;
   const {
     planSizeInput, planSizeWrite, roleSizes, maxViolations, sizeWriteVerdict, SIZE_CHOICES, editableFields,
-    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows, escStepPlan, SIZE_CHOICE_ADJUST, SIZE_CHOICE_READJUST,
+    SIZES_IDLE, sizesKey, sizesTickPlan, sizesFinishGate, formatSize, effectiveSize, sizeChoiceRows, escStepPlan,
   } = __m_pipe_size_core;
   const { systemsFromOptions, matchSystems, systemPickVerdict, systemQuery } = __m_pipe_system_core;
   const { settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowText } = __m_pipe_setting_core;
@@ -2238,7 +2241,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
   /* ---------- dropdown ---------- */
   let menuEl = null, menuItems = [], menuHighlight = -1;
   // The label prompt for native's Place Fitting panel (Step 2).
-  const prompt = { active: false, dismissed: false, category: null, header: '', tool: null };
+  const prompt = { active: false, dismissed: false, category: null, header: '', tool: null, relabel: false };
   const MENU_GAP = 6, MENU_MAX_H = 220, MENU_MIN_H = 60;
   const COLORS = { tool: '#a8e6a3', action: '#8ecae6', adjust: '#8ecae6', setting: '#8ecae6', system: '#e6c8ff', disabled: '#888' };
 
@@ -2268,7 +2271,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       menuEl.style.maxHeight = Math.max(MENU_MIN_H, Math.min(MENU_MAX_H, below)) + 'px';
     }
   }
-  function hideMenu() { lastCall.on = false; if (menuEl) menuEl.style.display = 'none'; menuItems = []; menuHighlight = -1; }
+  function hideMenu() { if (menuEl) menuEl.style.display = 'none'; menuItems = []; menuHighlight = -1; }
   function scrollRowIntoView(row) {
     if (!row || !menuEl) return;
     const top = row.offsetTop, h = row.offsetHeight, view = menuEl.clientHeight;
@@ -2285,12 +2288,6 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       const head = document.createElement('div');
       head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
       head.textContent = sizesUi.header;
-      menuEl.appendChild(head);
-    }
-    if (lastCall.on) {
-      const head = document.createElement('div');
-      head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;border-bottom:1px solid #444;';
-      head.textContent = LAST_CALL_TEXT;
       menuEl.appendChild(head);
     }
     if (settingUi.active && settingUi.header) {
@@ -2405,7 +2402,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     const where = step.stage === 'category' ? 'ports: type 1-4 or a name' : (step.category !== null ? step.category + '-port: pick one (Backspace = back)' : 'pick one');
     prompt.header = step.stage === 'none'
       ? 'No fitting can be placed for this box. Esc cancels the placement.'
-      : 'Fitting label — ' + where + (dia ? ' — auto-matched ' + dia : '');
+      : 'Fitting label — ' + where + (dia ? ' — auto-matched ' + dia : '') + (prompt.relabel ? ' — Esc cancels the placement' : '');
     menuItems = step.items.map(function(item){ return { prompt: item }; });
     menuHighlight = menuItems.length ? 0 : -1;
     ensureMenu();
@@ -2421,9 +2418,9 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     }
     renderMenu();
   }
-  function startPrompt() {
+  function startPrompt(relabel) {
     const snap = host.readPanel();
-    prompt.active = true; prompt.category = null; prompt.tool = snap.tool;
+    prompt.active = true; prompt.category = null; prompt.tool = snap.tool; prompt.relabel = relabel === true;
     mountBar();
     if (!inputEl) { prompt.active = false; return; }
     inputEl.value = '';
@@ -2432,7 +2429,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
   }
   function endPrompt() {
     if (!prompt.active) return;
-    prompt.active = false; prompt.category = null; prompt.header = '';
+    prompt.active = false; prompt.category = null; prompt.header = ''; prompt.relabel = false;
     if (inputEl) inputEl.value = '';
     hideMenu();
   }
@@ -2448,8 +2445,10 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     // Click native's own label button (what a mouse click does). Never Finish: that stays manual.
     logAction('label', 'chose ' + plan.id);
     if (!host.clickFamily(plan.id)) { unlogLast(); status(plan.label + ': could not be chosen (the menu changed)'); refreshPrompt(); return; }
+    const wasRelabel = prompt.relabel;
     status(plan.label + ' chosen');
     endPrompt();
+    if (wasRelabel) { const keep = placementCount; resetSizes(); placementCount = keep; }
     // Native has just moved keyboard focus onto its own label button (subtype.focus()), and that
     // button opens its menu on Enter / Space / ArrowDown. For a moment, swallow those keys if they
     // land on it, and take focus back once so the key's own release or repeat lands harmlessly on our bar.
@@ -2501,8 +2500,6 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
   // pair only when a NEW placement is open and ready and nothing is selected (on an existing selected
   // fitting, native saves a size change). Nothing here finishes: Enter-to-Finish stays its own press.
   const sizesUi = { active: false, header: '' };
-  const LAST_CALL_TEXT = 'Esc again cancels the placement';
-  const lastCall = { on: false };
   let sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null, mode: null };
   let placementCount = 0, panelWasOpen = false, sizesBlockedWarned = false, rulesUnreadableWarned = false;
 
@@ -2543,7 +2540,6 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
   function resetSizes() {
     sizes = { stage: SIZES_IDLE.stage, key: null, index: 0, drafts: {}, confirmed: null, mode: null };
     sizesBlockedWarned = false; rulesUnreadableWarned = false;
-    if (lastCall.on) hideMenu();
     if (sizesUi.active) { sizesUi.active = false; sizesUi.header = ''; hideMenu(); }
   }
   function renderSizesChoice() {
@@ -2624,7 +2620,6 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     }
   }
   function pickSizeChoice(choice) {
-    lastCall.on = false;
     if (choice.id === 'adjust') { sizesUi.active = false; sizesUi.header = ''; hideMenu(); runAdjust(true); return; }
     if (choice.id === 'asis') { confirmSizes('kept'); return; }
     // edit: ask for each editable port in on-screen order
@@ -2877,6 +2872,8 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     unknownHintWarned = watch.hint;
     if (watch.action === 'warn') { status(PIPE_NATIVE_CHANGED_MESSAGE); endPrompt(); return; }
     const phase = snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed';
+    const relabelOpen = prompt.active && prompt.relabel && (phase === 'ports' || phase === 'ready') && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1;
+    if (relabelOpen) return;
     if (phase !== 'label') { prompt.dismissed = false; endPrompt(); return; }
     if (prompt.active || prompt.dismissed) return;
     if (host.anyDialogOpen()) return;
@@ -2894,41 +2891,26 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
     hideMenu();
     inputEl.focus();
   }
-  // Esc at the ready phase steps back one level before native's Esc may cancel the placement (escStepPlan).
-  // Returns true when the key was ours (the caller swallows it).
+  // Esc during a box-tool placement whose label is chosen steps back one level before native's Esc may cancel it
+  // (escStepPlan): the size rows again, then the label list for the same box. Returns true when the key was ours.
   function escStepBack() {
     const snap = host.readPanel();
+    const phase = snap.open ? panelPhase(snap.hint, PIPE_HINT_PREFIXES) : 'closed';
+    const boxTool = snap.open && PIPE_SIZE_TOOLS.indexOf(snap.tool) !== -1;
     const f = sizesFacts(snap);
-    const plan = escStepPlan({ ready: f.ready, mode: f.mode, stage: sizes.key === f.key ? sizes.stage : 'idle', lastCall: lastCall.on });
+    const plan = escStepPlan({ boxTool: boxTool, phase: phase, mode: f.mode, stage: sizes.key === f.key ? sizes.stage : 'idle', relabel: prompt.active && prompt.relabel });
     if (plan.action === 'reopen') {
       openSizesChoice();
-      status('port sizes: pick again. Esc closes this, Esc again cancels the placement');
+      status('port sizes: pick again. Esc closes this, Esc again chooses another label');
       return true;
     }
-    if (plan.action === 'lastcall') {
-      mountBar();
-      if (!inputEl) return false;
-      inputEl.value = '';
-      inputEl.focus();
-      menuItems = adjustVerdict(adjustFacts()).ok
-        ? [{ size: host.readAdjustPorts().checked === true ? SIZE_CHOICE_READJUST : SIZE_CHOICE_ADJUST }] : [];
-      menuHighlight = menuItems.length ? 0 : -1;
-      lastCall.on = true;
-      if (menuItems.length) renderMenu();
-      else {
-        ensureMenu();
-        menuEl.innerHTML = '';
-        const head = document.createElement('div');
-        head.style.cssText = 'padding:3px 6px;font-size:11px;color:#ffd166;';
-        head.textContent = LAST_CALL_TEXT;
-        menuEl.appendChild(head);
-        positionMenu();
-        menuEl.style.display = 'block';
-      }
-      status(LAST_CALL_TEXT);
+    if (plan.action === 'relabel') {
+      prompt.dismissed = false; startPrompt(true);
+      if (!prompt.active) return false;
+      status('choose another label (Esc again cancels the placement)');
       return true;
     }
-    if (plan.action === 'leave') hideMenu();
+    if (plan.action === 'leave') endPrompt();
     return false;
   }
   function runAndClear(entry) { if (runEntry(entry)) clearBar(); else rejectBar(); }
@@ -2956,7 +2938,7 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       + 'border:1px solid #555;border-radius:3px;color-scheme:dark;';
     row.appendChild(inputEl);
     hostEl.insertBefore(row, list);
-    inputEl.addEventListener('input', function(){ lastCall.on = false; openMenu(inputEl.value); });
+    inputEl.addEventListener('input', function(){ openMenu(inputEl.value); });
     inputEl.addEventListener('keydown', onInputKeydown);
     inputEl.addEventListener('blur', function(){
       setTimeout(function(){ if (document.activeElement !== inputEl) { if (settingUi.active) endSetting('cancelled'); hideMenu(); } }, 150);
@@ -3012,12 +2994,6 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       else if (sizes.stage === 'edit') enterSizeValue();
       return;
     }
-    if (lastCall.on && menuItems.length && menuHighlight >= 0 && !inputEl.value && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault(); e.stopPropagation();
-      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-      pickSizeChoice(menuItems[menuHighlight].size);
-      return;
-    }
     if (prompt.active) {
       if (e.key === 'Enter' || e.key === ' ') {
         // Consumed before anything is clicked: the same real keypress must not also reach native.
@@ -3065,7 +3041,18 @@ return {settingVerdict, optionMatch, diameterPlan, readbackVerdict, optionRowTex
       if (inputEl) inputEl.value = '';
       return;
     }
-    if (e.key === 'Escape' && !inputEl.value && (lastCall.on || !menuEl || menuEl.style.display === 'none') && escStepBack()) {
+    if (e.key === 'Escape' && prompt.active && prompt.relabel) {
+      // The label list reopened by Esc: typed text goes first; with nothing typed this Esc is native's (it cancels).
+      if (inputEl.value) {
+        e.preventDefault(); e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        inputEl.value = ''; prompt.category = null; refreshPrompt();
+        return;
+      }
+      endPrompt(); inputEl.blur();
+      return;
+    }
+    if (e.key === 'Escape' && !inputEl.value && (!menuEl || menuEl.style.display === 'none' || portNoteShown) && escStepBack()) {
       e.preventDefault(); e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       return;

@@ -130,12 +130,12 @@ the same way as above, on a **piping** page.
     first one only confirms, so a saving Enter is always its own press).
   - *Edit* asks for each unlocked port in the app's order: type a size (`2`, `2-1/2`, `3/4`, `1.75`; a space would
     confirm, so write 2-1/2 with a hyphen) and Enter, or just Enter to keep it. Sizes run 3/8" to 48". Esc goes
-    back to the two rows, and the next Esc closes them (then the app's own Esc cancels the placement). After the
+    back to the rows, and the next Esc closes them (see the Esc note below). After the
     last port the values are written into the app's own size fields (a standard size on the dropdown, anything
     else as Custom + text); Enter then finishes.
-  - **Esc after confirming steps back, it does not cancel.** With sizes confirmed (or "Continue as is" on a single-size
-    placement), the first Esc brings the choices back (single size: the Adjust ports row plus "Esc again cancels the
-    placement"). The next Esc is the app's own and cancels the placement.
+  - **Esc steps back, it does not cancel.** After a label is chosen: with sizes confirmed the choices come back, then the
+    label list for the same box (also from the port-click phase, or a single-size placement). Pick another label, or Esc
+    once more and the app's own Esc cancels the placement. Nothing is saved by any of this.
   - **Max rule:** if outlet or branch is larger than inlet (read live from the page's own catalog), the bar says the
     server will reject it, and Enter-to-Finish stays blocked until it is fixed. If the catalog can't be read, the
     bar warns once and does not block.
